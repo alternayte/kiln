@@ -277,12 +277,6 @@ func TestTemplateDependentsCountsChildren(t *testing.T) {
 	if err := s.CreateTemplate(ctx, sample("py312")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sq.db.ExecContext(ctx, `CREATE TABLE snapshots (
-		id TEXT PRIMARY KEY,
-		template_name TEXT NOT NULL
-	)`); err != nil {
-		t.Fatal(err)
-	}
 	insert := `INSERT INTO sandboxes (
 		id, template_name, lifecycle, state, idle_seconds, last_active_at, metadata, created_at, destroyed_at
 	) VALUES (?, 'py312', 'ephemeral', 'running', 60, 0, '{}', 0, ?)`
@@ -292,7 +286,7 @@ func TestTemplateDependentsCountsChildren(t *testing.T) {
 	if _, err := sq.db.ExecContext(ctx, insert, "dead", 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sq.db.ExecContext(ctx, `INSERT INTO snapshots (id, template_name) VALUES ('snap', 'py312')`); err != nil {
+	if _, err := sq.db.ExecContext(ctx, `INSERT INTO snapshots (id, template_name, size_bytes, created_at) VALUES ('snap', 'py312', 0, 0)`); err != nil {
 		t.Fatal(err)
 	}
 	live, snapshots, err := s.TemplateDependents(ctx, "py312")

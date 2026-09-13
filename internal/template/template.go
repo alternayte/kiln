@@ -72,6 +72,9 @@ func (b *Builder) Import(ctx context.Context, spec ImportSpec) (Imported, error)
 	if err := writeResolvConf(tree); err != nil {
 		return Imported{}, err
 	}
+	if err := ensureMountpoints(tree); err != nil {
+		return Imported{}, err
+	}
 	cmd := exec.CommandContext(ctx, "mke2fs",
 		"-q", "-F", "-t", "ext4", "-d", tree, "-L", "kiln",
 		spec.RootfsPath, fmt.Sprintf("%dM", size))
@@ -184,6 +187,39 @@ func injectKilninit(root, kilninitPath string) error {
 func writeResolvConf(root string) error {
 	content := "nameserver " + runtime.GuestGateway + "\n"
 	return writeTreeFile(root, "etc/resolv.conf", []byte(content), 0o644)
+}
+
+// ensureMountpoints creates the directories kilninit mounts over. A template
+// that boots read-only cannot create them itself.
+func ensureMountpoints(root string) error {
+	dirs := []struct {
+		path string
+		mode os.FileMode
+	}{
+		{"proc", 0o555},
+		{"sys", 0o555},
+		{"dev", 0o755},
+		{"dev/pts", 0o755},
+		{"tmp", 0o1777},
+	}
+	for _, d := range dirs {
+		target := filepath.Join(root, filepath.FromSlash(d.path))
+		if fi, err := os.Lstat(target); err == nil {
+			if fi.IsDir() {
+				continue
+			}
+			if err := os.RemoveAll(target); err != nil {
+				return err
+			}
+		}
+		if err := os.MkdirAll(target, d.mode); err != nil {
+			return err
+		}
+		if err := os.Chmod(target, d.mode); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // writeTreeFile writes one file into the rootfs. It resolves the parent

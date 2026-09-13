@@ -58,8 +58,10 @@ func injectedSecrets() map[string]string {
 
 const (
 	overlayDevice = "/dev/vdb"
-	scratchDir    = "/mnt/kiln-upper"
-	newRootDir    = "/mnt/kiln-root"
+	// scratchDir and newRootDir live on the /tmp tmpfs that kilninit mounted
+	// at boot, so the read-only rootfs is never written before the pivot.
+	scratchDir = "/tmp/kiln-upper"
+	newRootDir = "/tmp/kiln-root"
 )
 
 // pivotOverlay mounts the sandbox overlay and pivots the root into it. The
@@ -95,7 +97,7 @@ func isOverlayRoot() bool {
 }
 
 func mountAndPivot() error {
-	for _, dir := range []string{"/mnt", scratchDir, newRootDir} {
+	for _, dir := range []string{scratchDir, newRootDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
@@ -114,12 +116,20 @@ func mountAndPivot() error {
 	if err := unix.Mount("overlay", newRootDir, "overlay", 0, options); err != nil {
 		return fmt.Errorf("mount overlay: %w", err)
 	}
-	// Keep the pseudofilesystems in the new root.
+	// Keep the pseudofilesystems in the new root, and give the sandbox a
+	// memory-backed /tmp of its own.
+	for _, target := range []string{"proc", "sys", "dev", "tmp"} {
+		if err := os.MkdirAll(newRootDir+"/"+target, 0o755); err != nil {
+			return err
+		}
+	}
+	if err := unix.Mount("tmpfs", newRootDir+"/tmp", "tmpfs", 0, ""); err != nil {
+		return fmt.Errorf("mount new tmpfs: %w", err)
+	}
 	for _, m := range []struct{ source, target string }{
 		{"/proc", newRootDir + "/proc"},
 		{"/sys", newRootDir + "/sys"},
 		{"/dev", newRootDir + "/dev"},
-		{"/tmp", newRootDir + "/tmp"},
 	} {
 		if err := unix.Mount(m.source, m.target, "", unix.MS_MOVE, ""); err != nil {
 			return fmt.Errorf("move %s: %w", m.source, err)

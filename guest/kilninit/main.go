@@ -18,6 +18,11 @@ import (
 func main() {
 	log.SetFlags(0)
 	log.SetPrefix("kilninit: ")
+	// PID 1 starts with no PATH. exec.LookPath resolves a command against it,
+	// so every exec by name would fail before the child's env applies.
+	if err := os.Setenv("PATH", guestproto.DefaultPath); err != nil {
+		log.Fatalf("path: %v", err)
+	}
 	if err := mountBase(); err != nil {
 		log.Fatalf("mount: %v", err)
 	}

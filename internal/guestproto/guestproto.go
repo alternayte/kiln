@@ -16,6 +16,10 @@ import (
 // Port is the guest vsock port the agent listens on.
 const Port uint32 = 52
 
+// DefaultPath is the base PATH every exec gets, and the PATH PID 1 needs so
+// exec.LookPath can resolve a command by name.
+const DefaultPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 // MaxFrame is the largest frame either side accepts, in bytes.
 const MaxFrame = 1 << 20
 
@@ -105,7 +109,7 @@ func NormalizeExec(req *Request) *Error {
 // injected secrets and the request entries merged on top. Later layers win.
 func ExecEnv(secrets, extra map[string]string) []string {
 	base := map[string]string{
-		"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"PATH": DefaultPath,
 		"HOME": "/root",
 	}
 	for k, v := range secrets {

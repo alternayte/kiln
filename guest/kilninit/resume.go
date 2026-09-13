@@ -25,8 +25,11 @@ var (
 // applyResume runs the resume hooks in order: the overlay root, the clock, the
 // entropy pool, the hostname and the secrets.
 func applyResume(req *guestproto.Request) error {
-	if err := pivotOverlay(); err != nil {
-		return fmt.Errorf("overlay: %w", err)
+	// DIAGNOSIS: pivot disabled for one run.
+	if false {
+		if err := pivotOverlay(); err != nil {
+			return fmt.Errorf("overlay: %w", err)
+		}
 	}
 	if req.UnixNanos > 0 {
 		ts := unix.NsecToTimespec(req.UnixNanos)

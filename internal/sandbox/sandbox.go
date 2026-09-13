@@ -235,7 +235,7 @@ func (m *Manager) restore(ctx context.Context, tpl store.Template, row store.San
 	if err := vm.ResumeHooks(ctx, entropy, time.Now().UnixNano(), row.ID, env); err != nil {
 		return store.Sandbox{}, err
 	}
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 20; i++ {
 		if err := vm.Check(ctx); err != nil {
 			log.Printf("sandbox: %s: probe %d: %v", row.ID, i, err)
 		} else {

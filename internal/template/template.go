@@ -1,0 +1,166 @@
+// Package template imports OCI images into ext4 rootfs images. It applies
+// layers in order, honours whiteouts, and injects the guest kilninit.
+package template
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+
+	"github.com/regclient/regclient"
+	"github.com/regclient/regclient/types/manifest"
+	"github.com/regclient/regclient/types/platform"
+	"github.com/regclient/regclient/types/ref"
+)
+
+// Builder pulls OCI images and writes ext4 rootfs images.
+type Builder struct {
+	// KilninitPath is the linux/amd64 guest init placed at /kilninit.
+	KilninitPath string
+	// Arch selects the image platform. Defaults to amd64.
+	Arch string
+	// OS selects the image platform. Defaults to linux.
+	OS string
+}
+
+// ImportSpec is one image import.
+type ImportSpec struct {
+	Ref        string
+	RootfsPath string
+	SizeMB     int
+}
+
+// Imported reports what was pulled.
+type Imported struct {
+	// Digest is the resolved image digest (or the platform manifest digest
+	// for a multi-platform index).
+	Digest string
+}
+
+// Import pulls the image, applies its layers to a tree, injects kilninit,
+// and writes the ext4 rootfs at spec.RootfsPath.
+func (b *Builder) Import(ctx context.Context, spec ImportSpec) (Imported, error) {
+	if spec.Ref == "" || spec.RootfsPath == "" {
+		return Imported{}, fmt.Errorf("template: ref and rootfs path are required")
+	}
+	if b.KilninitPath == "" {
+		return Imported{}, fmt.Errorf("template: kilninit path is required")
+	}
+	size := spec.SizeMB
+	if size == 0 {
+		size = 4096
+	}
+	tree, err := os.MkdirTemp(filepath.Dir(spec.RootfsPath), ".import-")
+	if err != nil {
+		return Imported{}, err
+	}
+	defer os.RemoveAll(tree)
+
+	digest, err := b.pull(ctx, spec.Ref, tree)
+	if err != nil {
+		return Imported{}, err
+	}
+	if err := injectKilninit(tree, b.KilninitPath); err != nil {
+		return Imported{}, err
+	}
+	cmd := exec.CommandContext(ctx, "mke2fs",
+		"-q", "-F", "-t", "ext4", "-d", tree, "-L", "kiln",
+		spec.RootfsPath, fmt.Sprintf("%dM", size))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return Imported{}, fmt.Errorf("template: mke2fs: %w: %s", err, out)
+	}
+	return Imported{Digest: digest}, nil
+}
+
+// pull resolves the platform image and applies its layers to root.
+func (b *Builder) pull(ctx context.Context, imageRef, root string) (string, error) {
+	r, err := ref.New(imageRef)
+	if err != nil {
+		return "", fmt.Errorf("template: %s: %w", imageRef, err)
+	}
+	rc := regclient.New(regclient.WithDockerCreds(), regclient.WithDockerCerts())
+	defer rc.Close(ctx, r)
+
+	m, err := rc.ManifestGet(ctx, r)
+	if err != nil {
+		return "", fmt.Errorf("template: pull %s: %w", imageRef, err)
+	}
+	if m.IsList() {
+		desc, err := manifest.GetPlatformDesc(m, &platform.Platform{OS: b.os(), Architecture: b.arch()})
+		if err != nil {
+			return "", fmt.Errorf("template: %s: %w", imageRef, err)
+		}
+		r = r.SetDigest(desc.Digest.String())
+		m, err = rc.ManifestGet(ctx, r)
+		if err != nil {
+			return "", fmt.Errorf("template: pull %s: %w", imageRef, err)
+		}
+	}
+	img, ok := m.(manifest.Imager)
+	if !ok {
+		return "", fmt.Errorf("template: %s: manifest has no layers", imageRef)
+	}
+	layers, err := img.GetLayers()
+	if err != nil {
+		return "", fmt.Errorf("template: %s: %w", imageRef, err)
+	}
+	for _, layer := range layers {
+		br, err := rc.BlobGet(ctx, r, layer)
+		if err != nil {
+			return "", fmt.Errorf("template: %s: layer %s: %w", imageRef, layer.Digest, err)
+		}
+		tr, err := br.ToTarReader()
+		if err != nil {
+			br.Close()
+			return "", fmt.Errorf("template: %s: layer %s: %w", imageRef, layer.Digest, err)
+		}
+		tarReader, err := tr.GetTarReader()
+		if err == nil {
+			err = applyLayer(root, tarReader)
+		}
+		tr.Close()
+		if err != nil {
+			return "", fmt.Errorf("template: %s: layer %s: %w", imageRef, layer.Digest, err)
+		}
+	}
+	return m.GetDescriptor().Digest.String(), nil
+}
+
+func (b *Builder) arch() string {
+	if b.Arch == "" {
+		return "amd64"
+	}
+	return b.Arch
+}
+
+func (b *Builder) os() string {
+	if b.OS == "" {
+		return "linux"
+	}
+	return b.OS
+}
+
+// injectKilninit places the guest init at /kilninit, mode 0755.
+func injectKilninit(root, kilninitPath string) error {
+	in, err := os.Open(kilninitPath)
+	if err != nil {
+		return fmt.Errorf("template: kilninit: %w", err)
+	}
+	defer in.Close()
+	target := filepath.Join(root, "kilninit")
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Chmod(target, 0o755)
+}

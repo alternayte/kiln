@@ -1,8 +1,12 @@
 # Kiln infrastructure
 
-Pulumi program. It copies this repo to an OVH server, installs the host
-packages, loads the KVM module, and runs `go build ./...` and `just check`.
-With `kiln:gate` set it also runs `kiln init` and one gate.
+Pulumi program. It copies this repo to a server, installs the host packages,
+loads the KVM module, and runs `go build ./...` and `just check`. With
+`kiln:gate` set it also runs `kiln init` and one gate.
+
+The steps start from a server you order. Nothing here points at an existing
+host: `kiln:host` names the server to bootstrap. Any x86_64 Ubuntu 24.04
+machine with KVM works. The order steps use OVH Eco as the example.
 
 ## What OVH allows
 
@@ -36,7 +40,7 @@ With `kiln:gate` set it also runs `kiln init` and one gate.
    ```sh
    cd infra
    pulumi login --local
-   pulumi stack init kiln
+   pulumi stack init kiln     # or: pulumi stack select kiln
    pulumi config set kiln:host <ip>
    pulumi config set kiln:privateKeyPath ~/.ssh/id_rsa
    pulumi config set kiln:gate P1

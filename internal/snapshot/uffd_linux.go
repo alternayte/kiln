@@ -24,8 +24,9 @@ type mapping struct {
 }
 
 const (
-	uffdEventPagefault = 2
-	uffdEventRemove    = 4
+	// Event numbers from include/uapi/linux/userfaultfd.h.
+	uffdEventPagefault = 0x12
+	uffdEventRemove    = 0x15
 	uffdMsgSize        = 32
 	// ioctl numbers for struct uffdio_copy and struct uffdio_zeropage on
 	// 64-bit Linux: _IOWR(0xAA, number, 40 or 32 bytes).
@@ -161,8 +162,6 @@ func servePages(ctx context.Context, memPath string, mappings []mapping, uffd in
 	}
 	page := make([]byte, maxPage)
 	events := make([]byte, uffdMsgSize*16)
-	faults := 0
-	traces := 0
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -178,19 +177,12 @@ func servePages(ctx context.Context, memPath string, mappings []mapping, uffd in
 			}
 			continue
 		}
-		if traces < 5 {
-			traces++
-			log.Printf("snapshot: poll ready revents=%#x", pfds[0].Revents)
-		}
 		rn, err := unix.Read(uffd, events)
 		if err != nil {
 			if err == unix.EAGAIN || err == unix.EINTR {
 				continue
 			}
 			return fmt.Errorf("snapshot: read uffd: %w", err)
-		}
-		if traces <= 5 && rn > 0 {
-			log.Printf("snapshot: read %d bytes event=%d", rn, events[0])
 		}
 		if rn <= 0 {
 			return nil
@@ -199,10 +191,6 @@ func servePages(ctx context.Context, memPath string, mappings []mapping, uffd in
 			switch events[off] {
 			case uffdEventPagefault:
 				addr := binary.LittleEndian.Uint64(events[off+16 : off+24])
-				faults++
-				if faults <= 5 {
-					log.Printf("snapshot: fault %d at %#x", faults, addr)
-				}
 				if err := servePage(mem, page, mappings, uffd, addr); err != nil {
 					return err
 				}

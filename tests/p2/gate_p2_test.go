@@ -122,10 +122,7 @@ func testBuildAndExec(t *testing.T, ctx context.Context, cli *client, mgr *templ
 		"vcpus":     2,
 		"memory_mb": 512,
 		"disk_mb":   4096,
-		"setup": []string{
-			"cat /proc/net/route; cat /proc/net/fib_trie; python -c \"import socket; print(socket.getaddrinfo('pypi.org', 443))\" || true; pip install --no-cache-dir --timeout 3 --retries 1 requests",
-			"echo setup-ran > /setup-ran",
-		},
+		"setup": []string{"pip install --no-cache-dir requests", "echo setup-ran > /setup-ran"},
 		"egress_allow": []string{"pypi.org", "files.pythonhosted.org"},
 	}
 	t.Cleanup(func() { cli.deleteIfPresent(name) })

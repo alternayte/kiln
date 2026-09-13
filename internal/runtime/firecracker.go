@@ -297,7 +297,7 @@ func (f *Firecracker) launch(spec Spec, vm *VM) error {
 		"--",
 		"--api-sock", "/run/firecracker.sock",
 		"--log-path", "/run/firecracker.log",
-		"--level", "Debug",
+		"--level", "Info",
 	}
 	cmd := exec.Command(f.jailer, args...)
 	cmd.Stdout = console
@@ -601,49 +601,8 @@ func (f *Firecracker) fail(vm *VM, err error) error {
 	if tail := vm.LogTail(); tail != "" {
 		err = fmt.Errorf("%w; firecracker log: %s", err, tail)
 	}
-	if vm.PID > 0 {
-		if state := procState(vm.PID); state != "" {
-			err = fmt.Errorf("%w; proc: %s", err, state)
-		}
-	}
 	_ = vm.cleanup()
 	return err
-}
-
-// procState summarizes a stuck process for an error message.
-func procState(pid int) string {
-	var b strings.Builder
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "State:") {
-			b.WriteString(line)
-			b.WriteString("; ")
-		}
-	}
-	entries, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", pid))
-	if err != nil {
-		return b.String()
-	}
-	for _, e := range entries {
-		wchan, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%s/wchan", pid, e.Name()))
-		if err != nil {
-			continue
-		}
-		stack, _ := os.ReadFile(fmt.Sprintf("/proc/%d/task/%s/stack", pid, e.Name()))
-		b.WriteString("task ")
-		b.WriteString(e.Name())
-		b.WriteString(" wchan=")
-		b.WriteString(strings.TrimSpace(string(wchan)))
-		if len(stack) > 0 {
-			b.WriteString(" stack=")
-			b.WriteString(strings.Join(strings.Fields(string(stack)), "|"))
-		}
-		b.WriteString("; ")
-	}
-	return b.String()
 }
 
 // LogTail returns the last lines of the Firecracker log, for errors.

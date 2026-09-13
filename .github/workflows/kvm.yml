@@ -3,9 +3,17 @@ name: kvm
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  gates:
+  check:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -15,11 +23,26 @@ jobs:
           cache: false
       - uses: extractions/setup-just@v2
       - run: just check
-      - run: just gate P0
+
+  gate:
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        gate: [P0, P1, P2, P3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: extractions/setup-just@v2
       - run: sudo env "PATH=$PATH" bash scripts/dev-env.sh
       - run: sudo env "PATH=$PATH" go run ./cmd/kiln init
-      - run: sudo env "PATH=$PATH" just gate P1
-      - run: sudo env "PATH=$PATH" just gate P2
-      - run: sudo env "PATH=$PATH" just gate P3
-      - run: sudo env "PATH=$PATH" just gate P4
-      - run: sudo env "PATH=$PATH" just gate P5
+      # Docker sets the FORWARD policy to DROP. Kiln's chains are in the inet
+      # family at the same priority and are registered later, so Docker's
+      # policy would drop guest traffic before Kiln's chain sees it.
+      - run: sudo iptables -I FORWARD 1 -i 'kiln-+' -j ACCEPT
+      - run: sudo env "PATH=$PATH" just gate ${{ matrix.gate }}

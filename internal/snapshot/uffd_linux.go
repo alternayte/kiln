@@ -10,7 +10,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -86,39 +85,9 @@ func Serve(ctx context.Context, memPath, sockPath string, ready func()) error {
 	}
 	defer unix.Close(uffd)
 	log.Printf("snapshot: serving %d region(s) from %s", len(mappings), memPath)
-
-	// Stop serving when Firecracker exits, so no page-fault handler outlives
-	// its VM.
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	if pid, err := peerPID(conn); err == nil && pid > 0 {
-		go watchPeer(ctx, cancel, pid)
-	}
-	return servePages(ctx, memPath, mappings, uffd)
-}
-
-func peerPID(conn int) (int, error) {
-	cred, err := unix.GetsockoptUcred(conn, unix.SOL_SOCKET, unix.SO_PEERCRED)
-	if err != nil {
-		return 0, err
-	}
-	return int(cred.Pid), nil
-}
-
-func watchPeer(ctx context.Context, cancel context.CancelFunc, pid int) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := unix.Kill(pid, 0); err != nil {
-				cancel()
-				return
-			}
-		}
-	}
+	err = servePages(ctx, memPath, mappings, uffd)
+	log.Printf("snapshot: done: %v", err)
+	return err
 }
 
 func acceptContext(ctx context.Context, listener int) (int, error) {

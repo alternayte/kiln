@@ -117,11 +117,11 @@ func TestGateP2(t *testing.T) {
 func testBuildAndExec(t *testing.T, ctx context.Context, cli *client, mgr *template.Manager, rt *runtime.Firecracker, nm *network.Manager, kernel string) {
 	const name = "py312"
 	req := map[string]any{
-		"name":         name,
-		"image":        "docker.io/library/python:3.12-slim",
-		"vcpus":        2,
-		"memory_mb":    512,
-		"disk_mb":      4096,
+		"name":      name,
+		"image":     "docker.io/library/python:3.12-slim",
+		"vcpus":     2,
+		"memory_mb": 512,
+		"disk_mb":   4096,
 		"setup": []string{
 			"cat /proc/net/route; cat /proc/net/fib_trie; python -c \"import socket; print(socket.getaddrinfo('pypi.org', 443))\" || true; pip install --no-cache-dir requests",
 			"echo setup-ran > /setup-ran",

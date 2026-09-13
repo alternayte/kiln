@@ -34,7 +34,9 @@ done
 
 fc="$(find_bin firecracker)"
 if [ -n "$fc" ]; then
-  out="$("$fc" --version 2>&1 || true)"
+  # Firecracker 1.17 logs its exit line to stderr after --version, so read
+  # stdout only.
+  out="$("$fc" --version 2>/dev/null | head -n1 || true)"
   v="${out##* }"
   if [ "$v" != "$FIRECRACKER_VERSION" ]; then
     miss "version: firecracker reports '$v', pin is '$FIRECRACKER_VERSION'"

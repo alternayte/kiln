@@ -286,9 +286,9 @@ func (c *client) pollTemplate(name string, timeout time.Duration) templateView {
 }
 
 func (c *client) deleteTemplateIfPresent(name string) {
-	resp, _ := c.request(http.MethodDelete, "/v1/templates/"+name, "")
+	resp, out := c.request(http.MethodDelete, "/v1/templates/"+name, "")
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusConflict {
-		c.t.Errorf("cleanup delete template %s: status %d", name, resp.StatusCode)
+		c.t.Errorf("cleanup delete template %s: status %d: %s", name, resp.StatusCode, out)
 	}
 }
 
@@ -329,9 +329,9 @@ func (c *client) deleteSandbox(id string) int {
 }
 
 func (c *client) deleteSandboxIfPresent(id string) {
-	resp, _ := c.request(http.MethodDelete, "/v1/sandboxes/"+id, "")
+	resp, out := c.request(http.MethodDelete, "/v1/sandboxes/"+id, "")
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
-		c.t.Errorf("cleanup delete sandbox %s: status %d", id, resp.StatusCode)
+		c.t.Errorf("cleanup delete sandbox %s: status %d: %s", id, resp.StatusCode, out)
 	}
 }
 

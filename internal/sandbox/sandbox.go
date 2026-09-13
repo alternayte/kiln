@@ -404,6 +404,9 @@ func (m *Manager) Exec(ctx context.Context, id string, req runtime.ExecRequest, 
 		if tail := vm.ConsoleTail(); tail != "" {
 			err = fmt.Errorf("%w; console tail: %s", err, tail)
 		}
+		if tail := vm.LogTail(); tail != "" {
+			err = fmt.Errorf("%w; firecracker log: %s", err, tail)
+		}
 		return res, err
 	}
 	_ = m.cfg.Store.TouchSandbox(ctx, id, m.now())

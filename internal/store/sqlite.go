@@ -221,8 +221,20 @@ func (s *sqliteStore) ListTemplates(ctx context.Context) ([]Template, error) {
 	return out, rows.Err()
 }
 
+// DeleteTemplate removes a template. The destroyed sandbox rows that name it
+// go in the same transaction, because the foreign key blocks the delete
+// otherwise. Events are kept.
 func (s *sqliteStore) DeleteTemplate(ctx context.Context, name string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM templates WHERE name = ?`, name)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM sandboxes WHERE template_name = ? AND destroyed_at IS NOT NULL`, name); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM templates WHERE name = ?`, name)
 	if err != nil {
 		return err
 	}
@@ -233,7 +245,7 @@ func (s *sqliteStore) DeleteTemplate(ctx context.Context, name string) error {
 	if changed == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return tx.Commit()
 }
 
 // TemplateDependents counts the rows that keep a template alive. The sandboxes

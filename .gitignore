@@ -1,2 +1,4 @@
 .claude/skills
 .agents/handoff
+tests/p1/testdata
+infra/infra

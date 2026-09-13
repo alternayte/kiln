@@ -19,7 +19,10 @@ check:
     fi
     go vet ./... || fail=1
     go build ./... || fail=1
+    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /dev/null ./guest/kilninit || fail=1
     go test ./... || fail=1
+    go test -tags=kvm -run '^$' ./tests/... || fail=1
+    (cd infra && go build -o /dev/null ./...) || fail=1
     exit "$fail"
 
 # recipe: agents

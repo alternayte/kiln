@@ -1,0 +1,3 @@
+name: kiln
+runtime: go
+description: A Hetzner host for Kiln checks and gates. Cloud servers cannot run the KVM gates; see README.md.

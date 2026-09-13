@@ -16,8 +16,10 @@ jobs:
       - uses: extractions/setup-just@v2
       - run: just check
       - run: just gate P0
-      - run: just gate P1
-      - run: just gate P2
-      - run: just gate P3
-      - run: just gate P4
-      - run: just gate P5
+      - run: sudo env "PATH=$PATH" bash scripts/dev-env.sh
+      - run: sudo env "PATH=$PATH" go run ./cmd/kiln init
+      - run: sudo env "PATH=$PATH" just gate P1
+      - run: sudo env "PATH=$PATH" just gate P2
+      - run: sudo env "PATH=$PATH" just gate P3
+      - run: sudo env "PATH=$PATH" just gate P4
+      - run: sudo env "PATH=$PATH" just gate P5

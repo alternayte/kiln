@@ -21,7 +21,7 @@ if [ "$(id -u)" -ne 0 ]; then
   sudo=(sudo)
 fi
 
-packages=(iproute2 nftables e2fsprogs sqlite3 curl ca-certificates tar gzip jq git)
+packages=(iproute2 nftables e2fsprogs sqlite3 curl ca-certificates tar gzip jq git busybox-static)
 if ! command -v apt-get >/dev/null; then
   echo "dev-env: no apt-get. Install by hand: ${packages[*]}" >&2
   exit 1

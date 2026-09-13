@@ -1,58 +1,68 @@
 # Kiln infrastructure
 
-Pulumi program for a Hetzner host that runs the Kiln checks. It creates the
-host resources, copies this repo to the host, and runs `go build ./...` and
-`just check` there.
+Pulumi program. It provisions a Hetzner host, copies this repo to it, and runs
+`go build ./...` and `just check` there. With `kiln:gate` set it also runs
+`kiln init` and one gate.
 
-## Hetzner Cloud cannot run the KVM gates
+## What Hetzner allows
 
-Hetzner Cloud servers do not support nested virtualization. Hetzner's FAQ
-answers "is nested virtualization possible?" with "No, this is not possible on
-cloud server." Firecracker needs `/dev/kvm`, so `just gate P1` and every later
-gate cannot run on a Cloud server.
+- **Dedicated server: yes.** Bare metal. Hetzner documents Linux KVM on
+  dedicated servers. Firecracker needs `/dev/kvm`, so the KVM gates run here.
+- **Cloud server: no.** Hetzner Cloud FAQ: "is nested virtualization
+  possible?" — "No, this is not possible on cloud server." A Cloud server runs
+  `just check` only.
+- Pulumi has no Hetzner Robot provider. Order the dedicated server in the
+  Hetzner web console. Pulumi manages everything after that.
 
-Use one of these paths:
+## Path A: dedicated server, runs the gates
 
-- **Dedicated server (the KVM path).** Order a Hetzner dedicated server (Robot
-  or the server market) with the public key from `kiln:sshKeyPath`. Then set
-  `kiln:existingHost` to its IP. Pulumi skips the Cloud resources and copies
-  the repo to that host. `preflight.sh` and the KVM gates run there.
-- **Cloud server (checks only).** Leave `kiln:existingHost` unset. Pulumi
-  creates the Cloud resources and runs the fast checks. The KVM gates stay
-  unavailable.
+1. Order a dedicated server:
+   - Open https://robot.hetzner.com → Server → Order, or the Server Market.
+   - Choose Ubuntu 24.04 and add the public key `~/.ssh/id_rsa.pub`.
+2. Wait for the server. Note its IPv4 address, for example `203.0.113.7`.
+3. Check SSH from the laptop: `ssh root@203.0.113.7 true`
+4. Run:
+   ```sh
+   cd infra
+   pulumi login --local
+   pulumi stack init kiln
+   pulumi config set kiln:existingHost 203.0.113.7
+   pulumi config set kiln:privateKeyPath ~/.ssh/id_rsa
+   pulumi config set kiln:gate P1
+   pulumi up
+   ```
+5. `pulumi up` installs packages, copies the repo, runs `just check`, runs
+   `kiln init`, and runs `just gate P1`. It prints the gate output.
 
-Pulumi has no provider for Hetzner Robot, so the dedicated server order is a
-manual step. The server is then fully managed by this program.
+Drop `kiln:gate` to run the checks only.
+
+## Path B: Cloud server, runs the checks only
+
+1. Create an API token: https://console.hetzner.cloud → project → Security →
+   API tokens → Generate (Read & Write).
+2. Run:
+   ```sh
+   export HCLOUD_TOKEN=...
+   cd infra
+   pulumi login --local
+   pulumi stack init kiln
+   pulumi config set kiln:sshKeyPath ~/.ssh/id_rsa.pub
+   pulumi up
+   ```
+3. `pulumi up` creates the SSH key, firewall and server, then runs `just check`
+   on it.
+4. `pulumi destroy` removes the server.
 
 ## Config
 
-| Key | Default | Meaning |
-|---|---|---|
-| `kiln:sshKeyPath` | required for Cloud | public key to register and inject |
-| `kiln:privateKeyPath` | `~/.ssh/id_rsa` | private key for SSH commands |
-| `kiln:existingHost` | none | IP or hostname of an existing host |
-| `kiln:sshUser` | `root` | SSH user |
-| `kiln:remoteDir` | `/root/kiln` | repo destination on the host |
-| `kiln:serverType` | `cpx21` | Hetzner Cloud server type |
-| `kiln:location` | `fsn1` | Hetzner Cloud location |
-| `kiln:image` | `ubuntu-24.04` | Hetzner Cloud image |
-| `kiln:gate` | none | gate to run after the checks, for example `P1` |
+Only these keys matter. Defaults are in `main.go`.
 
-## Use
+| Key | Use |
+|---|---|
+| `kiln:existingHost` | dedicated server IP; skips all Cloud resources |
+| `kiln:sshKeyPath` | public key for a Cloud server |
+| `kiln:privateKeyPath` | private key for SSH; default `~/.ssh/id_rsa` |
+| `kiln:gate` | gate to run after the checks, for example `P1` |
 
-```sh
-cd infra
-pulumi stack init kiln
-pulumi config set kiln:sshKeyPath ~/.ssh/id_rsa.pub
-
-# Cloud server: checks only.
-pulumi up
-
-# Dedicated server: order it first, then point Pulumi at it.
-pulumi config set kiln:existingHost <dedicated-ip>
-pulumi config set kiln:gate P1
-pulumi up
-```
-
-`pulumi up` copies the whole working tree, including untracked files. The
-gate commands run under `sudo`, because jailer needs root.
+`pulumi up` copies the whole working tree, including untracked files. Gates run
+under `sudo`, because jailer needs root.

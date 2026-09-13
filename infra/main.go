@@ -132,6 +132,7 @@ func run(ctx *pulumi.Context) error {
 			Triggers:   pulumi.Array{check.ID()},
 			Create: pulumi.String(fmt.Sprintf(`set -euo pipefail
 cd %s
+sudo env "PATH=$PATH" go run ./cmd/kiln init
 sudo env "PATH=$PATH" just gate %s
 `, remoteDir, gate)),
 		})

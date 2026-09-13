@@ -32,8 +32,18 @@ func serve(conn net.Conn) {
 	case guestproto.OpShutdown:
 		writeResult(conn, guestproto.Result{OK: true})
 		powerOff()
+	case guestproto.OpResume:
+		if err := applyResume(&req); err != nil {
+			writeResult(conn, guestproto.Result{Error: &guestproto.Error{Code: guestproto.CodeInternal, Message: err.Error()}})
+			return
+		}
+		writeResult(conn, guestproto.Result{OK: true})
 	case guestproto.OpExec:
 		runExec(conn, &req)
+	case guestproto.OpReadFile:
+		serveReadFile(conn, &req)
+	case guestproto.OpWriteFile:
+		serveWriteFile(conn, &req)
 	default:
 		writeResult(conn, guestproto.Result{Error: &guestproto.Error{
 			Code:    guestproto.CodeInvalid,
@@ -50,6 +60,9 @@ func writeResult(conn net.Conn, res guestproto.Result) {
 // guest does. The sync flushes every mounted filesystem first, so a stopped
 // sandbox leaves a consistent image behind.
 func powerOff() {
+	unix.Sync()
+	// Leave a clean image behind. An overlay root may refuse the remount.
+	_ = unix.Mount("", "/", "", unix.MS_REMOUNT|unix.MS_RDONLY, "")
 	unix.Sync()
 	if err := unix.Reboot(unix.LINUX_REBOOT_CMD_POWER_OFF); err != nil {
 		log.Printf("poweroff: %v", err)
@@ -101,7 +114,7 @@ func runExec(conn net.Conn, req *guestproto.Request) {
 
 	cmd := exec.Command(req.Cmd[0], req.Cmd[1:]...)
 	cmd.Dir = req.Cwd
-	cmd.Env = guestproto.ExecEnv(req.Env)
+	cmd.Env = guestproto.ExecEnv(injectedSecrets(), req.Env)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

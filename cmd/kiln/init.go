@@ -22,9 +22,10 @@ const defaultRoot = "/var/lib/kiln"
 
 // configFile is the on-disk config. Later phases add fields.
 type configFile struct {
-	BearerToken string `json:"bearer_token"`
-	ControlAddr string `json:"control_addr"`
-	IngressAddr string `json:"ingress_addr"`
+	BearerToken string            `json:"bearer_token"`
+	ControlAddr string            `json:"control_addr"`
+	IngressAddr string            `json:"ingress_addr"`
+	Secrets     map[string]string `json:"secrets,omitempty"`
 }
 
 // cmdInit is first-run setup. It fetches the pinned Firecracker tarball and

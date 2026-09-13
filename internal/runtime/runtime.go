@@ -22,14 +22,27 @@ type Spec struct {
 	KernelPath     string
 	RootfsPath     string
 	RootfsReadOnly bool
-	VCPUs          int
-	MemoryMiB      int
-	VsockCID       uint32
-	VsockPort      uint32
+	// OverlayPath attaches a second writable drive as /overlay.ext4 when set.
+	OverlayPath string
+	VCPUs       int
+	MemoryMiB   int
+	VsockCID    uint32
+	VsockPort   uint32
 	// TAPName attaches a host TAP device as eth0 when set.
 	TAPName string
 	// BootArgs replaces the default kernel command line when set.
 	BootArgs string
+}
+
+// RestoreSpec describes a microVM loaded from a template snapshot instead of
+// booting a kernel.
+type RestoreSpec struct {
+	Spec
+	// StatePath is the host path of the Firecracker state file.
+	StatePath string
+	// UffdSocket is the host path of the UFFD socket that the page fault
+	// source listens on.
+	UffdSocket string
 }
 
 // SnapshotFiles are the two files a full snapshot consists of.
@@ -140,4 +153,10 @@ const (
 // SandboxDir returns the host directory holding one sandbox's files.
 func SandboxDir(root, id string) string {
 	return filepath.Join(root, "sandboxes", id)
+}
+
+// RestoreUffdSocket returns the host path of the UFFD socket a restoring
+// microVM connects to. Firecracker sees the same socket at /run/uffd.sock.
+func RestoreUffdSocket(root, id string) string {
+	return filepath.Join(SandboxDir(root, id), "jail", "firecracker", id, "root", "run", "uffd.sock")
 }

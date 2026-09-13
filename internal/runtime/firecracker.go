@@ -77,6 +77,74 @@ func (vm *VM) chrootDir() string {
 	return filepath.Join(vm.Dir, "jail", "firecracker", vm.ID, "root")
 }
 
+// Restore loads a snapshot into a new microVM and waits until the guest agent
+// answers a fresh hello. The VM resumes before the call returns.
+func (f *Firecracker) Restore(ctx context.Context, spec RestoreSpec) (*VM, error) {
+	if err := spec.validate(f.root); err != nil {
+		return nil, err
+	}
+	if spec.StatePath == "" || spec.UffdSocket == "" {
+		return nil, fmt.Errorf("invalid: state path and uffd socket are required")
+	}
+	if err := checkKVM(); err != nil {
+		return nil, err
+	}
+	vm := &VM{
+		ID:        spec.ID,
+		Dir:       SandboxDir(f.root, spec.ID),
+		VsockPort: spec.VsockPort,
+		done:      make(chan struct{}),
+	}
+	vm.Socket = filepath.Join(vm.chrootDir(), "run", "firecracker.sock")
+	vm.VsockSocket = filepath.Join(vm.chrootDir(), "run", "vsock.sock")
+
+	if err := f.prepare(spec.Spec, vm); err != nil {
+		_ = vm.cleanup()
+		return nil, withConsole(vm, err)
+	}
+	if err := linkOrCopy(spec.StatePath, filepath.Join(vm.chrootDir(), "snapshots", "state")); err != nil {
+		_ = vm.cleanup()
+		return nil, withConsole(vm, err)
+	}
+	if err := f.launch(spec.Spec, vm); err != nil {
+		_ = vm.cleanup()
+		return nil, withConsole(vm, err)
+	}
+	if err := f.loadSnapshot(ctx, spec, vm); err != nil {
+		_ = vm.cleanup()
+		return nil, withConsole(vm, err)
+	}
+	if err := f.waitAgent(ctx, vm); err != nil {
+		_ = vm.cleanup()
+		return nil, withConsole(vm, err)
+	}
+	return vm, nil
+}
+
+// loadSnapshot points Firecracker at the state file and the UFFD socket, then
+// resumes the loaded VM. Every other device comes from the snapshot.
+func (f *Firecracker) loadSnapshot(ctx context.Context, spec RestoreSpec, vm *VM) error {
+	if err := waitSocket(ctx, vm); err != nil {
+		return err
+	}
+	vm.api = newAPI(vm.Socket)
+	load := map[string]any{
+		"snapshot_path":     "/snapshots/state",
+		"mem_backend":       map[string]any{"backend_path": "/run/uffd.sock", "backend_type": "Uffd"},
+		"resume_vm":         false,
+		"track_dirty_pages": false,
+	}
+	if spec.TAPName != "" {
+		load["network_overrides"] = []map[string]string{
+			{"iface_id": "eth0", "host_dev_name": spec.TAPName},
+		}
+	}
+	if err := vm.api.put(ctx, "/snapshot/load", load); err != nil {
+		return err
+	}
+	return vm.api.patch(ctx, "/vm", map[string]string{"state": "Resumed"})
+}
+
 // Start boots a microVM and waits until the guest agent answers.
 func (f *Firecracker) Start(ctx context.Context, spec Spec) (*VM, error) {
 	if err := spec.validate(f.root); err != nil {
@@ -206,6 +274,15 @@ func (f *Firecracker) prepare(spec Spec, vm *VM) error {
 			return err
 		}
 	}
+	if spec.OverlayPath != "" {
+		overlay := filepath.Join(chroot, "overlay.ext4")
+		if err := linkOrCopy(spec.OverlayPath, overlay); err != nil {
+			return err
+		}
+		if err := os.Chown(overlay, JailUID, JailGID); err != nil {
+			return err
+		}
+	}
 	return os.MkdirAll(filepath.Join(cgroupRoot, "kiln", spec.ID), 0o755)
 }
 
@@ -265,6 +342,16 @@ func (f *Firecracker) configure(ctx context.Context, spec Spec, vm *VM) error {
 		"is_read_only":   spec.RootfsReadOnly,
 	}); err != nil {
 		return err
+	}
+	if spec.OverlayPath != "" {
+		if err := vm.api.put(ctx, "/drives/overlay", map[string]any{
+			"drive_id":       "overlay",
+			"path_on_host":   "/overlay.ext4",
+			"is_root_device": false,
+			"is_read_only":   false,
+		}); err != nil {
+			return err
+		}
 	}
 	if err := vm.api.put(ctx, "/machine-config", map[string]any{
 		"vcpu_count":   spec.VCPUs,

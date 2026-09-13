@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alternayte/kiln/internal/sandbox"
 	"github.com/alternayte/kiln/internal/store"
 	"github.com/alternayte/kiln/internal/template"
 )
@@ -27,7 +28,12 @@ func testServer(t *testing.T) (*httptest.Server, store.Store) {
 		Store: st,
 		Now:   func() time.Time { return time.Unix(1700000000, 0).UTC() },
 	}
-	ts := httptest.NewServer((&Server{Store: st, Templates: mgr, Token: "secret", Base: context.Background()}).Handler())
+	sbx := sandbox.New(sandbox.Config{
+		Root:    t.TempDir(),
+		Store:   st,
+		Secrets: map[string]string{"S": "v"},
+	})
+	ts := httptest.NewServer((&Server{Store: st, Templates: mgr, Sandboxes: sbx, Token: "secret", Base: context.Background()}).Handler())
 	t.Cleanup(ts.Close)
 	return ts, st
 }
@@ -178,5 +184,76 @@ func TestListTemplates(t *testing.T) {
 	}
 	if len(list) != 0 {
 		t.Fatalf("list %v, want empty", list)
+	}
+}
+
+func TestCreateSandboxValidation(t *testing.T) {
+	ts, st := testServer(t)
+	ctx := context.Background()
+	row := store.Template{
+		Name: "py312", ImageRef: "i", VCPUs: 1, MemoryMB: 1, DiskMB: 1,
+		EgressAllow: []string{}, State: store.TemplateReady,
+		CreatedAt: time.Unix(1700000000, 0).UTC(),
+	}
+	if err := st.CreateTemplate(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		body string
+		code string
+	}{
+		{
+			name: "missing idle_seconds",
+			body: `{"template":"py312","lifecycle":"ephemeral"}`,
+			code: CodeInvalid,
+		},
+		{
+			name: "unknown lifecycle",
+			body: `{"template":"py312","lifecycle":"forever","idle_seconds":60}`,
+			code: CodeInvalid,
+		},
+		{
+			name: "unknown secret",
+			body: `{"template":"py312","lifecycle":"ephemeral","idle_seconds":60,"secrets":["NOPE"]}`,
+			code: CodeInvalid,
+		},
+		{
+			name: "unknown template",
+			body: `{"template":"absent","lifecycle":"ephemeral","idle_seconds":60}`,
+			code: CodeNotFound,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes", "secret", c.body)
+			if code := errorCode(t, out); code != c.code {
+				t.Fatalf("status %d code %q, want %q: %s", resp.StatusCode, code, c.code, out)
+			}
+		})
+	}
+}
+
+func TestSandboxNotFound(t *testing.T) {
+	ts, _ := testServer(t)
+	resp, out := call(t, http.MethodGet, ts.URL+"/v1/sandboxes/absent", "secret", "")
+	if resp.StatusCode != http.StatusNotFound || errorCode(t, out) != CodeNotFound {
+		t.Fatalf("get: status %d body %s", resp.StatusCode, out)
+	}
+	resp, _ = call(t, http.MethodDelete, ts.URL+"/v1/sandboxes/absent", "secret", "")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("delete: status %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestGuestFilePath(t *testing.T) {
+	for _, bad := range []string{"", "..", "a/../b", "."} {
+		if _, err := guestFilePath(bad); err == nil {
+			t.Fatalf("%q accepted", bad)
+		}
+	}
+	got, err := guestFilePath("work/marker")
+	if err != nil || got != "/work/marker" {
+		t.Fatalf("got %q err %v", got, err)
 	}
 }

@@ -26,6 +26,11 @@ const Table = "kiln"
 // on.
 const metadataAddr = "169.254.169.254"
 
+// tapMAC is the host-side MAC of every TAP. All guest links are separate L2
+// segments, so one MAC is not a collision, and it keeps a restored guest's
+// gateway ARP entry valid.
+const tapMAC = "02:00:00:00:00:01"
+
 // Manager creates and removes per-VM network attachments.
 type Manager struct {
 	next atomic.Uint32
@@ -156,7 +161,11 @@ func (a *Attachment) Detach(ctx context.Context) error {
 }
 
 func (a *Attachment) setUp(ctx context.Context) error {
+	// Every TAP presents the same host MAC. A restored guest keeps the ARP
+	// entry for its gateway from the snapshot, so a new MAC would drop its
+	// first packets until the entry expires.
 	for _, args := range [][]string{
+		{"link", "set", a.TAPName, "address", tapMAC},
 		{"link", "set", a.TAPName, "up"},
 		{"addr", "add", runtime.GuestGateway + "/32", "dev", a.TAPName},
 	} {

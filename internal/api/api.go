@@ -11,6 +11,9 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/alternayte/kiln/internal/guestproto"
+	"github.com/alternayte/kiln/internal/runtime"
+	"github.com/alternayte/kiln/internal/sandbox"
 	"github.com/alternayte/kiln/internal/store"
 	"github.com/alternayte/kiln/internal/template"
 )
@@ -28,6 +31,7 @@ const (
 type Server struct {
 	Store     store.Store
 	Templates *template.Manager
+	Sandboxes *sandbox.Manager
 	Token     string
 	// Base is the lifetime context for asynchronous work.
 	Base context.Context
@@ -40,6 +44,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/templates", s.createTemplate)
 	mux.HandleFunc("GET /v1/templates/{name}", s.getTemplate)
 	mux.HandleFunc("DELETE /v1/templates/{name}", s.deleteTemplate)
+	mux.HandleFunc("GET /v1/sandboxes", s.listSandboxes)
+	mux.HandleFunc("POST /v1/sandboxes", s.createSandbox)
+	mux.HandleFunc("GET /v1/sandboxes/{id}", s.getSandbox)
+	mux.HandleFunc("DELETE /v1/sandboxes/{id}", s.deleteSandbox)
+	mux.HandleFunc("POST /v1/sandboxes/{id}/exec", s.execSandbox)
+	mux.HandleFunc("GET /v1/sandboxes/{id}/files/{path...}", s.getSandboxFile)
+	mux.HandleFunc("PUT /v1/sandboxes/{id}/files/{path...}", s.putSandboxFile)
 	return s.auth(mux)
 }
 
@@ -87,13 +98,30 @@ func (s *Server) writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
+		return
 	case errors.Is(err, store.ErrConflict):
 		writeError(w, http.StatusConflict, CodeConflict, err.Error())
-	case template.IsInvalid(err):
+		return
+	case errors.Is(err, sandbox.ErrExhausted):
+		writeError(w, http.StatusInsufficientStorage, CodeExhausted, err.Error())
+		return
+	case template.IsInvalid(err), sandbox.IsInvalid(err):
 		writeError(w, http.StatusBadRequest, CodeInvalid, err.Error())
-	default:
-		writeError(w, http.StatusInternalServerError, CodeInternal, err.Error())
+		return
 	}
+	var ee *runtime.ExecError
+	if errors.As(err, &ee) {
+		switch ee.Code {
+		case guestproto.CodeNotFound:
+			writeError(w, http.StatusNotFound, CodeNotFound, ee.Message)
+		case guestproto.CodeInvalid:
+			writeError(w, http.StatusBadRequest, CodeInvalid, ee.Message)
+		default:
+			writeError(w, http.StatusInternalServerError, CodeInternal, ee.Message)
+		}
+		return
+	}
+	writeError(w, http.StatusInternalServerError, CodeInternal, err.Error())
 }
 
 // decodeJSON accepts one JSON object of at most 1 MiB with no unknown fields.

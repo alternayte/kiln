@@ -16,6 +16,8 @@ import (
 	"github.com/alternayte/kiln/internal/api"
 	"github.com/alternayte/kiln/internal/network"
 	"github.com/alternayte/kiln/internal/runtime"
+	"github.com/alternayte/kiln/internal/sandbox"
+	"github.com/alternayte/kiln/internal/snapshot"
 	"github.com/alternayte/kiln/internal/store"
 	"github.com/alternayte/kiln/internal/template"
 )
@@ -67,10 +69,23 @@ func cmdServe() error {
 		Builder:    template.Builder{KilninitPath: kilninit},
 		KernelPath: filepath.Join(root, "kernel", "vmlinux-"+kernelVersion),
 	}
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("serve: %w", err)
+	}
+	sbx := sandbox.New(sandbox.Config{
+		Root:       root,
+		Store:      st,
+		Runtime:    rt,
+		Network:    nm,
+		Pages:      func() snapshot.PageFaultSource { return &snapshot.Process{Binary: exe} },
+		KernelPath: mgr.KernelPath,
+		Secrets:    cfg.Secrets,
+	})
 
 	srv := &http.Server{
 		Addr:              cfg.ControlAddr,
-		Handler:           (&api.Server{Store: st, Templates: mgr, Token: cfg.BearerToken, Base: ctx}).Handler(),
+		Handler:           (&api.Server{Store: st, Templates: mgr, Sandboxes: sbx, Token: cfg.BearerToken, Base: ctx}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	ln, err := net.Listen("tcp", cfg.ControlAddr)

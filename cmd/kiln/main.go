@@ -17,6 +17,8 @@ func main() {
 		err = cmdInit(os.Args[2:])
 	case "serve":
 		err = cmdServe()
+	case "snapfault":
+		err = cmdSnapfault(os.Args[2:])
 	case "ctl":
 		err = cmdCtl()
 	case "help", "-h", "--help":

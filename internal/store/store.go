@@ -15,6 +15,23 @@ const (
 	TemplateFailed   = "failed"
 )
 
+// Sandbox lifecycle values.
+const (
+	LifecycleEphemeral  = "ephemeral"
+	LifecyclePersistent = "persistent"
+)
+
+// Sandbox states.
+const (
+	SandboxCreating  = "creating"
+	SandboxRunning   = "running"
+	SandboxSleeping  = "sleeping"
+	SandboxWaking    = "waking"
+	SandboxStopping  = "stopping"
+	SandboxDestroyed = "destroyed"
+	SandboxFailed    = "failed"
+)
+
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("store: not found")
 
@@ -46,6 +63,24 @@ type Event struct {
 	At        time.Time
 }
 
+// Sandbox is one row of the sandboxes table.
+type Sandbox struct {
+	ID           string
+	TemplateName string
+	SnapshotID   string
+	Lifecycle    string
+	State        string
+	TTLSeconds   *int
+	IdleSeconds  int
+	LastActiveAt time.Time
+	TapName      string
+	VsockCID     *int
+	PID          int
+	Metadata     string
+	CreatedAt    time.Time
+	DestroyedAt  *time.Time
+}
+
 // Store records intent. The host records reality; the reconciler corrects the
 // store. SQLite is the only implementation.
 type Store interface {
@@ -65,5 +100,13 @@ type Store interface {
 	DeleteTemplate(ctx context.Context, name string) error
 	AppendEvent(ctx context.Context, e Event) error
 	ListEvents(ctx context.Context, sandboxID string) ([]Event, error)
+
+	CreateSandbox(ctx context.Context, s Sandbox) error
+	GetSandbox(ctx context.Context, id string) (Sandbox, error)
+	ListSandboxes(ctx context.Context) ([]Sandbox, error)
+	SetSandboxState(ctx context.Context, id, state string) error
+	SetSandboxRuntime(ctx context.Context, id, tapName string, vsockCID *int, pid int) error
+	TouchSandbox(ctx context.Context, id string, at time.Time) error
+	DestroySandbox(ctx context.Context, id string, at time.Time) error
 	Close() error
 }

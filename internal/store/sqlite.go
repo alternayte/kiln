@@ -360,3 +360,159 @@ func nullString(s string) any {
 	}
 	return s
 }
+
+// nullInt stores a zero as NULL.
+func nullInt(v int) any {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+
+// nullIntPtr stores a nil pointer as NULL.
+func nullIntPtr(v *int) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+func (s *sqliteStore) CreateSandbox(ctx context.Context, sb Sandbox) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sandboxes (
+		id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
+		last_active_at, tap_name, vsock_cid, pid, metadata, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sb.ID, sb.TemplateName, nullString(sb.SnapshotID), sb.Lifecycle, sb.State,
+		nullIntPtr(sb.TTLSeconds), sb.IdleSeconds, sb.LastActiveAt.Unix(),
+		nullString(sb.TapName), nullIntPtr(sb.VsockCID), nullInt(sb.PID), sb.Metadata, sb.CreatedAt.Unix(),
+	)
+	return err
+}
+
+func (s *sqliteStore) GetSandbox(ctx context.Context, id string) (Sandbox, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT
+		id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
+		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at
+	FROM sandboxes WHERE id = ?`, id)
+	sb, err := scanSandbox(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Sandbox{}, ErrNotFound
+	}
+	return sb, err
+}
+
+func (s *sqliteStore) ListSandboxes(ctx context.Context) ([]Sandbox, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT
+		id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
+		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at
+	FROM sandboxes ORDER BY created_at, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Sandbox
+	for rows.Next() {
+		sb, err := scanSandbox(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sb)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) SetSandboxState(ctx context.Context, id, state string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE sandboxes SET state = ? WHERE id = ?`, state, id)
+	if err != nil {
+		return err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *sqliteStore) SetSandboxRuntime(ctx context.Context, id, tapName string, vsockCID *int, pid int) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE sandboxes SET tap_name = ?, vsock_cid = ?, pid = ? WHERE id = ?`,
+		nullString(tapName), nullIntPtr(vsockCID), nullInt(pid), id)
+	if err != nil {
+		return err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *sqliteStore) TouchSandbox(ctx context.Context, id string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sandboxes SET last_active_at = ? WHERE id = ?`, at.Unix(), id)
+	return err
+}
+
+func (s *sqliteStore) DestroySandbox(ctx context.Context, id string, at time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE sandboxes SET
+		state = ?, destroyed_at = COALESCE(destroyed_at, ?), pid = NULL
+	WHERE id = ?`, SandboxDestroyed, at.Unix(), id)
+	if err != nil {
+		return err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+type sandboxScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanSandbox(row sandboxScanner) (Sandbox, error) {
+	var (
+		sb        Sandbox
+		snapshot  sql.NullString
+		ttl       sql.NullInt64
+		active    int64
+		tap       sql.NullString
+		cid       sql.NullInt64
+		pid       sql.NullInt64
+		created   int64
+		destroyed sql.NullInt64
+	)
+	if err := row.Scan(
+		&sb.ID, &sb.TemplateName, &snapshot, &sb.Lifecycle, &sb.State, &ttl, &sb.IdleSeconds,
+		&active, &tap, &cid, &pid, &sb.Metadata, &created, &destroyed,
+	); err != nil {
+		return Sandbox{}, err
+	}
+	sb.SnapshotID = snapshot.String
+	sb.LastActiveAt = time.Unix(active, 0).UTC()
+	if ttl.Valid {
+		v := int(ttl.Int64)
+		sb.TTLSeconds = &v
+	}
+	sb.TapName = tap.String
+	if cid.Valid {
+		v := int(cid.Int64)
+		sb.VsockCID = &v
+	}
+	sb.PID = int(pid.Int64)
+	sb.CreatedAt = time.Unix(created, 0).UTC()
+	if destroyed.Valid {
+		t := time.Unix(destroyed.Int64, 0).UTC()
+		sb.DestroyedAt = &t
+	}
+	return sb, nil
+}

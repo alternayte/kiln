@@ -24,14 +24,18 @@ const (
 	FrameRequest byte = 'j' // JSON Request
 	FrameStdout  byte = 'o'
 	FrameStderr  byte = 'e'
+	FrameData    byte = 'd' // raw write_file chunk, host to guest
 	FrameResult  byte = 'r' // JSON Result
 )
 
 // Request operations.
 const (
-	OpHello    = "hello"
-	OpExec     = "exec"
-	OpShutdown = "shutdown"
+	OpHello     = "hello"
+	OpExec      = "exec"
+	OpShutdown  = "shutdown"
+	OpResume    = "resume"
+	OpReadFile  = "read_file"
+	OpWriteFile = "write_file"
 )
 
 // Exec request bounds.
@@ -43,6 +47,7 @@ const (
 // Error codes. The API layer reports these unchanged.
 const (
 	CodeInvalid  = "invalid"
+	CodeNotFound = "not_found"
 	CodeInternal = "internal"
 )
 
@@ -53,6 +58,13 @@ type Request struct {
 	Cwd            string            `json:"cwd,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
 	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
+	// Path is the guest path of a file request.
+	Path string `json:"path,omitempty"`
+	// Entropy, UnixNanos, Hostname and Secrets carry the resume hook data.
+	Entropy   []byte            `json:"entropy,omitempty"`
+	UnixNanos int64             `json:"unix_nanos,omitempty"`
+	Hostname  string            `json:"hostname,omitempty"`
+	Secrets   map[string]string `json:"secrets,omitempty"`
 }
 
 // Error is a stable error from the agent.
@@ -89,12 +101,15 @@ func NormalizeExec(req *Request) *Error {
 	return nil
 }
 
-// ExecEnv returns the agent's fixed base environment with extra merged on
-// top. Request entries win.
-func ExecEnv(extra map[string]string) []string {
+// ExecEnv returns the agent's fixed base environment with the sandbox's
+// injected secrets and the request entries merged on top. Later layers win.
+func ExecEnv(secrets, extra map[string]string) []string {
 	base := map[string]string{
 		"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"HOME": "/root",
+	}
+	for k, v := range secrets {
+		base[k] = v
 	}
 	for k, v := range extra {
 		base[k] = v

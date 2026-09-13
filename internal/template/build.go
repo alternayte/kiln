@@ -247,8 +247,9 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 		}
 	}()
 
-	vm, err := m.Runtime.Start(ctx, runtime.Spec{
-		ID:             m.buildID(req.Name),
+	// The setup boot writes the rootfs.
+	setupVM, err := m.Runtime.Start(ctx, runtime.Spec{
+		ID:             m.buildID(req.Name) + "-setup",
 		KernelPath:     m.KernelPath,
 		RootfsPath:     rootfs,
 		RootfsReadOnly: false,
@@ -261,35 +262,55 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
-		defer cancel()
-		if serr := m.Runtime.Stop(stopCtx, vm); serr != nil {
-			if err == nil {
-				err = serr
-			} else {
-				err = fmt.Errorf("%w; stop: %v", err, serr)
-			}
-		}
-	}()
-
 	for i, cmd := range req.Setup {
-		res, execErr := vm.Exec(ctx, runtime.ExecRequest{
+		res, execErr := setupVM.Exec(ctx, runtime.ExecRequest{
 			Cmd:            []string{"sh", "-c", cmd},
 			TimeoutSeconds: setupTimeoutSeconds,
 		})
 		if execErr != nil {
+			_ = m.stopVM(ctx, setupVM)
 			return fmt.Errorf("setup[%d] %q: %w", i, cmd, execErr)
 		}
 		if res.TimedOut || res.ExitCode != 0 {
 			output := strings.TrimSpace(strings.Join([]string{res.Stderr, res.Stdout}, "\n"))
+			_ = m.stopVM(ctx, setupVM)
 			return fmt.Errorf("setup[%d] %q: exit %d timed_out=%v: %s", i, cmd, res.ExitCode, res.TimedOut, output)
 		}
 	}
-
-	if _, err := m.Runtime.Snapshot(ctx, vm, dir); err != nil {
+	if err := m.stopVM(ctx, setupVM); err != nil {
 		return err
 	}
+
+	// The snapshot boot attaches the finished rootfs read-only and a writable
+	// slot for a sandbox overlay. The snapshot then carries both drives, and
+	// the rootfs keeps its read-only feature for every restore.
+	overlay := filepath.Join(dir, "overlay.ext4")
+	if err := os.Truncate(overlay, int64(req.DiskMB)<<20); err != nil {
+		return err
+	}
+	snapVM, err := m.Runtime.Start(ctx, runtime.Spec{
+		ID:             m.buildID(req.Name) + "-snap",
+		KernelPath:     m.KernelPath,
+		RootfsPath:     rootfs,
+		RootfsReadOnly: true,
+		OverlayPath:    overlay,
+		VCPUs:          req.VCPUs,
+		MemoryMiB:      req.MemoryMB,
+		VsockCID:       m.allocCID(),
+		VsockPort:      guestproto.Port,
+		TAPName:        att.TAPName,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := m.Runtime.Snapshot(ctx, snapVM, dir); err != nil {
+		_ = m.stopVM(ctx, snapVM)
+		return err
+	}
+	if err := m.stopVM(ctx, snapVM); err != nil {
+		return err
+	}
+	_ = os.Remove(overlay)
 	return writeManifest(dir, Manifest{
 		Name:        req.Name,
 		ImageRef:    req.Image,
@@ -301,6 +322,13 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 		Setup:       req.Setup,
 		CreatedAt:   m.now(),
 	})
+}
+
+// stopVM stops one build VM and reports its error.
+func (m *Manager) stopVM(ctx context.Context, vm *runtime.VM) error {
+	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
+	defer cancel()
+	return m.Runtime.Stop(stopCtx, vm)
 }
 
 // buildID is the internal id of a build VM. It has no sandbox row, but its

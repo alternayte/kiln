@@ -107,12 +107,15 @@ func TestNormalizeExecRejects(t *testing.T) {
 }
 
 func TestExecEnv(t *testing.T) {
-	env := ExecEnv(map[string]string{"FOO": "bar", "PATH": "/custom"})
+	env := ExecEnv(map[string]string{"SECRET": "s3"}, map[string]string{"FOO": "bar", "PATH": "/custom", "SECRET": "req"})
 	joined := strings.Join(env, "\n") + "\n"
-	for _, want := range []string{"FOO=bar", "HOME=/root", "PATH=/custom"} {
+	for _, want := range []string{"FOO=bar", "HOME=/root", "PATH=/custom", "SECRET=req"} {
 		if !strings.Contains(joined, want+"\n") {
 			t.Fatalf("env does not contain %q:\n%s", want, joined)
 		}
+	}
+	if strings.Contains(joined, "SECRET=s3") {
+		t.Fatalf("request secret did not win:\n%s", joined)
 	}
 	if strings.Contains(joined, "PATH=/usr/local/sbin") {
 		t.Fatalf("request PATH did not win:\n%s", joined)

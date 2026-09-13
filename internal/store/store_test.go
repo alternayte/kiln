@@ -203,8 +203,8 @@ func TestReopenAppliesMigrationsOnce(t *testing.T) {
 	if err := sq.db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 {
-		t.Fatalf("schema_migrations rows %d, want 1", count)
+	if count != 2 {
+		t.Fatalf("schema_migrations rows %d, want 2", count)
 	}
 }
 
@@ -270,29 +270,26 @@ func TestTemplateDependentsWithoutChildTables(t *testing.T) {
 	}
 }
 
-func TestTemplateDependentsCountsFutureTables(t *testing.T) {
+func TestTemplateDependentsCountsChildren(t *testing.T) {
 	s, _ := openTest(t)
 	ctx := context.Background()
 	sq := s.(*sqliteStore)
-	for _, stmt := range []string{
-		`CREATE TABLE sandboxes (
-			id TEXT PRIMARY KEY,
-			template_name TEXT NOT NULL,
-			destroyed_at INTEGER
-		)`,
-		`CREATE TABLE snapshots (
-			id TEXT PRIMARY KEY,
-			template_name TEXT NOT NULL
-		)`,
-	} {
-		if _, err := sq.db.ExecContext(ctx, stmt); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := sq.db.ExecContext(ctx, `INSERT INTO sandboxes (id, template_name, destroyed_at) VALUES ('live', 'py312', NULL)`); err != nil {
+	if err := s.CreateTemplate(ctx, sample("py312")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sq.db.ExecContext(ctx, `INSERT INTO sandboxes (id, template_name, destroyed_at) VALUES ('dead', 'py312', 1)`); err != nil {
+	if _, err := sq.db.ExecContext(ctx, `CREATE TABLE snapshots (
+		id TEXT PRIMARY KEY,
+		template_name TEXT NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	insert := `INSERT INTO sandboxes (
+		id, template_name, lifecycle, state, idle_seconds, last_active_at, metadata, created_at, destroyed_at
+	) VALUES (?, 'py312', 'ephemeral', 'running', 60, 0, '{}', 0, ?)`
+	if _, err := sq.db.ExecContext(ctx, insert, "live", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sq.db.ExecContext(ctx, insert, "dead", 1); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := sq.db.ExecContext(ctx, `INSERT INTO snapshots (id, template_name) VALUES ('snap', 'py312')`); err != nil {

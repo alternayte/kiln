@@ -127,7 +127,11 @@ func (b *Builder) pull(ctx context.Context, imageRef, root string) (string, erro
 		if err == nil {
 			err = applyLayer(root, tarReader)
 		}
-		tr.Close()
+		// Close the blob reader, not the tar reader: the tar reader wraps the
+		// response body, and only the blob reader releases the registry slot.
+		if closeErr := br.Close(); err == nil {
+			err = closeErr
+		}
 		if err != nil {
 			return "", fmt.Errorf("template: %s: layer %s: %w", imageRef, layer.Digest, err)
 		}

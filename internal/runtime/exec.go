@@ -78,6 +78,17 @@ func (vm *VM) ExecStream(ctx context.Context, req ExecRequest, onOutput func(typ
 	}
 }
 
+// Check dials the agent and performs a hello. It is used to probe a restored
+// VM.
+func (vm *VM) Check(ctx context.Context) error {
+	ac, err := vm.dialAgent(ctx)
+	if err != nil {
+		return err
+	}
+	defer ac.Close()
+	return hello(ac)
+}
+
 // OpenFile starts a guest file read and returns a reader for its contents. It
 // fails before any data is read when the agent rejects the path or the file.
 func (vm *VM) OpenFile(ctx context.Context, path string) (io.ReadCloser, error) {

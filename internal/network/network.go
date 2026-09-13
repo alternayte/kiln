@@ -198,29 +198,29 @@ func (a *Attachment) applyRules(ctx context.Context) error {
 	fmt.Fprintf(&b, "add set inet %s %s { type ipv4_addr; flags timeout; }\n", Table, a.setName())
 
 	fmt.Fprintf(&b, "add chain inet %s %s { type filter hook forward priority 0; policy accept; }\n", Table, a.chain("_fwd"))
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q ct mark set %d\n", Table, a.chain("_fwd"), tap, a.mark)
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q ip daddr %s drop\n", Table, a.chain("_fwd"), tap, metadataAddr)
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ct mark set %d\n", Table, a.chain("_fwd"), tap, a.mark)
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s drop\n", Table, a.chain("_fwd"), tap, metadataAddr)
 	// An established connection was allowed when it started. Keep it after its
 	// address leaves the set, so a long transfer is not cut by a DNS TTL.
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q ct state established,related accept\n", Table, a.chain("_fwd"), tap)
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q ip daddr @%s tcp dport 443 accept\n", Table, a.chain("_fwd"), tap, a.setName())
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q drop\n", Table, a.chain("_fwd"), tap)
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ct state established,related accept\n", Table, a.chain("_fwd"), tap)
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr @%s tcp dport 443 accept\n", Table, a.chain("_fwd"), tap, a.setName())
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter drop\n", Table, a.chain("_fwd"), tap)
 
 	fmt.Fprintf(&b, "add chain inet %s %s { type filter hook input priority 0; policy accept; }\n", Table, a.chain("_in"))
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q ct mark set %d\n", Table, a.chain("_in"), tap, a.mark)
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q ip daddr %s drop\n", Table, a.chain("_in"), tap, metadataAddr)
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q ip daddr %s udp dport %d accept\n", Table, a.chain("_in"), tap, runtime.GuestGateway, a.resolver.udpPort())
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q ip daddr %s tcp dport %d accept\n", Table, a.chain("_in"), tap, runtime.GuestGateway, a.resolver.tcpPort())
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q drop\n", Table, a.chain("_in"), tap)
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ct mark set %d\n", Table, a.chain("_in"), tap, a.mark)
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s drop\n", Table, a.chain("_in"), tap, metadataAddr)
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s udp dport %d accept\n", Table, a.chain("_in"), tap, runtime.GuestGateway, a.resolver.udpPort())
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s tcp dport %d accept\n", Table, a.chain("_in"), tap, runtime.GuestGateway, a.resolver.tcpPort())
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter drop\n", Table, a.chain("_in"), tap)
 
 	fmt.Fprintf(&b, "add chain inet %s %s { type nat hook prerouting priority dstnat; policy accept; }\n", Table, a.chain("_dnat"))
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q ip daddr %s udp dport 53 dnat ip to %s:%d\n",
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s udp dport 53 dnat ip to %s:%d\n",
 		Table, a.chain("_dnat"), tap, runtime.GuestGateway, runtime.GuestGateway, a.resolver.udpPort())
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q ip daddr %s tcp dport 53 dnat ip to %s:%d\n",
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s tcp dport 53 dnat ip to %s:%d\n",
 		Table, a.chain("_dnat"), tap, runtime.GuestGateway, runtime.GuestGateway, a.resolver.tcpPort())
 
 	fmt.Fprintf(&b, "add chain inet %s %s { type nat hook postrouting priority srcnat; policy accept; }\n", Table, a.chain("_src"))
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q masquerade\n", Table, a.chain("_src"), tap)
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter masquerade\n", Table, a.chain("_src"), tap)
 
 	return nftScript(ctx, b.String())
 }

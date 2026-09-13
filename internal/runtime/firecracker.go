@@ -99,24 +99,19 @@ func (f *Firecracker) Restore(ctx context.Context, spec RestoreSpec) (*VM, error
 	vm.VsockSocket = filepath.Join(vm.chrootDir(), "run", "vsock.sock")
 
 	if err := f.prepare(spec.Spec, vm); err != nil {
-		_ = vm.cleanup()
-		return nil, withConsole(vm, err)
+		return nil, f.fail(vm, err)
 	}
 	if err := linkOrCopy(spec.StatePath, filepath.Join(vm.chrootDir(), "snapshots", "state")); err != nil {
-		_ = vm.cleanup()
-		return nil, withConsole(vm, err)
+		return nil, f.fail(vm, err)
 	}
 	if err := f.launch(spec.Spec, vm); err != nil {
-		_ = vm.cleanup()
-		return nil, withConsole(vm, err)
+		return nil, f.fail(vm, err)
 	}
 	if err := f.loadSnapshot(ctx, spec, vm); err != nil {
-		_ = vm.cleanup()
-		return nil, withConsole(vm, err)
+		return nil, f.fail(vm, err)
 	}
 	if err := f.waitAgent(ctx, vm); err != nil {
-		_ = vm.cleanup()
-		return nil, withConsole(vm, err)
+		return nil, f.fail(vm, err)
 	}
 	return vm, nil
 }
@@ -163,20 +158,16 @@ func (f *Firecracker) Start(ctx context.Context, spec Spec) (*VM, error) {
 	vm.VsockSocket = filepath.Join(vm.chrootDir(), "run", "vsock.sock")
 
 	if err := f.prepare(spec, vm); err != nil {
-		_ = vm.cleanup()
-		return nil, withConsole(vm, err)
+		return nil, f.fail(vm, err)
 	}
 	if err := f.launch(spec, vm); err != nil {
-		_ = vm.cleanup()
-		return nil, withConsole(vm, err)
+		return nil, f.fail(vm, err)
 	}
 	if err := f.configure(ctx, spec, vm); err != nil {
-		_ = vm.cleanup()
-		return nil, withConsole(vm, err)
+		return nil, f.fail(vm, err)
 	}
 	if err := f.waitAgent(ctx, vm); err != nil {
-		_ = vm.cleanup()
-		return nil, withConsole(vm, err)
+		return nil, f.fail(vm, err)
 	}
 	return vm, nil
 }
@@ -595,6 +586,14 @@ func withConsole(vm *VM, err error) error {
 		return err
 	}
 	return fmt.Errorf("%w; console tail: %s", err, tail)
+}
+
+// fail attaches the console tail to err, then removes the VM's host
+// resources. The tail is captured before cleanup, which deletes it.
+func (f *Firecracker) fail(vm *VM, err error) error {
+	err = withConsole(vm, err)
+	_ = vm.cleanup()
+	return err
 }
 
 // consoleTail returns the last few lines of a VM's console log, for errors.

@@ -86,9 +86,7 @@ func Serve(ctx context.Context, memPath, sockPath string, ready func()) error {
 	}
 	defer unix.Close(uffd)
 	log.Printf("snapshot: serving %d region(s) from %s", len(mappings), memPath)
-	err = servePages(ctx, memPath, mappings, uffd)
-	log.Printf("snapshot: done: %v", err)
-	return err
+	return servePages(ctx, memPath, mappings, uffd)
 }
 
 func acceptContext(ctx context.Context, listener int) (int, error) {
@@ -144,7 +142,9 @@ func receiveUffd(conn int) ([]mapping, int, error) {
 	return mappings, fds[0], nil
 }
 
-func servePages(ctx context.Context, memPath string, mappings []mapping, uffd int) error {
+func servePages(ctx context.Context, memPath string, mappings []mapping, uffd int) (err error) {
+	faults := 0
+	defer func() { log.Printf("snapshot: done: %v (%d faults)", err, faults) }()
 	mem, err := os.Open(memPath)
 	if err != nil {
 		return fmt.Errorf("snapshot: memory file: %w", err)
@@ -191,6 +191,10 @@ func servePages(ctx context.Context, memPath string, mappings []mapping, uffd in
 			switch events[off] {
 			case uffdEventPagefault:
 				addr := binary.LittleEndian.Uint64(events[off+16 : off+24])
+				faults++
+				if faults <= 20 {
+					log.Printf("snapshot: fault %d at %#x", faults, addr)
+				}
 				if err := servePage(mem, page, mappings, uffd, addr); err != nil {
 					return err
 				}

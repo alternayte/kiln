@@ -400,10 +400,14 @@ func (m *Manager) Exec(ctx context.Context, id string, req runtime.ExecRequest, 
 		return runtime.ExecResult{}, err
 	}
 	res, err := vm.ExecStream(ctx, req, onOutput)
-	if err == nil {
-		_ = m.cfg.Store.TouchSandbox(ctx, id, m.now())
+	if err != nil {
+		if tail := vm.ConsoleTail(); tail != "" {
+			err = fmt.Errorf("%w; console tail: %s", err, tail)
+		}
+		return res, err
 	}
-	return res, err
+	_ = m.cfg.Store.TouchSandbox(ctx, id, m.now())
+	return res, nil
 }
 
 // OpenFile opens one guest file for reading.

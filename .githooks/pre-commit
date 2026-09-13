@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Run every staged-diff check: checks/staged/*.sh and checks/vocabulary.sh. Each reads `git diff --cached`.
+set -uo pipefail
+root="$(git rev-parse --show-toplevel)"
+fail=0
+for c in "$root"/checks/staged/*.sh "$root"/checks/vocabulary.sh; do
+  [ -e "$c" ] || continue
+  if ! bash "$c"; then
+    echo "FAIL $c" >&2
+    fail=1
+  fi
+done
+exit "$fail"

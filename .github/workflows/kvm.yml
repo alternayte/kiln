@@ -1,0 +1,23 @@
+name: kvm
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: extractions/setup-just@v2
+      - run: just check
+      - run: just gate P0
+      - run: just gate P1
+      - run: just gate P2
+      - run: just gate P3
+      - run: just gate P4
+      - run: just gate P5

@@ -38,6 +38,7 @@ func main() {
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
+		log.Printf("agent: connection accepted")
 		go serve(conn)
 	}
 }

@@ -594,12 +594,20 @@ func (vm *VM) ConsoleTail() string {
 	return consoleTail(filepath.Join(vm.Dir, "console.log"))
 }
 
-// fail attaches the console tail to err, then removes the VM's host
-// resources. The tail is captured before cleanup, which deletes it.
+// fail attaches the console and Firecracker log tails to err, then removes the
+// VM's host resources. The tails are captured before cleanup deletes them.
 func (f *Firecracker) fail(vm *VM, err error) error {
 	err = withConsole(vm, err)
+	if tail := vm.LogTail(); tail != "" {
+		err = fmt.Errorf("%w; firecracker log: %s", err, tail)
+	}
 	_ = vm.cleanup()
 	return err
+}
+
+// LogTail returns the last lines of the Firecracker log, for errors.
+func (vm *VM) LogTail() string {
+	return consoleTail(filepath.Join(vm.chrootDir(), "run", "firecracker.log"))
 }
 
 // consoleTail returns the last few lines of a VM's console log, for errors.

@@ -47,8 +47,10 @@ func writeResult(conn net.Conn, res guestproto.Result) {
 }
 
 // powerOff asks the kernel to power the guest off. Firecracker exits when the
-// guest does.
+// guest does. The sync flushes every mounted filesystem first, so a stopped
+// sandbox leaves a consistent image behind.
 func powerOff() {
+	unix.Sync()
 	if err := unix.Reboot(unix.LINUX_REBOOT_CMD_POWER_OFF); err != nil {
 		log.Printf("poweroff: %v", err)
 	}

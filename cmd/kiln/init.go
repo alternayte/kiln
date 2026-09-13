@@ -64,6 +64,11 @@ func cmdInit(args []string) error {
 		return err
 	}
 
+	kilninitPath := filepath.Join(binDir, "kilninit")
+	if err := installKilninit(kilninitPath); err != nil {
+		return err
+	}
+
 	cfgPath := filepath.Join(root, "config.json")
 	if err := writeConfig(cfgPath); err != nil {
 		return err
@@ -72,8 +77,51 @@ func cmdInit(args []string) error {
 	fmt.Printf("firecracker %s -> %s\n", firecrackerVersion, filepath.Join(binDir, "firecracker"))
 	fmt.Printf("jailer %s -> %s\n", firecrackerVersion, filepath.Join(binDir, "jailer"))
 	fmt.Printf("kernel %s -> %s\n", kernelVersion, kernelPath)
+	fmt.Printf("kilninit -> %s\n", kilninitPath)
 	fmt.Printf("config -> %s (mode 0600)\n", cfgPath)
 	return nil
+}
+
+// installKilninit builds the guest init for linux/amd64. The build needs the
+// source tree; a host without it keeps an existing binary.
+func installKilninit(dst string) error {
+	_, goMod := os.Stat("go.mod")
+	_, source := os.Stat(filepath.Join("guest", "kilninit"))
+	if goMod == nil && source == nil {
+		cmd := exec.Command("go", "build", "-o", dst, "./guest/kilninit")
+		cmd.Env = append(withoutEnv(os.Environ(), "GOOS", "GOARCH", "CGO_ENABLED"),
+			"GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("build kilninit: %w: %s", err, out)
+		}
+		return nil
+	}
+	if fileExists(dst) {
+		return nil
+	}
+	return fmt.Errorf("kilninit: guest source not found and %s does not exist; run kiln init from the repo", dst)
+}
+
+// withoutEnv drops the named variables so the cross-compile settings win.
+func withoutEnv(env []string, keys ...string) []string {
+	drop := map[string]bool{}
+	for _, k := range keys {
+		drop[k+"="] = true
+	}
+	out := env[:0:0]
+	for _, e := range env {
+		skip := false
+		for prefix := range drop {
+			if strings.HasPrefix(e, prefix) {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 func fileExists(path string) bool {

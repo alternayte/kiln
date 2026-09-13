@@ -21,8 +21,6 @@ import (
 )
 
 const (
-	jailedUID           = 65534
-	jailedGID           = 65534
 	cgroupRoot          = "/sys/fs/cgroup"
 	kvmDevice           = "/dev/kvm"
 	apiSocketTimeout    = 5 * time.Second
@@ -190,10 +188,10 @@ func (f *Firecracker) prepare(spec Spec, vm *VM) error {
 			return err
 		}
 	}
-	if err := os.Chown(runDir, jailedUID, jailedGID); err != nil {
+	if err := os.Chown(runDir, JailUID, JailGID); err != nil {
 		return err
 	}
-	if err := os.Chown(snapDir, jailedUID, jailedGID); err != nil {
+	if err := os.Chown(snapDir, JailUID, JailGID); err != nil {
 		return err
 	}
 	if err := linkOrCopy(spec.KernelPath, filepath.Join(chroot, "vmlinux")); err != nil {
@@ -204,7 +202,7 @@ func (f *Firecracker) prepare(spec Spec, vm *VM) error {
 		return err
 	}
 	if !spec.RootfsReadOnly {
-		if err := os.Chown(rootfs, jailedUID, jailedGID); err != nil {
+		if err := os.Chown(rootfs, JailUID, JailGID); err != nil {
 			return err
 		}
 	}
@@ -223,8 +221,8 @@ func (f *Firecracker) launch(spec Spec, vm *VM) error {
 	args := []string{
 		"--id", spec.ID,
 		"--exec-file", f.firecracker,
-		"--uid", strconv.Itoa(jailedUID),
-		"--gid", strconv.Itoa(jailedGID),
+		"--uid", strconv.Itoa(JailUID),
+		"--gid", strconv.Itoa(JailGID),
 		"--chroot-base-dir", filepath.Join(vm.Dir, "jail"),
 		"--cgroup-version", "2",
 		"--parent-cgroup", "kiln/" + spec.ID,
@@ -274,6 +272,14 @@ func (f *Firecracker) configure(ctx context.Context, spec Spec, vm *VM) error {
 		"smt":          false,
 	}); err != nil {
 		return err
+	}
+	if spec.TAPName != "" {
+		if err := vm.api.put(ctx, "/network-interfaces/eth0", map[string]any{
+			"iface_id":      "eth0",
+			"host_dev_name": spec.TAPName,
+		}); err != nil {
+			return err
+		}
 	}
 	if err := vm.api.put(ctx, "/vsock", map[string]any{
 		"guest_cid": spec.VsockCID,

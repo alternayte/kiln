@@ -26,6 +26,8 @@ type Spec struct {
 	MemoryMiB      int
 	VsockCID       uint32
 	VsockPort      uint32
+	// TAPName attaches a host TAP device as eth0 when set.
+	TAPName string
 	// BootArgs replaces the default kernel command line when set.
 	BootArgs string
 }
@@ -71,6 +73,9 @@ func (e *ExecError) Error() string { return e.Code + ": " + e.Message }
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
+// ifnamePattern matches a Linux interface name (IFNAMSIZ includes the NUL).
+var ifnamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,14}$`)
+
 func (s Spec) validate(root string) error {
 	if !idPattern.MatchString(s.ID) {
 		return fmt.Errorf("invalid: id %q is not a safe identifier", s.ID)
@@ -90,6 +95,9 @@ func (s Spec) validate(root string) error {
 	if s.VsockPort < 1 || s.VsockPort > 65535 {
 		return fmt.Errorf("invalid: vsock port %d is outside 1..65535", s.VsockPort)
 	}
+	if s.TAPName != "" && !ifnamePattern.MatchString(s.TAPName) {
+		return fmt.Errorf("invalid: tap name %q is not a valid interface name", s.TAPName)
+	}
 	if root == "" {
 		return fmt.Errorf("internal: empty Kiln root")
 	}
@@ -104,11 +112,30 @@ func (s Spec) bootArgs() string {
 	if !s.RootfsReadOnly {
 		mode = "rw"
 	}
-	return fmt.Sprintf("console=ttyS0 noapic reboot=k panic=1 pci=off nomodules root=/dev/vda %s init=/kilninit", mode)
+	args := fmt.Sprintf("console=ttyS0 noapic reboot=k panic=1 pci=off nomodules root=/dev/vda %s init=/kilninit", mode)
+	if s.TAPName != "" {
+		args += fmt.Sprintf(" ip=%s::%s:%s::eth0:off", GuestIP, GuestGateway, GuestNetmask)
+	}
+	return args
 }
 
 // ConfigRoot is the default Kiln root.
 const ConfigRoot = "/var/lib/kiln"
+
+// JailUID and JailGID are the unprivileged ids the jailer drops to. TAP
+// devices are owned by these ids so the jailed Firecracker can attach.
+const (
+	JailUID = 65534
+	JailGID = 65534
+)
+
+// The fixed guest network configuration. Every Kiln VM sees the same
+// addresses; only the host side differs.
+const (
+	GuestIP      = "172.31.0.2"
+	GuestGateway = "172.31.0.1"
+	GuestNetmask = "255.255.255.252"
+)
 
 // SandboxDir returns the host directory holding one sandbox's files.
 func SandboxDir(root, id string) string {

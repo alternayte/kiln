@@ -100,11 +100,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 }
 
 func (s *sqliteStore) CreateTemplate(ctx context.Context, t Template) error {
-	egress := t.EgressAllow
-	if egress == nil {
-		egress = []string{}
-	}
-	encoded, err := json.Marshal(egress)
+	encoded, err := encodeEgress(t.EgressAllow)
 	if err != nil {
 		return err
 	}
@@ -113,9 +109,67 @@ func (s *sqliteStore) CreateTemplate(ctx context.Context, t Template) error {
 		egress_allow, state, error, created_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.Name, t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
-		string(encoded), t.State, nullString(t.Error), t.CreatedAt.Unix(),
+		encoded, t.State, nullString(t.Error), t.CreatedAt.Unix(),
 	)
 	return err
+}
+
+// StartTemplateBuild inserts the building row for a new build. A failed row is
+// replaced; a building or ready row is a conflict.
+func (s *sqliteStore) StartTemplateBuild(ctx context.Context, t Template) error {
+	encoded, err := encodeEgress(t.EgressAllow)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var state string
+	err = tx.QueryRowContext(ctx, `SELECT state FROM templates WHERE name = ?`, t.Name).Scan(&state)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		if _, err := tx.ExecContext(ctx, `INSERT INTO templates (
+			name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
+			egress_allow, state, error, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			t.Name, t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
+			encoded, t.State, nullString(t.Error), t.CreatedAt.Unix(),
+		); err != nil {
+			return err
+		}
+	case err != nil:
+		return err
+	case state == TemplateBuilding || state == TemplateReady:
+		return ErrConflict
+	default:
+		if _, err := tx.ExecContext(ctx, `UPDATE templates SET
+			image_ref = ?, image_digest = ?, vcpus = ?, memory_mb = ?, disk_mb = ?,
+			egress_allow = ?, state = ?, error = NULL, created_at = ?
+		WHERE name = ?`,
+			t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
+			encoded, t.State, t.CreatedAt.Unix(), t.Name,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *sqliteStore) SetTemplateDigest(ctx context.Context, name, digest string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE templates SET image_digest = ? WHERE name = ?`, digest, name)
+	if err != nil {
+		return err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *sqliteStore) SetTemplateState(ctx context.Context, name, state, message string) error {
@@ -180,6 +234,51 @@ func (s *sqliteStore) DeleteTemplate(ctx context.Context, name string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// TemplateDependents counts the rows that keep a template alive. The sandboxes
+// and snapshots tables arrive in later phases; a table that does not exist yet
+// holds nothing.
+func (s *sqliteStore) TemplateDependents(ctx context.Context, name string) (int, int, error) {
+	live, err := s.countWhere(ctx, "sandboxes",
+		`SELECT count(*) FROM sandboxes WHERE template_name = ? AND destroyed_at IS NULL`, name)
+	if err != nil {
+		return 0, 0, err
+	}
+	snapshots, err := s.countWhere(ctx, "snapshots",
+		`SELECT count(*) FROM snapshots WHERE template_name = ?`, name)
+	if err != nil {
+		return 0, 0, err
+	}
+	return live, snapshots, nil
+}
+
+func (s *sqliteStore) countWhere(ctx context.Context, table, query string, args ...any) (int, error) {
+	var exists int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&exists); err != nil {
+		return 0, err
+	}
+	if exists == 0 {
+		return 0, nil
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// encodeEgress stores the allowlist as a JSON array. It is never null.
+func encodeEgress(egress []string) (string, error) {
+	if egress == nil {
+		egress = []string{}
+	}
+	b, err := json.Marshal(egress)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 func (s *sqliteStore) AppendEvent(ctx context.Context, e Event) error {

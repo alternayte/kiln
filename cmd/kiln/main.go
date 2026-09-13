@@ -38,15 +38,11 @@ func usage() {
 
 commands:
   init    first-run setup: fetch the pinned Firecracker and kernel, write config.json
-  serve   API server, store and VM supervisor (lands in P2)
-  ctl     CLI client for the HTTP API (lands in P2)
+  serve   API server, store and VM supervisor
+  ctl     CLI client for the HTTP API (lands in a later slice)
 `)
 }
 
-func cmdServe() error {
-	return fmt.Errorf("serve lands in P2; there is no server yet")
-}
-
 func cmdCtl() error {
-	return fmt.Errorf("ctl lands in P2; there is no API yet")
+	return fmt.Errorf("ctl lands in a later slice; there is no client yet")
 }

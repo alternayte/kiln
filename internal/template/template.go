@@ -8,12 +8,15 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 
 	"github.com/regclient/regclient"
 	"github.com/regclient/regclient/types/manifest"
 	"github.com/regclient/regclient/types/platform"
 	"github.com/regclient/regclient/types/ref"
+
+	"github.com/alternayte/kiln/internal/runtime"
 )
 
 // Builder pulls OCI images and writes ext4 rootfs images.
@@ -64,6 +67,9 @@ func (b *Builder) Import(ctx context.Context, spec ImportSpec) (Imported, error)
 		return Imported{}, err
 	}
 	if err := injectKilninit(tree, b.KilninitPath); err != nil {
+		return Imported{}, err
+	}
+	if err := writeResolvConf(tree); err != nil {
 		return Imported{}, err
 	}
 	cmd := exec.CommandContext(ctx, "mke2fs",
@@ -143,7 +149,8 @@ func (b *Builder) os() string {
 	return b.OS
 }
 
-// injectKilninit places the guest init at /kilninit, mode 0755.
+// injectKilninit places the guest init at /kilninit, mode 0755. It replaces
+// any existing entry, including a symlink, so nothing is written through it.
 func injectKilninit(root, kilninitPath string) error {
 	in, err := os.Open(kilninitPath)
 	if err != nil {
@@ -151,6 +158,9 @@ func injectKilninit(root, kilninitPath string) error {
 	}
 	defer in.Close()
 	target := filepath.Join(root, "kilninit")
+	if err := os.RemoveAll(target); err != nil {
+		return err
+	}
 	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
 		return err
@@ -163,4 +173,32 @@ func injectKilninit(root, kilninitPath string) error {
 		return err
 	}
 	return os.Chmod(target, 0o755)
+}
+
+// writeResolvConf points every guest at the host resolver on the gateway.
+// Only names in the template's allowlist are answered.
+func writeResolvConf(root string) error {
+	content := "nameserver " + runtime.GuestGateway + "\n"
+	return writeTreeFile(root, "etc/resolv.conf", []byte(content), 0o644)
+}
+
+// writeTreeFile writes one file into the rootfs. It resolves the parent
+// inside the tree, so a symlinked directory cannot redirect the write out of
+// the rootfs, and it replaces any existing entry, including a symlink.
+func writeTreeFile(root, rel string, data []byte, mode os.FileMode) error {
+	dir, err := resolveInRoot(root, path.Dir(rel), 0)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	target := filepath.Join(dir, path.Base(rel))
+	if err := os.RemoveAll(target); err != nil {
+		return err
+	}
+	if err := os.WriteFile(target, data, mode); err != nil {
+		return err
+	}
+	return os.Chmod(target, mode)
 }

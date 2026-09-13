@@ -207,3 +207,109 @@ func TestReopenAppliesMigrationsOnce(t *testing.T) {
 		t.Fatalf("schema_migrations rows %d, want 1", count)
 	}
 }
+
+func TestStartTemplateBuildStateMachine(t *testing.T) {
+	s, _ := openTest(t)
+	ctx := context.Background()
+	if err := s.StartTemplateBuild(ctx, sample("py312")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StartTemplateBuild(ctx, sample("py312")); !errors.Is(err, ErrConflict) {
+		t.Fatalf("second build error %v, want ErrConflict", err)
+	}
+	if err := s.SetTemplateState(ctx, "py312", TemplateReady, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StartTemplateBuild(ctx, sample("py312")); !errors.Is(err, ErrConflict) {
+		t.Fatalf("build over ready error %v, want ErrConflict", err)
+	}
+	if err := s.SetTemplateState(ctx, "py312", TemplateFailed, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StartTemplateBuild(ctx, sample("py312")); err != nil {
+		t.Fatalf("failed template refused a rebuild: %v", err)
+	}
+	got, err := s.GetTemplate(ctx, "py312")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != TemplateBuilding || got.Error != "" {
+		t.Fatalf("state %q error %q after rebuild", got.State, got.Error)
+	}
+}
+
+func TestSetTemplateDigest(t *testing.T) {
+	s, _ := openTest(t)
+	ctx := context.Background()
+	if err := s.CreateTemplate(ctx, sample("py312")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTemplateDigest(ctx, "py312", "sha256:def"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetTemplate(ctx, "py312")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ImageDigest != "sha256:def" {
+		t.Fatalf("digest %q", got.ImageDigest)
+	}
+	if err := s.SetTemplateDigest(ctx, "absent", "sha256:def"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("error %v, want ErrNotFound", err)
+	}
+}
+
+func TestTemplateDependentsWithoutChildTables(t *testing.T) {
+	s, _ := openTest(t)
+	live, snapshots, err := s.TemplateDependents(context.Background(), "py312")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live != 0 || snapshots != 0 {
+		t.Fatalf("dependents %d live, %d snapshots, want 0 and 0", live, snapshots)
+	}
+}
+
+func TestTemplateDependentsCountsFutureTables(t *testing.T) {
+	s, _ := openTest(t)
+	ctx := context.Background()
+	sq := s.(*sqliteStore)
+	for _, stmt := range []string{
+		`CREATE TABLE sandboxes (
+			id TEXT PRIMARY KEY,
+			template_name TEXT NOT NULL,
+			destroyed_at INTEGER
+		)`,
+		`CREATE TABLE snapshots (
+			id TEXT PRIMARY KEY,
+			template_name TEXT NOT NULL
+		)`,
+	} {
+		if _, err := sq.db.ExecContext(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := sq.db.ExecContext(ctx, `INSERT INTO sandboxes (id, template_name, destroyed_at) VALUES ('live', 'py312', NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sq.db.ExecContext(ctx, `INSERT INTO sandboxes (id, template_name, destroyed_at) VALUES ('dead', 'py312', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sq.db.ExecContext(ctx, `INSERT INTO snapshots (id, template_name) VALUES ('snap', 'py312')`); err != nil {
+		t.Fatal(err)
+	}
+	live, snapshots, err := s.TemplateDependents(ctx, "py312")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live != 1 || snapshots != 1 {
+		t.Fatalf("dependents %d live, %d snapshots, want 1 and 1", live, snapshots)
+	}
+	live, snapshots, err = s.TemplateDependents(ctx, "other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live != 0 || snapshots != 0 {
+		t.Fatalf("other template: %d live, %d snapshots, want 0 and 0", live, snapshots)
+	}
+}

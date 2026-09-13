@@ -169,3 +169,29 @@ func TestInjectKilninitReplacesSymlink(t *testing.T) {
 		t.Fatalf("kilninit %q", got)
 	}
 }
+
+func TestEnsureMountpoints(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "proc"), []byte("not a dir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureMountpoints(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"proc", "sys", "dev", "dev/pts", "tmp"} {
+		fi, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("%s: %v", rel, err)
+		}
+		if !fi.IsDir() {
+			t.Fatalf("%s is not a directory", rel)
+		}
+	}
+	fi, err := os.Stat(filepath.Join(root, "tmp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o777 {
+		t.Fatalf("tmp mode %o, want 777", fi.Mode().Perm())
+	}
+}

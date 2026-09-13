@@ -1,68 +1,62 @@
 # Kiln infrastructure
 
-Pulumi program. It provisions a Hetzner host, copies this repo to it, and runs
-`go build ./...` and `just check` there. With `kiln:gate` set it also runs
-`kiln init` and one gate.
+Pulumi program. It copies this repo to an OVH server, installs the host
+packages, loads the KVM module, and runs `go build ./...` and `just check`.
+With `kiln:gate` set it also runs `kiln init` and one gate.
 
-## What Hetzner allows
+## What OVH allows
 
-- **Dedicated server: yes.** Bare metal. Hetzner documents Linux KVM on
-  dedicated servers. Firecracker needs `/dev/kvm`, so the KVM gates run here.
-- **Cloud server: no.** Hetzner Cloud FAQ: "is nested virtualization
-  possible?" — "No, this is not possible on cloud server." A Cloud server runs
-  `just check` only.
-- Pulumi has no Hetzner Robot provider. Order the dedicated server in the
-  Hetzner web console. Pulumi manages everything after that.
+- **Dedicated server: yes.** Bare metal, so `/dev/kvm` is available and the
+  KVM gates run.
+- **VPS: no.** No nested virtualization. OVH Public Cloud passes the vmx flag,
+  but OVH warns that live migration can panic your kernel. Do not use either
+  for gates.
+- **Pulumi cannot order an OVH server.** The OVH provider has no checkout
+  resource. Order the server on the OVH site; Pulumi manages everything after
+  that.
 
-## Path A: dedicated server, runs the gates
+## Recommended server
 
-1. Order a dedicated server:
-   - Open https://robot.hetzner.com → Server → Order, or the Server Market.
-   - Choose Ubuntu 24.04 and add the public key `~/.ssh/id_rsa.pub`.
-2. Wait for the server. Note its IPv4 address, for example `203.0.113.7`.
-3. Check SSH from the laptop: `ssh root@203.0.113.7 true`
-4. Run:
+- **Eco KS-B: €9.99/month excl. VAT**, Intel Xeon E5-1620v2, bare metal. OVH
+  bills monthly. The 12/24-month prepay is optional, so there is no lock-in.
+- **Eco KS-2: €18.99/month excl. VAT** if the KS-B is out of stock, Xeon-D 1540.
+- Eco stock is limited. Check https://www.ovhcloud.com/en/bare-metal-cloud/eco/
+
+## Steps
+
+1. Order the server:
+   - Open https://www.ovhcloud.com/en/bare-metal-cloud/eco/
+   - Choose KS-B, or KS-2 when the KS-B is sold out.
+   - Choose a datacenter and the operating system **Ubuntu 24.04**.
+   - Add your public key `~/.ssh/id_rsa.pub` during the order.
+   - Pay. OVH installs the system and shows the IPv4 address.
+2. Wait for the install, then check SSH from the laptop:
+   `ssh root@<ip> true`
+3. Run:
    ```sh
    cd infra
    pulumi login --local
    pulumi stack init kiln
-   pulumi config set kiln:existingHost 203.0.113.7
+   pulumi config set kiln:host <ip>
    pulumi config set kiln:privateKeyPath ~/.ssh/id_rsa
    pulumi config set kiln:gate P1
    pulumi up
    ```
-5. `pulumi up` installs packages, copies the repo, runs `just check`, runs
-   `kiln init`, and runs `just gate P1`. It prints the gate output.
+4. `pulumi up` does the rest: packages, KVM module, repo copy, `just check`,
+   `kiln init`, `just gate P1`. It prints the gate output.
 
-Drop `kiln:gate` to run the checks only.
-
-## Path B: Cloud server, runs the checks only
-
-1. Create an API token: https://console.hetzner.cloud → project → Security →
-   API tokens → Generate (Read & Write).
-2. Run:
-   ```sh
-   export HCLOUD_TOKEN=...
-   cd infra
-   pulumi login --local
-   pulumi stack init kiln
-   pulumi config set kiln:sshKeyPath ~/.ssh/id_rsa.pub
-   pulumi up
-   ```
-3. `pulumi up` creates the SSH key, firewall and server, then runs `just check`
-   on it.
-4. `pulumi destroy` removes the server.
+Remove `kiln:gate` for a checks-only run. `pulumi up` again after a code change
+copies the tree and re-runs the commands.
 
 ## Config
 
-Only these keys matter. Defaults are in `main.go`.
-
-| Key | Use |
-|---|---|
-| `kiln:existingHost` | dedicated server IP; skips all Cloud resources |
-| `kiln:sshKeyPath` | public key for a Cloud server |
-| `kiln:privateKeyPath` | private key for SSH; default `~/.ssh/id_rsa` |
-| `kiln:gate` | gate to run after the checks, for example `P1` |
+| Key | Default | Use |
+|---|---|---|
+| `kiln:host` | none, required | server IPv4 address |
+| `kiln:sshUser` | `root` | SSH user |
+| `kiln:privateKeyPath` | `~/.ssh/id_rsa` | private key for SSH |
+| `kiln:remoteDir` | `/root/kiln` | repo destination on the host |
+| `kiln:gate` | none | gate to run after the checks, for example `P1` |
 
 `pulumi up` copies the whole working tree, including untracked files. Gates run
 under `sudo`, because jailer needs root.

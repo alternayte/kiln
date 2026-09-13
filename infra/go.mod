@@ -4,7 +4,6 @@ go 1.26.6
 
 require (
 	github.com/pulumi/pulumi-command/sdk v1.2.1
-	github.com/pulumi/pulumi-hcloud/sdk v1.42.0
 	github.com/pulumi/pulumi/sdk/v3 v3.262.0
 )
 

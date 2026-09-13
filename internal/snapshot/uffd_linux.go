@@ -192,6 +192,7 @@ func servePages(ctx context.Context, memPath string, mappings []mapping, uffd in
 	}
 	page := make([]byte, maxPage)
 	events := make([]byte, uffdMsgSize*16)
+	faults := 0
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -221,6 +222,10 @@ func servePages(ctx context.Context, memPath string, mappings []mapping, uffd in
 			switch events[off] {
 			case uffdEventPagefault:
 				addr := binary.LittleEndian.Uint64(events[off+16 : off+24])
+				faults++
+				if faults <= 5 {
+					log.Printf("snapshot: fault %d at %#x", faults, addr)
+				}
 				if err := servePage(mem, page, mappings, uffd, addr); err != nil {
 					return err
 				}

@@ -117,12 +117,12 @@ func TestGateP2(t *testing.T) {
 func testBuildAndExec(t *testing.T, ctx context.Context, cli *client, mgr *template.Manager, rt *runtime.Firecracker, nm *network.Manager, kernel string) {
 	const name = "py312"
 	req := map[string]any{
-		"name":      name,
-		"image":     "docker.io/library/python:3.12-slim",
-		"vcpus":     2,
-		"memory_mb": 512,
-		"disk_mb":   4096,
-		"setup": []string{"pip install --no-cache-dir requests", "echo setup-ran > /setup-ran"},
+		"name":         name,
+		"image":        "docker.io/library/python:3.12-slim",
+		"vcpus":        2,
+		"memory_mb":    512,
+		"disk_mb":      4096,
+		"setup":        []string{"pip install --no-cache-dir requests", "echo setup-ran > /setup-ran"},
 		"egress_allow": []string{"pypi.org", "files.pythonhosted.org"},
 	}
 	t.Cleanup(func() { cli.deleteIfPresent(name) })

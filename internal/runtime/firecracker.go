@@ -297,7 +297,7 @@ func (f *Firecracker) launch(spec Spec, vm *VM) error {
 		"--",
 		"--api-sock", "/run/firecracker.sock",
 		"--log-path", "/run/firecracker.log",
-		"--level", "Info",
+		"--level", "Debug",
 	}
 	cmd := exec.Command(f.jailer, args...)
 	cmd.Stdout = console

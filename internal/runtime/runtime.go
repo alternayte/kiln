@@ -125,7 +125,10 @@ func (s Spec) bootArgs() string {
 	if !s.RootfsReadOnly {
 		mode = "rw"
 	}
-	args := fmt.Sprintf("console=ttyS0 noapic reboot=k panic=1 pci=off nomodules root=/dev/vda %s init=/kilninit", mode)
+	// noapic and pci=off belong to the pre-ACPI Firecracker cmdline. With ACPI
+	// on, the MMIO devices get their interrupts through the IOAPIC, and noapic
+	// leaves them without an IRQ.
+	args := fmt.Sprintf("console=ttyS0 reboot=k panic=1 nomodules root=/dev/vda %s init=/kilninit", mode)
 	if s.TAPName != "" {
 		args += fmt.Sprintf(" ip=%s::%s:%s::eth0:off", GuestIP, GuestGateway, GuestNetmask)
 	}

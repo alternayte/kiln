@@ -162,6 +162,7 @@ func servePages(ctx context.Context, memPath string, mappings []mapping, uffd in
 	page := make([]byte, maxPage)
 	events := make([]byte, uffdMsgSize*16)
 	faults := 0
+	traces := 0
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -177,12 +178,19 @@ func servePages(ctx context.Context, memPath string, mappings []mapping, uffd in
 			}
 			continue
 		}
+		if traces < 5 {
+			traces++
+			log.Printf("snapshot: poll ready revents=%#x", pfds[0].Revents)
+		}
 		rn, err := unix.Read(uffd, events)
 		if err != nil {
 			if err == unix.EAGAIN || err == unix.EINTR {
 				continue
 			}
 			return fmt.Errorf("snapshot: read uffd: %w", err)
+		}
+		if traces <= 5 && rn > 0 {
+			log.Printf("snapshot: read %d bytes event=%d", rn, events[0])
 		}
 		if rn <= 0 {
 			return nil

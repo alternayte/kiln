@@ -235,13 +235,6 @@ func (m *Manager) restore(ctx context.Context, tpl store.Template, row store.San
 	if err := vm.ResumeHooks(ctx, entropy, time.Now().UnixNano(), row.ID, env); err != nil {
 		return store.Sandbox{}, err
 	}
-	for i := 0; i < 20; i++ {
-		if err := vm.Check(ctx); err != nil {
-			log.Printf("sandbox: %s: probe %d: %v", row.ID, i, err)
-		} else {
-			log.Printf("sandbox: %s: probe %d: ok", row.ID, i)
-		}
-	}
 	if err := m.cfg.Store.SetSandboxRuntime(ctx, row.ID, att.TAPName, nil, vm.PID); err != nil {
 		return store.Sandbox{}, err
 	}
@@ -407,17 +400,10 @@ func (m *Manager) Exec(ctx context.Context, id string, req runtime.ExecRequest, 
 		return runtime.ExecResult{}, err
 	}
 	res, err := vm.ExecStream(ctx, req, onOutput)
-	if err != nil {
-		if tail := vm.ConsoleTail(); tail != "" {
-			err = fmt.Errorf("%w; console tail: %s", err, tail)
-		}
-		if tail := vm.LogTail(); tail != "" {
-			err = fmt.Errorf("%w; firecracker log: %s", err, tail)
-		}
-		return res, err
+	if err == nil {
+		_ = m.cfg.Store.TouchSandbox(ctx, id, m.now())
 	}
-	_ = m.cfg.Store.TouchSandbox(ctx, id, m.now())
-	return res, nil
+	return res, err
 }
 
 // OpenFile opens one guest file for reading.

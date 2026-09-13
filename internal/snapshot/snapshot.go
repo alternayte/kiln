@@ -44,7 +44,9 @@ func (p *Process) Start(ctx context.Context, memPath, socketPath string) error {
 		return err
 	}
 	_ = os.Remove(socketPath)
-	cmd := exec.CommandContext(ctx, p.Binary, "snapfault", "--mem", memPath, "--sock", socketPath)
+	// The process outlives this call and every context derived from one
+	// request: the sandbox owns it until Stop.
+	cmd := exec.Command(p.Binary, "snapfault", "--mem", memPath, "--sock", socketPath)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -64,6 +66,9 @@ func (p *Process) Start(ctx context.Context, memPath, socketPath string) error {
 		select {
 		case <-p.done:
 			return errors.New("snapshot: snapfault exited before it listened")
+		case <-ctx.Done():
+			_ = p.Stop()
+			return ctx.Err()
 		case <-time.After(20 * time.Millisecond):
 		}
 		if time.Now().After(deadline) {

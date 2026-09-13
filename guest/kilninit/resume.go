@@ -5,7 +5,6 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"os"
 	"sync"
 	"unsafe"
@@ -25,11 +24,8 @@ var (
 // applyResume runs the resume hooks in order: the overlay root, the clock, the
 // entropy pool, the hostname and the secrets.
 func applyResume(req *guestproto.Request) error {
-	// DIAGNOSIS: pivot disabled for one run.
-	if false {
-		if err := pivotOverlay(); err != nil {
-			return fmt.Errorf("overlay: %w", err)
-		}
+	if err := pivotOverlay(); err != nil {
+		return fmt.Errorf("overlay: %w", err)
 	}
 	if req.UnixNanos > 0 {
 		ts := unix.NsecToTimespec(req.UnixNanos)
@@ -109,7 +105,6 @@ func mountAndPivot() error {
 	if err := unix.Mount(overlayDevice, scratchDir, "ext4", 0, ""); err != nil {
 		return fmt.Errorf("mount %s: %w", overlayDevice, err)
 	}
-	log.Printf("pivot: mounted %s", overlayDevice)
 	upper := scratchDir + "/upper"
 	work := scratchDir + "/work"
 	for _, dir := range []string{upper, work} {
@@ -121,7 +116,6 @@ func mountAndPivot() error {
 	if err := unix.Mount("overlay", newRootDir, "overlay", 0, options); err != nil {
 		return fmt.Errorf("mount overlay: %w", err)
 	}
-	log.Printf("pivot: mounted overlay")
 	// Keep the pseudofilesystems in the new root, and give the sandbox a
 	// memory-backed /tmp of its own.
 	for _, target := range []string{"proc", "sys", "dev", "tmp"} {
@@ -141,7 +135,6 @@ func mountAndPivot() error {
 			return fmt.Errorf("move %s: %w", m.source, err)
 		}
 	}
-	log.Printf("pivot: moved pseudofilesystems")
 	if err := os.MkdirAll(newRootDir+"/.kiln-oldroot", 0o755); err != nil {
 		return err
 	}
@@ -156,7 +149,6 @@ func mountAndPivot() error {
 	}
 	_ = unix.Unmount("/.kiln-oldroot", unix.MNT_DETACH)
 	_ = os.Remove("/.kiln-oldroot")
-	log.Printf("pivot: root is the overlay")
 	return nil
 }
 

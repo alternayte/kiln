@@ -2,6 +2,8 @@ package template
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -233,7 +235,7 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 		return err
 	}
 
-	att, err := m.Network.Attach(ctx, m.buildID(req.Name), req.EgressAllow)
+	att, err := m.Network.Attach(ctx, m.buildID(req.Name, "s"), req.EgressAllow)
 	if err != nil {
 		return err
 	}
@@ -249,7 +251,7 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 
 	// The setup boot writes the rootfs.
 	setupVM, err := m.Runtime.Start(ctx, runtime.Spec{
-		ID:             m.buildID(req.Name) + "-setup",
+		ID:             m.buildID(req.Name, "s"),
 		KernelPath:     m.KernelPath,
 		RootfsPath:     rootfs,
 		RootfsReadOnly: false,
@@ -273,8 +275,12 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 		}
 		if res.TimedOut || res.ExitCode != 0 {
 			output := strings.TrimSpace(strings.Join([]string{res.Stderr, res.Stdout}, "\n"))
+			err := fmt.Errorf("setup[%d] %q: exit %d timed_out=%v: %s", i, cmd, res.ExitCode, res.TimedOut, output)
+			if tail := setupVM.ConsoleTail(); tail != "" {
+				err = fmt.Errorf("%w; console tail: %s", err, tail)
+			}
 			_ = m.stopVM(ctx, setupVM)
-			return fmt.Errorf("setup[%d] %q: exit %d timed_out=%v: %s", i, cmd, res.ExitCode, res.TimedOut, output)
+			return err
 		}
 	}
 	if err := m.stopVM(ctx, setupVM); err != nil {
@@ -289,7 +295,7 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 		return err
 	}
 	snapVM, err := m.Runtime.Start(ctx, runtime.Spec{
-		ID:             m.buildID(req.Name) + "-snap",
+		ID:             m.buildID(req.Name, "n"),
 		KernelPath:     m.KernelPath,
 		RootfsPath:     rootfs,
 		RootfsReadOnly: true,
@@ -331,9 +337,14 @@ func (m *Manager) stopVM(ctx context.Context, vm *runtime.VM) error {
 	return m.Runtime.Stop(stopCtx, vm)
 }
 
-// buildID is the internal id of a build VM. It has no sandbox row, but its
-// TAP, chains and directory carry the id so a sweep can find them.
-func (m *Manager) buildID(name string) string { return "build-" + name }
+// buildID is the internal id of one build VM. It has no sandbox row, but its
+// TAP, chains and directory carry the id so a sweep can find them. The id is
+// short: the jailer puts it twice in the API socket path, and a unix socket
+// path is capped at 108 bytes.
+func (m *Manager) buildID(name, phase string) string {
+	sum := sha256.Sum256([]byte(name))
+	return "b" + hex.EncodeToString(sum[:5]) + phase
+}
 
 // allocCID hands out distinct guest CIDs for concurrent builds.
 func (m *Manager) allocCID() uint32 { return m.nextCID.Add(1) + 2 }

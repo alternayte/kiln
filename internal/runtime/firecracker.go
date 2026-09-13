@@ -581,11 +581,17 @@ func moveOut(src, dst string) (string, error) {
 }
 
 func withConsole(vm *VM, err error) error {
-	tail := consoleTail(filepath.Join(vm.Dir, "console.log"))
+	tail := vm.ConsoleTail()
 	if tail == "" {
 		return err
 	}
 	return fmt.Errorf("%w; console tail: %s", err, tail)
+}
+
+// ConsoleTail returns the last lines of the VM console log, for errors. It is
+// empty before the console file exists.
+func (vm *VM) ConsoleTail() string {
+	return consoleTail(filepath.Join(vm.Dir, "console.log"))
 }
 
 // fail attaches the console tail to err, then removes the VM's host

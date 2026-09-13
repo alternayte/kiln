@@ -478,10 +478,15 @@ func debugfs(t *testing.T, image, command string) (string, error) {
 		}
 	}
 	out, err := exec.Command("debugfs", "-R", command, image).CombinedOutput()
+	text := string(out)
 	if err != nil {
-		return string(out), fmt.Errorf("debugfs %s: %w: %s", command, err, strings.TrimSpace(string(out)))
+		return text, fmt.Errorf("debugfs %s: %w: %s", command, err, strings.TrimSpace(text))
 	}
-	return string(out), nil
+	// debugfs exits 0 when a lookup finds nothing.
+	if strings.Contains(text, "File not found by ext2_lookup") {
+		return text, fmt.Errorf("debugfs %s: no such file", command)
+	}
+	return text, nil
 }
 
 // debugfsList dumps the rootfs and returns its file listing, one line per

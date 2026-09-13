@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -279,15 +278,6 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 			err := fmt.Errorf("setup[%d] %q: exit %d timed_out=%v: %s", i, cmd, res.ExitCode, res.TimedOut, output)
 			if tail := setupVM.ConsoleTail(); tail != "" {
 				err = fmt.Errorf("%w; console tail: %s", err, tail)
-			}
-			if rules, rerr := exec.Command("nft", "list", "table", "inet", "kiln").CombinedOutput(); rerr == nil {
-				err = fmt.Errorf("%w; nft: %s", err, rules)
-			}
-			if rules, rerr := exec.Command("iptables", "-S", "FORWARD").CombinedOutput(); rerr == nil {
-				err = fmt.Errorf("%w; iptables: %s", err, rules)
-			}
-			if rules, rerr := exec.Command("sh", "-c", "cat /proc/sys/net/ipv4/conf/all/forwarding /proc/sys/net/ipv4/conf/kiln-*/forwarding 2>&1").CombinedOutput(); rerr == nil {
-				err = fmt.Errorf("%w; forwarding: %s", err, rules)
 			}
 			_ = m.stopVM(ctx, setupVM)
 			return err

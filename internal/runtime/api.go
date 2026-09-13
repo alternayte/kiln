@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+// apiClientTimeout bounds one Firecracker API call. A snapshot load can serve
+// page faults for a while before it answers.
+const apiClientTimeout = 2 * time.Minute
+
 // api is a minimal Firecracker API client over the jailed API socket.
 type api struct {
 	client *http.Client
@@ -22,7 +26,7 @@ func newAPI(socket string) *api {
 			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
 		},
 	}
-	return &api{client: &http.Client{Transport: tr, Timeout: 10 * time.Second}}
+	return &api{client: &http.Client{Transport: tr, Timeout: apiClientTimeout}}
 }
 
 func (a *api) put(ctx context.Context, path string, body any) error {

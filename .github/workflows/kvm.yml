@@ -43,6 +43,8 @@ jobs:
       - run: sudo env "PATH=$PATH" go run ./cmd/kiln init
       # Docker sets the FORWARD policy to DROP. Kiln's chains are in the inet
       # family at the same priority and are registered later, so Docker's
-      # policy would drop guest traffic before Kiln's chain sees it.
+      # policy would drop guest traffic before Kiln's chain sees it. The reply
+      # arrives on the uplink, so both directions need a rule.
       - run: sudo iptables -I FORWARD 1 -i 'kiln-+' -j ACCEPT
+      - run: sudo iptables -I FORWARD 1 -o 'kiln-+' -j ACCEPT
       - run: sudo env "PATH=$PATH" just gate ${{ matrix.gate }}

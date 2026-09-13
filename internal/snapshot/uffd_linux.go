@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"time"
 	"unsafe"
@@ -84,6 +85,7 @@ func Serve(ctx context.Context, memPath, sockPath string, ready func()) error {
 		return err
 	}
 	defer unix.Close(uffd)
+	log.Printf("snapshot: serving %d region(s) from %s", len(mappings), memPath)
 
 	// Stop serving when Firecracker exits, so no page-fault handler outlives
 	// its VM.

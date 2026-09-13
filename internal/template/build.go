@@ -291,7 +291,15 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 	// slot for a sandbox overlay. The snapshot then carries both drives, and
 	// the rootfs keeps its read-only feature for every restore.
 	overlay := filepath.Join(dir, "overlay.ext4")
-	if err := os.Truncate(overlay, int64(req.DiskMB)<<20); err != nil {
+	overlayFile, err := os.OpenFile(overlay, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if err := overlayFile.Truncate(int64(req.DiskMB) << 20); err != nil {
+		overlayFile.Close()
+		return err
+	}
+	if err := overlayFile.Close(); err != nil {
 		return err
 	}
 	snapVM, err := m.Runtime.Start(ctx, runtime.Spec{

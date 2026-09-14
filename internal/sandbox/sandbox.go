@@ -1,4 +1,5 @@
-// Package sandbox owns the sandbox lifecycle: restore, exec, files, destroy.
+// Package sandbox owns the sandbox lifecycle: restore, exec, files, snapshot,
+// fork, sleep, destroy.
 package sandbox
 
 import (
@@ -26,6 +27,10 @@ import (
 
 // ErrExhausted reports that the host has no room for another sandbox.
 var ErrExhausted = errors.New("sandbox: exhausted")
+
+// ErrPartial reports that a fork or a restore failed after it made copies.
+// Every copy it made in that call was destroyed.
+var ErrPartial = errors.New("sandbox: fork did not complete")
 
 // InvalidError reports a request that cannot be accepted.
 type InvalidError struct {
@@ -60,7 +65,7 @@ type Config struct {
 	Now func() time.Time
 }
 
-// Manager creates and destroys sandboxes.
+// Manager creates, forks and destroys sandboxes.
 type Manager struct {
 	cfg Config
 
@@ -108,6 +113,18 @@ func (r CreateRequest) validate() error {
 	return nil
 }
 
+// image is one memory and state pair a restore reads: a template snapshot, a
+// listed snapshot, or the image a fork wrote for its children.
+type image struct {
+	dir        string
+	template   store.Template
+	snapshotID string
+	secret     bool
+}
+
+func (i image) memPath() string   { return filepath.Join(i.dir, "mem") }
+func (i image) statePath() string { return filepath.Join(i.dir, "state") }
+
 // Create restores a template snapshot into a running sandbox. It returns when
 // the sandbox answers a fresh vsock hello and the resume hooks have run.
 func (m *Manager) Create(ctx context.Context, req CreateRequest) (store.Sandbox, error) {
@@ -146,23 +163,31 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (store.Sandbox,
 		metadata = string(b)
 	}
 	now := m.now()
-	row := store.Sandbox{
-		ID:           id,
-		TemplateName: tpl.Name,
-		Lifecycle:    req.Lifecycle,
-		State:        store.SandboxCreating,
-		TTLSeconds:   req.TTLSeconds,
-		IdleSeconds:  req.IdleSeconds,
-		LastActiveAt: now,
-		Metadata:     metadata,
-		CreatedAt:    now,
-	}
-	if err := m.cfg.Store.CreateSandbox(ctx, row); err != nil {
+	row, err := m.cfg.Store.CreateSandbox(ctx, store.Sandbox{
+		ID:            id,
+		TemplateName:  tpl.Name,
+		Lifecycle:     req.Lifecycle,
+		State:         store.SandboxCreating,
+		TTLSeconds:    req.TTLSeconds,
+		IdleSeconds:   req.IdleSeconds,
+		LastActiveAt:  now,
+		Metadata:      metadata,
+		CreatedAt:     now,
+		SecretBearing: len(env) > 0,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrExhausted) {
+			return store.Sandbox{}, ErrExhausted
+		}
 		return store.Sandbox{}, err
 	}
 	m.event(ctx, id, "", store.SandboxCreating, "create", now)
 
-	running, err := m.restore(ctx, tpl, row, env)
+	img := image{
+		dir:      filepath.Join(m.cfg.Root, "templates", tpl.Name),
+		template: tpl,
+	}
+	running, err := m.restore(ctx, img, row, env)
 	if err != nil {
 		// The restore must not leave a VM, a TAP or files behind.
 		m.cleanup(context.WithoutCancel(ctx), id)
@@ -176,30 +201,34 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (store.Sandbox,
 	return running, nil
 }
 
-func (m *Manager) restore(ctx context.Context, tpl store.Template, row store.Sandbox, env map[string]string) (store.Sandbox, error) {
+// restore brings one sandbox row up from an image. It returns when the guest
+// answers a fresh vsock hello. The caller owns the row and every failure.
+func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env map[string]string) (store.Sandbox, error) {
+	if row.VsockCID == nil {
+		return store.Sandbox{}, fmt.Errorf("sandbox: %s has no vsock cid", row.ID)
+	}
 	dir := runtime.SandboxDir(m.cfg.Root, row.ID)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return store.Sandbox{}, err
 	}
 	overlay := filepath.Join(dir, "overlay.ext4")
-	if err := createOverlay(ctx, overlay, int64(tpl.DiskMB)); err != nil {
+	if err := createOverlay(ctx, overlay, int64(img.template.DiskMB)); err != nil {
 		return store.Sandbox{}, err
 	}
-	att, err := m.cfg.Network.Attach(ctx, row.ID, nil)
+	att, err := m.cfg.Network.Attach(ctx, row.ID, img.template.EgressAllow)
 	if err != nil {
 		return store.Sandbox{}, err
 	}
 	m.mu.Lock()
 	m.attrs[row.ID] = att
 	m.mu.Unlock()
-	if err := m.cfg.Store.SetSandboxRuntime(ctx, row.ID, att.TAPName, nil, 0); err != nil {
+	if err := m.cfg.Store.SetSandboxRuntime(ctx, row.ID, att.TAPName, row.VsockCID, 0); err != nil {
 		return store.Sandbox{}, err
 	}
 
 	pages := m.cfg.Pages()
-	templateDir := filepath.Join(m.cfg.Root, "templates", tpl.Name)
 	sock := runtime.RestoreUffdSocket(m.cfg.Root, row.ID)
-	if err := pages.Start(ctx, filepath.Join(templateDir, "mem"), sock); err != nil {
+	if err := pages.Start(ctx, img.memPath(), sock); err != nil {
 		return store.Sandbox{}, err
 	}
 	m.mu.Lock()
@@ -210,15 +239,15 @@ func (m *Manager) restore(ctx context.Context, tpl store.Template, row store.San
 		Spec: runtime.Spec{
 			ID:          row.ID,
 			KernelPath:  m.cfg.KernelPath,
-			RootfsPath:  filepath.Join(templateDir, "rootfs.ext4"),
+			RootfsPath:  filepath.Join(m.cfg.Root, "templates", img.template.Name, "rootfs.ext4"),
 			OverlayPath: overlay,
-			VCPUs:       tpl.VCPUs,
-			MemoryMiB:   tpl.MemoryMB,
-			VsockCID:    3,
+			VCPUs:       img.template.VCPUs,
+			MemoryMiB:   img.template.MemoryMB,
+			VsockCID:    uint32(*row.VsockCID),
 			VsockPort:   guestproto.Port,
 			TAPName:     att.TAPName,
 		},
-		StatePath:  filepath.Join(templateDir, "state"),
+		StatePath:  img.statePath(),
 		UffdSocket: sock,
 	})
 	if err != nil {
@@ -235,7 +264,7 @@ func (m *Manager) restore(ctx context.Context, tpl store.Template, row store.San
 	if err := vm.ResumeHooks(ctx, entropy, time.Now().UnixNano(), row.ID, env); err != nil {
 		return store.Sandbox{}, err
 	}
-	if err := m.cfg.Store.SetSandboxRuntime(ctx, row.ID, att.TAPName, nil, vm.PID); err != nil {
+	if err := m.cfg.Store.SetSandboxRuntime(ctx, row.ID, att.TAPName, row.VsockCID, vm.PID); err != nil {
 		return store.Sandbox{}, err
 	}
 	if err := m.cfg.Store.SetSandboxState(ctx, row.ID, store.SandboxRunning); err != nil {
@@ -246,6 +275,258 @@ func (m *Manager) restore(ctx context.Context, tpl store.Template, row store.San
 	row.PID = vm.PID
 	m.event(ctx, row.ID, store.SandboxCreating, store.SandboxRunning, "restored", m.now())
 	return row, nil
+}
+
+// Snapshot writes the sandbox's memory into a listed snapshot. With stop set
+// the sandbox also sleeps: its own image is written under its directory and
+// the VM stops. The sandbox keeps its id and its files.
+func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Snapshot, error) {
+	row, err := m.cfg.Store.GetSandbox(ctx, id)
+	if err != nil {
+		return store.Snapshot{}, err
+	}
+	vm, err := m.running(ctx, id)
+	if err != nil {
+		return store.Snapshot{}, err
+	}
+	snapID, err := newID()
+	if err != nil {
+		return store.Snapshot{}, err
+	}
+	dir := filepath.Join(m.cfg.Root, "snapshots", snapID)
+	var files runtime.SnapshotFiles
+	if stop {
+		if err := m.cfg.Runtime.Pause(ctx, vm); err != nil {
+			return store.Snapshot{}, err
+		}
+		if files, err = m.cfg.Runtime.SnapshotPaused(ctx, vm, dir); err != nil {
+			_ = m.cfg.Runtime.Resume(ctx, vm)
+			return store.Snapshot{}, err
+		}
+		sleepDir := filepath.Join(runtime.SandboxDir(m.cfg.Root, id), "sleep")
+		if _, err := m.cfg.Runtime.SnapshotPaused(ctx, vm, sleepDir); err != nil {
+			_ = os.RemoveAll(sleepDir)
+			_ = m.cfg.Runtime.Resume(ctx, vm)
+			return store.Snapshot{}, err
+		}
+	} else if files, err = m.cfg.Runtime.Snapshot(ctx, vm, dir); err != nil {
+		return store.Snapshot{}, err
+	}
+	now := m.now()
+	snap := store.Snapshot{
+		ID:              snapID,
+		TemplateName:    row.TemplateName,
+		ParentID:        row.SnapshotID,
+		SizeBytes:       snapshotSize(files),
+		CreatedAt:       now,
+		SecretBearing:   row.SecretBearing,
+		Listed:          true,
+		OriginSandboxID: row.ID,
+	}
+	if err := m.cfg.Store.CreateSnapshot(ctx, snap); err != nil {
+		_ = os.RemoveAll(dir)
+		if stop {
+			_ = os.RemoveAll(filepath.Join(runtime.SandboxDir(m.cfg.Root, id), "sleep"))
+			_ = m.cfg.Runtime.Resume(ctx, vm)
+		}
+		return store.Snapshot{}, err
+	}
+	writeParentFile(dir, row.SnapshotID, row.TemplateName)
+	if stop {
+		if err := m.cfg.Store.SetSandboxState(ctx, id, store.SandboxSleeping); err != nil {
+			return store.Snapshot{}, err
+		}
+		m.event(ctx, id, store.SandboxRunning, store.SandboxSleeping, "sleep", now)
+		m.release(context.WithoutCancel(ctx), id, true)
+	}
+	_ = m.cfg.Store.TouchSandbox(ctx, id, now)
+	return snap, nil
+}
+
+// Fork snapshots a running sandbox and restores count copies from that one
+// image. Every copy gets a fresh overlay and its own page-fault source. A
+// failure at any copy destroys every copy made in the call.
+func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bool) ([]store.Sandbox, error) {
+	if count < 1 {
+		return nil, invalidf("count must be greater than zero")
+	}
+	row, err := m.cfg.Store.GetSandbox(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if row.State != store.SandboxRunning {
+		return nil, store.ErrConflict
+	}
+	vm, err := m.running(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if row.SecretBearing && !allowSecret {
+		return nil, store.ErrConflict
+	}
+	tpl, err := m.cfg.Store.GetTemplate(ctx, row.TemplateName)
+	if err != nil {
+		return nil, err
+	}
+	snapID, err := newID()
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(m.cfg.Root, "snapshots", snapID)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return nil, err
+	}
+	files, err := m.cfg.Runtime.Snapshot(ctx, vm, dir)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, err
+	}
+	img := image{dir: dir, template: tpl, snapshotID: snapID, secret: row.SecretBearing}
+	if err := m.cfg.Store.CreateSnapshot(ctx, store.Snapshot{
+		ID:              snapID,
+		TemplateName:    row.TemplateName,
+		ParentID:        row.SnapshotID,
+		SizeBytes:       snapshotSize(files),
+		CreatedAt:       m.now(),
+		SecretBearing:   row.SecretBearing,
+		Listed:          false,
+		OriginSandboxID: row.ID,
+	}); err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, err
+	}
+	writeParentFile(dir, row.SnapshotID, row.TemplateName)
+	_ = m.cfg.Store.TouchSandbox(ctx, id, m.now())
+
+	copies, err := m.makeCopies(ctx, img, row, count)
+	if err != nil {
+		m.reapSnapshot(context.WithoutCancel(ctx), snapID)
+		return nil, err
+	}
+	return copies, nil
+}
+
+// RestoreSnapshot copies a listed snapshot into count new sandboxes. The
+// copies inherit the lifecycle and metadata of the sandbox the snapshot came
+// from.
+func (m *Manager) RestoreSnapshot(ctx context.Context, snapshotID string, count int, allowSecret bool) ([]store.Sandbox, error) {
+	if count < 1 {
+		return nil, invalidf("count must be greater than zero")
+	}
+	snap, err := m.cfg.Store.GetSnapshot(ctx, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	if !snap.Listed {
+		return nil, store.ErrNotFound
+	}
+	if snap.SecretBearing && !allowSecret {
+		return nil, store.ErrConflict
+	}
+	origin, err := m.cfg.Store.GetSandbox(ctx, snap.OriginSandboxID)
+	if err != nil {
+		// The snapshot outlived the sandbox it came from, so the lifecycle
+		// fields it was created with are gone.
+		return nil, store.ErrConflict
+	}
+	tpl, err := m.cfg.Store.GetTemplate(ctx, snap.TemplateName)
+	if err != nil {
+		return nil, err
+	}
+	img := image{
+		dir:        filepath.Join(m.cfg.Root, "snapshots", snapshotID),
+		template:   tpl,
+		snapshotID: snapshotID,
+		secret:     snap.SecretBearing,
+	}
+	_ = m.cfg.Store.TouchSandbox(ctx, origin.ID, m.now())
+	copies, err := m.makeCopies(ctx, img, origin, count)
+	if err != nil {
+		return nil, err
+	}
+	return copies, nil
+}
+
+// Snapshots returns every listed snapshot row.
+func (m *Manager) Snapshots(ctx context.Context) ([]store.Snapshot, error) {
+	return m.cfg.Store.ListSnapshots(ctx)
+}
+
+// SnapshotInfo returns one listed snapshot row. An unlisted image is not
+// visible and reports not found.
+func (m *Manager) SnapshotInfo(ctx context.Context, id string) (store.Snapshot, error) {
+	snap, err := m.cfg.Store.GetSnapshot(ctx, id)
+	if err != nil {
+		return store.Snapshot{}, err
+	}
+	if !snap.Listed {
+		return store.Snapshot{}, store.ErrNotFound
+	}
+	return snap, nil
+}
+
+// DeleteSnapshot removes a listed snapshot once no live sandbox reads it.
+func (m *Manager) DeleteSnapshot(ctx context.Context, id string) error {
+	snap, err := m.SnapshotInfo(ctx, id)
+	if err != nil {
+		return err
+	}
+	live, err := m.cfg.Store.CountRestoredChildren(ctx, snap.ID)
+	if err != nil {
+		return err
+	}
+	if live > 0 {
+		return store.ErrConflict
+	}
+	if err := os.RemoveAll(filepath.Join(m.cfg.Root, "snapshots", id)); err != nil {
+		return err
+	}
+	return m.cfg.Store.DeleteSnapshot(ctx, id)
+}
+
+// makeCopies creates count rows from one image and restores each of them. Any
+// failure destroys every copy this call made and reports ErrPartial, so the
+// caller can never be left with a partial fork.
+func (m *Manager) makeCopies(ctx context.Context, img image, base store.Sandbox, count int) ([]store.Sandbox, error) {
+	made := make([]store.Sandbox, 0, count)
+	fail := func(err error) ([]store.Sandbox, error) {
+		for _, sb := range made {
+			_ = m.Destroy(context.WithoutCancel(ctx), sb.ID)
+		}
+		return nil, fmt.Errorf("%w: %v", ErrPartial, err)
+	}
+	for i := 0; i < count; i++ {
+		id, err := newID()
+		if err != nil {
+			return fail(err)
+		}
+		now := m.now()
+		row, err := m.cfg.Store.CreateSandbox(ctx, store.Sandbox{
+			ID:            id,
+			TemplateName:  base.TemplateName,
+			SnapshotID:    img.snapshotID,
+			Lifecycle:     base.Lifecycle,
+			State:         store.SandboxCreating,
+			TTLSeconds:    copyInt(base.TTLSeconds),
+			IdleSeconds:   base.IdleSeconds,
+			LastActiveAt:  now,
+			Metadata:      base.Metadata,
+			CreatedAt:     now,
+			SecretBearing: img.secret,
+		})
+		if err != nil {
+			if errors.Is(err, store.ErrExhausted) {
+				return fail(ErrExhausted)
+			}
+			return fail(err)
+		}
+		m.event(ctx, id, "", store.SandboxCreating, "fork", now)
+		made = append(made, row)
+		if _, err := m.restore(ctx, img, row, nil); err != nil {
+			return fail(err)
+		}
+	}
+	return made, nil
 }
 
 // Destroy stops a sandbox and removes every host resource named after it. It
@@ -271,6 +552,7 @@ func (m *Manager) Destroy(ctx context.Context, id string) error {
 		return err
 	}
 	m.event(ctx, id, store.SandboxStopping, store.SandboxDestroyed, "destroyed", now)
+	m.reapSnapshot(ctx, row.SnapshotID)
 	return nil
 }
 
@@ -287,6 +569,12 @@ func (m *Manager) List(ctx context.Context) ([]store.Sandbox, error) {
 // cleanup stops every host resource of one sandbox. It is best effort: each
 // step runs even when an earlier one fails.
 func (m *Manager) cleanup(ctx context.Context, id string) {
+	m.release(ctx, id, false)
+}
+
+// release stops one sandbox's host resources. With paused set the VM is
+// killed without resuming it, which is how a sleep ends.
+func (m *Manager) release(ctx context.Context, id string, paused bool) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
 	defer cancel()
 	m.mu.Lock()
@@ -299,7 +587,13 @@ func (m *Manager) cleanup(ctx context.Context, id string) {
 	m.mu.Unlock()
 
 	if vm != nil {
-		if err := m.cfg.Runtime.Stop(ctx, vm); err != nil {
+		var err error
+		if paused {
+			err = m.cfg.Runtime.StopPaused(ctx, vm)
+		} else {
+			err = m.cfg.Runtime.Stop(ctx, vm)
+		}
+		if err != nil {
 			log.Printf("sandbox: %s: stop: %v", id, err)
 		}
 	}
@@ -312,6 +606,27 @@ func (m *Manager) cleanup(ctx context.Context, id string) {
 		if err := att.Detach(ctx); err != nil {
 			log.Printf("sandbox: %s: network: %v", id, err)
 		}
+	}
+}
+
+// reapSnapshot removes an unlisted image once no live sandbox reads it.
+func (m *Manager) reapSnapshot(ctx context.Context, snapshotID string) {
+	if snapshotID == "" {
+		return
+	}
+	snap, err := m.cfg.Store.GetSnapshot(ctx, snapshotID)
+	if err != nil || snap.Listed {
+		return
+	}
+	live, err := m.cfg.Store.CountRestoredChildren(ctx, snapshotID)
+	if err != nil || live != 0 {
+		return
+	}
+	if err := m.cfg.Store.DeleteSnapshot(ctx, snapshotID); err != nil {
+		return
+	}
+	if err := os.RemoveAll(filepath.Join(m.cfg.Root, "snapshots", snapshotID)); err != nil {
+		log.Printf("sandbox: snapshot %s: remove: %v", snapshotID, err)
 	}
 }
 
@@ -362,6 +677,29 @@ func newID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// snapshotSize is the size of one memory and state pair on disk.
+func snapshotSize(files runtime.SnapshotFiles) int64 {
+	var total int64
+	for _, path := range []string{files.MemPath, files.StatePath} {
+		if fi, err := os.Stat(path); err == nil {
+			total += fi.Size()
+		}
+	}
+	return total
+}
+
+// writeParentFile records what an image descends from. The on-disk layout
+// keeps it next to the memory and state.
+func writeParentFile(dir, parentID, templateName string) {
+	parent := parentID
+	if parent == "" {
+		parent = templateName
+	}
+	if err := os.WriteFile(filepath.Join(dir, "parent"), []byte(parent+"\n"), 0o644); err != nil {
+		log.Printf("sandbox: %s: parent file: %v", dir, err)
+	}
+}
+
 // createOverlay makes the sparse writable drive of one sandbox.
 func createOverlay(ctx context.Context, path string, sizeMB int64) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
@@ -391,6 +729,16 @@ func checkSpace(root string, needMB int64) error {
 		return ErrExhausted
 	}
 	return nil
+}
+
+// copyInt copies an optional number, so a copy never shares a pointer with
+// the row it came from.
+func copyInt(v *int) *int {
+	if v == nil {
+		return nil
+	}
+	n := *v
+	return &n
 }
 
 // Exec runs one command in a running sandbox.

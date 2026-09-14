@@ -246,6 +246,76 @@ func TestSandboxNotFound(t *testing.T) {
 	}
 }
 
+func TestSnapshotListing(t *testing.T) {
+	ts, st := testServer(t)
+	ctx := context.Background()
+	if err := st.CreateTemplate(ctx, store.Template{
+		Name: "py312", ImageRef: "i", VCPUs: 1, MemoryMB: 1, DiskMB: 1,
+		EgressAllow: []string{}, State: store.TemplateReady,
+		CreatedAt: time.Unix(1700000000, 0).UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	created := time.Unix(1700000000, 0).UTC()
+	for _, snap := range []store.Snapshot{
+		{ID: "listed", TemplateName: "py312", SizeBytes: 5, CreatedAt: created, Listed: true, OriginSandboxID: "one"},
+		{ID: "hidden", TemplateName: "py312", SizeBytes: 6, CreatedAt: created, Listed: false, OriginSandboxID: "one"},
+	} {
+		if err := st.CreateSnapshot(ctx, snap); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resp, out := call(t, http.MethodGet, ts.URL+"/v1/snapshots", "secret", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list: status %d: %s", resp.StatusCode, out)
+	}
+	var list []snapshotView
+	if err := json.Unmarshal(out, &list); err != nil {
+		t.Fatalf("list %q: %v", out, err)
+	}
+	if len(list) != 1 || list[0].ID != "listed" {
+		t.Fatalf("list %+v, want only the listed image", list)
+	}
+	if resp, _ := call(t, http.MethodGet, ts.URL+"/v1/snapshots/hidden", "secret", ""); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("get hidden: status %d, want 404", resp.StatusCode)
+	}
+	if resp, _ := call(t, http.MethodDelete, ts.URL+"/v1/snapshots/hidden", "secret", ""); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("delete hidden: status %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestForkAndRestoreValidation(t *testing.T) {
+	ts, _ := testServer(t)
+	if resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/absent/fork", "secret", `{"count":1}`); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("fork absent: status %d, want 404: %s", resp.StatusCode, out)
+	}
+	if resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/absent/fork", "secret", `{"count":0}`); resp.StatusCode != http.StatusBadRequest || errorCode(t, out) != CodeInvalid {
+		t.Fatalf("fork with count 0: status %d body %s", resp.StatusCode, out)
+	}
+	if resp, _ := call(t, http.MethodPost, ts.URL+"/v1/snapshots/absent/restore", "secret", `{"count":1}`); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("restore absent: status %d, want 404", resp.StatusCode)
+	}
+	if resp, out := call(t, http.MethodPost, ts.URL+"/v1/snapshots/absent/restore", "secret", `{"count":1,"extra":true}`); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("restore unknown field: status %d, want 400: %s", resp.StatusCode, out)
+	}
+}
+
+func TestSnapshotBodyForms(t *testing.T) {
+	ts, _ := testServer(t)
+	// An empty body and an empty object both parse; the absent sandbox is the
+	// not-found answer, which proves the request was read.
+	for _, body := range []string{"", "{}", `{"stop":true}`} {
+		if resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/absent/snapshot", "secret", body); resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("snapshot with body %q: status %d, want 404: %s", body, resp.StatusCode, out)
+		}
+	}
+	for _, body := range []string{`{"stop":"sometimes"}`, `{"extra":1}`} {
+		if resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/absent/snapshot", "secret", body); resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("snapshot with body %q: status %d, want 400: %s", body, resp.StatusCode, out)
+		}
+	}
+}
+
 func TestGuestFilePath(t *testing.T) {
 	for _, bad := range []string{"", "..", "a/../b", "."} {
 		if _, err := guestFilePath(bad); err == nil {

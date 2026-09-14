@@ -39,6 +39,9 @@ var ErrNotFound = errors.New("store: not found")
 // state, such as a second build of the same template.
 var ErrConflict = errors.New("store: conflict")
 
+// ErrExhausted is returned when a resource pool has no free slot.
+var ErrExhausted = errors.New("store: exhausted")
+
 // Template is one row of the templates table. EgressAllow is never nil.
 type Template struct {
 	Name        string
@@ -79,7 +82,29 @@ type Sandbox struct {
 	Metadata     string
 	CreatedAt    time.Time
 	DestroyedAt  *time.Time
+	// SecretBearing marks a sandbox that holds injected secrets in memory.
+	SecretBearing bool
 }
+
+// Snapshot is one row of the snapshots table. Listed is false for an image a
+// fork writes for its own children; those never appear in a listing.
+type Snapshot struct {
+	ID              string
+	TemplateName    string
+	ParentID        string
+	SizeBytes       int64
+	CreatedAt       time.Time
+	SecretBearing   bool
+	Listed          bool
+	OriginSandboxID string
+}
+
+// MinVsockCID is the first guest CID the pool hands out. The host is CID 2.
+const MinVsockCID = 3
+
+// MaxVsockCID bounds the pool. One host cannot run a million microVMs, and
+// the bound keeps the allocator total.
+const MaxVsockCID = 1 << 20
 
 // Store records intent. The host records reality; the reconciler corrects the
 // store. SQLite is the only implementation.
@@ -101,12 +126,23 @@ type Store interface {
 	AppendEvent(ctx context.Context, e Event) error
 	ListEvents(ctx context.Context, sandboxID string) ([]Event, error)
 
-	CreateSandbox(ctx context.Context, s Sandbox) error
+	// CreateSandbox inserts one row. A nil VsockCID takes the next free CID
+	// from the pool, and the stored row is returned with the value set.
+	CreateSandbox(ctx context.Context, s Sandbox) (Sandbox, error)
 	GetSandbox(ctx context.Context, id string) (Sandbox, error)
 	ListSandboxes(ctx context.Context) ([]Sandbox, error)
 	SetSandboxState(ctx context.Context, id, state string) error
 	SetSandboxRuntime(ctx context.Context, id, tapName string, vsockCID *int, pid int) error
 	TouchSandbox(ctx context.Context, id string, at time.Time) error
 	DestroySandbox(ctx context.Context, id string, at time.Time) error
+
+	CreateSnapshot(ctx context.Context, s Snapshot) error
+	// GetSnapshot returns a row whether or not it is listed.
+	GetSnapshot(ctx context.Context, id string) (Snapshot, error)
+	// ListSnapshots returns only the listed rows.
+	ListSnapshots(ctx context.Context) ([]Snapshot, error)
+	DeleteSnapshot(ctx context.Context, id string) error
+	// CountRestoredChildren counts live sandboxes restored from one snapshot.
+	CountRestoredChildren(ctx context.Context, snapshotID string) (int, error)
 	Close() error
 }

@@ -43,9 +43,14 @@ func applyResume(req *guestproto.Request) error {
 			return fmt.Errorf("hostname: %w", err)
 		}
 	}
-	resumeMu.Lock()
-	secrets = req.Secrets
-	resumeMu.Unlock()
+	// A restore that carries no secrets keeps the ones the memory already
+	// holds. A fork or a wake must not clear them, because their values never
+	// leave the guest again.
+	if req.Secrets != nil {
+		resumeMu.Lock()
+		secrets = req.Secrets
+		resumeMu.Unlock()
+	}
 	return nil
 }
 

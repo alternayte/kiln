@@ -51,13 +51,21 @@ type SnapshotFiles struct {
 	MemPath   string
 }
 
-// Runtime starts, pauses, resumes, snapshots and stops microVMs.
+// Runtime starts, pauses, resumes, snapshots and stops microVMs. A sleep
+// leaves a paused VM stopped without letting it run again.
 type Runtime interface {
 	Start(ctx context.Context, spec Spec) (*VM, error)
 	Pause(ctx context.Context, vm *VM) error
 	Resume(ctx context.Context, vm *VM) error
+	// Snapshot pauses the VM, writes a full snapshot into dir, and resumes it.
 	Snapshot(ctx context.Context, vm *VM, dir string) (SnapshotFiles, error)
+	// SnapshotPaused writes a full snapshot of an already paused VM and leaves
+	// it paused. The caller resumes or stops it.
+	SnapshotPaused(ctx context.Context, vm *VM, dir string) (SnapshotFiles, error)
 	Stop(ctx context.Context, vm *VM) error
+	// StopPaused kills an already paused VM without resuming it. The saved
+	// memory image stays the truth of the sandbox.
+	StopPaused(ctx context.Context, vm *VM) error
 }
 
 // ExecRequest is one command to run inside a microVM.

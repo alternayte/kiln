@@ -101,7 +101,15 @@ func (f *Firecracker) Restore(ctx context.Context, spec RestoreSpec) (*VM, error
 	if err := f.prepare(spec.Spec, vm); err != nil {
 		return nil, f.fail(vm, err)
 	}
-	if err := linkOrCopy(spec.StatePath, filepath.Join(vm.chrootDir(), "snapshots", "state")); err != nil {
+	// The state file is copied, never linked. Firecracker truncates the file at
+	// this path when it creates a new snapshot, and a hard link would write
+	// through to the image the sandbox was restored from. The copy belongs to
+	// the jailer's user so the next snapshot can replace it.
+	statePath := filepath.Join(vm.chrootDir(), "snapshots", "state")
+	if err := copyFile(spec.StatePath, statePath); err != nil {
+		return nil, f.fail(vm, err)
+	}
+	if err := os.Chown(statePath, JailUID, JailGID); err != nil {
 		return nil, f.fail(vm, err)
 	}
 	if err := f.launch(spec.Spec, vm); err != nil {
@@ -191,6 +199,19 @@ func (f *Firecracker) Stop(ctx context.Context, vm *VM) error {
 	return vm.cleanup()
 }
 
+// StopPaused kills a paused VM without resuming it, then removes its host
+// resources. A sleeping sandbox uses it: the memory image is already saved,
+// and the guest must not run again.
+func (f *Firecracker) StopPaused(ctx context.Context, vm *VM) error {
+	select {
+	case <-vm.done:
+	default:
+		_ = syscall.Kill(vm.PID, syscall.SIGKILL)
+		<-vm.done
+	}
+	return vm.cleanup()
+}
+
 // Pause freezes the VM.
 func (f *Firecracker) Pause(ctx context.Context, vm *VM) error {
 	return vm.api.patch(ctx, "/vm", map[string]string{"state": "Paused"})
@@ -201,12 +222,22 @@ func (f *Firecracker) Resume(ctx context.Context, vm *VM) error {
 	return vm.api.patch(ctx, "/vm", map[string]string{"state": "Resumed"})
 }
 
-// Snapshot writes a full memory and state snapshot into dir. The VM resumes
-// before the call returns.
+// Snapshot pauses a VM, writes a full memory and state snapshot into dir, and
+// resumes it.
 func (f *Firecracker) Snapshot(ctx context.Context, vm *VM, dir string) (SnapshotFiles, error) {
-	if err := vm.api.patch(ctx, "/vm", map[string]string{"state": "Paused"}); err != nil {
+	if err := f.Pause(ctx, vm); err != nil {
 		return SnapshotFiles{}, err
 	}
+	files, err := f.SnapshotPaused(ctx, vm, dir)
+	if resumeErr := f.Resume(ctx, vm); err == nil {
+		err = resumeErr
+	}
+	return files, err
+}
+
+// SnapshotPaused writes a full memory and state snapshot of an already paused
+// VM into dir. The VM stays paused.
+func (f *Firecracker) SnapshotPaused(ctx context.Context, vm *VM, dir string) (SnapshotFiles, error) {
 	out := SnapshotFiles{}
 	err := vm.api.put(ctx, "/snapshot/create", map[string]any{
 		"snapshot_path": "/snapshots/state",
@@ -221,9 +252,6 @@ func (f *Firecracker) Snapshot(ctx context.Context, vm *VM, dir string) (Snapsho
 	}
 	if err == nil {
 		out.MemPath, err = moveOut(filepath.Join(vm.chrootDir(), "snapshots", "mem"), filepath.Join(dir, "mem"))
-	}
-	if resumeErr := f.Resume(ctx, vm); err == nil {
-		err = resumeErr
 	}
 	return out, err
 }

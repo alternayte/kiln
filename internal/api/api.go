@@ -3,6 +3,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -49,8 +50,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sandboxes/{id}", s.getSandbox)
 	mux.HandleFunc("DELETE /v1/sandboxes/{id}", s.deleteSandbox)
 	mux.HandleFunc("POST /v1/sandboxes/{id}/exec", s.execSandbox)
+	mux.HandleFunc("POST /v1/sandboxes/{id}/snapshot", s.createSnapshot)
+	mux.HandleFunc("POST /v1/sandboxes/{id}/fork", s.forkSandbox)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/files/{path...}", s.getSandboxFile)
 	mux.HandleFunc("PUT /v1/sandboxes/{id}/files/{path...}", s.putSandboxFile)
+	mux.HandleFunc("GET /v1/snapshots", s.listSnapshots)
+	mux.HandleFunc("GET /v1/snapshots/{id}", s.getSnapshot)
+	mux.HandleFunc("DELETE /v1/snapshots/{id}", s.deleteSnapshot)
+	mux.HandleFunc("POST /v1/snapshots/{id}/restore", s.restoreSnapshot)
 	return s.auth(mux)
 }
 
@@ -127,6 +134,27 @@ func (s *Server) writeErr(w http.ResponseWriter, err error) {
 // decodeJSON accepts one JSON object of at most 1 MiB with no unknown fields.
 func decodeJSON(r *http.Request, v any) error {
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if dec.More() {
+		return errors.New("unexpected data after the JSON object")
+	}
+	return nil
+}
+
+// decodeOptionalJSON is decodeJSON for a body every field of which is
+// optional, so an empty body takes the zero value.
+func decodeOptionalJSON(r *http.Request, v any) error {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		return err

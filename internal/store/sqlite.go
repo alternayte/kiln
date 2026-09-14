@@ -389,22 +389,75 @@ func nullIntPtr(v *int) any {
 	return *v
 }
 
-func (s *sqliteStore) CreateSandbox(ctx context.Context, sb Sandbox) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sandboxes (
+// CreateSandbox inserts one row and allocates its vsock CID from the pool in
+// the same transaction, so two creates can never take the same CID. A caller
+// that sets VsockCID keeps it.
+func (s *sqliteStore) CreateSandbox(ctx context.Context, sb Sandbox) (Sandbox, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Sandbox{}, err
+	}
+	defer tx.Rollback()
+	cid := sb.VsockCID
+	if cid == nil {
+		used := map[int]bool{}
+		rows, err := tx.QueryContext(ctx,
+			`SELECT vsock_cid FROM sandboxes WHERE destroyed_at IS NULL AND vsock_cid IS NOT NULL`)
+		if err != nil {
+			return Sandbox{}, err
+		}
+		for rows.Next() {
+			var n int
+			if err := rows.Scan(&n); err != nil {
+				rows.Close()
+				return Sandbox{}, err
+			}
+			used[n] = true
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return Sandbox{}, err
+		}
+		rows.Close()
+		next, err := allocateCID(used, MaxVsockCID)
+		if err != nil {
+			return Sandbox{}, err
+		}
+		cid = &next
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sandboxes (
 		id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
-		last_active_at, tap_name, vsock_cid, pid, metadata, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, secret_bearing
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sb.ID, sb.TemplateName, nullString(sb.SnapshotID), sb.Lifecycle, sb.State,
 		nullIntPtr(sb.TTLSeconds), sb.IdleSeconds, sb.LastActiveAt.Unix(),
-		nullString(sb.TapName), nullIntPtr(sb.VsockCID), nullInt(sb.PID), sb.Metadata, sb.CreatedAt.Unix(),
-	)
-	return err
+		nullString(sb.TapName), nullIntPtr(cid), nullInt(sb.PID), sb.Metadata, sb.CreatedAt.Unix(),
+		boolInt(sb.SecretBearing),
+	); err != nil {
+		return Sandbox{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Sandbox{}, err
+	}
+	sb.VsockCID = cid
+	return sb, nil
+}
+
+// allocateCID returns the lowest free CID in the pool. Exhaustion is an
+// error, never a repeated CID.
+func allocateCID(used map[int]bool, max int) (int, error) {
+	for cid := MinVsockCID; cid <= max; cid++ {
+		if !used[cid] {
+			return cid, nil
+		}
+	}
+	return 0, ErrExhausted
 }
 
 func (s *sqliteStore) GetSandbox(ctx context.Context, id string) (Sandbox, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT
 		id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
-		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at
+		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing
 	FROM sandboxes WHERE id = ?`, id)
 	sb, err := scanSandbox(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -416,7 +469,7 @@ func (s *sqliteStore) GetSandbox(ctx context.Context, id string) (Sandbox, error
 func (s *sqliteStore) ListSandboxes(ctx context.Context) ([]Sandbox, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
-		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at
+		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing
 	FROM sandboxes ORDER BY created_at, id`)
 	if err != nil {
 		return nil, err
@@ -502,10 +555,11 @@ func scanSandbox(row sandboxScanner) (Sandbox, error) {
 		pid       sql.NullInt64
 		created   int64
 		destroyed sql.NullInt64
+		secret    int
 	)
 	if err := row.Scan(
 		&sb.ID, &sb.TemplateName, &snapshot, &sb.Lifecycle, &sb.State, &ttl, &sb.IdleSeconds,
-		&active, &tap, &cid, &pid, &sb.Metadata, &created, &destroyed,
+		&active, &tap, &cid, &pid, &sb.Metadata, &created, &destroyed, &secret,
 	); err != nil {
 		return Sandbox{}, err
 	}
@@ -526,5 +580,111 @@ func scanSandbox(row sandboxScanner) (Sandbox, error) {
 		t := time.Unix(destroyed.Int64, 0).UTC()
 		sb.DestroyedAt = &t
 	}
+	sb.SecretBearing = secret != 0
 	return sb, nil
+}
+
+// boolInt stores a bool as the 0 or 1 SQLite uses.
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func (s *sqliteStore) CreateSnapshot(ctx context.Context, sn Snapshot) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO snapshots (
+		id, template_name, parent_id, size_bytes, created_at,
+		secret_bearing, listed, origin_sandbox_id
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		sn.ID, sn.TemplateName, nullString(sn.ParentID), sn.SizeBytes, sn.CreatedAt.Unix(),
+		boolInt(sn.SecretBearing), boolInt(sn.Listed), nullString(sn.OriginSandboxID),
+	)
+	return err
+}
+
+func (s *sqliteStore) GetSnapshot(ctx context.Context, id string) (Snapshot, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT
+		id, template_name, parent_id, size_bytes, created_at,
+		secret_bearing, listed, origin_sandbox_id
+	FROM snapshots WHERE id = ?`, id)
+	sn, err := scanSnapshot(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Snapshot{}, ErrNotFound
+	}
+	return sn, err
+}
+
+func (s *sqliteStore) ListSnapshots(ctx context.Context) ([]Snapshot, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT
+		id, template_name, parent_id, size_bytes, created_at,
+		secret_bearing, listed, origin_sandbox_id
+	FROM snapshots WHERE listed = 1 ORDER BY created_at, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Snapshot
+	for rows.Next() {
+		sn, err := scanSnapshot(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sn)
+	}
+	return out, rows.Err()
+}
+
+// DeleteSnapshot removes one image row. A sandbox row that was restored from
+// it keeps its history, so the reference is cleared in the same transaction
+// the foreign key needs.
+func (s *sqliteStore) DeleteSnapshot(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE sandboxes SET snapshot_id = NULL WHERE snapshot_id = ?`, id); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM snapshots WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit()
+}
+
+func (s *sqliteStore) CountRestoredChildren(ctx context.Context, snapshotID string) (int, error) {
+	return s.countWhere(ctx, "sandboxes",
+		`SELECT count(*) FROM sandboxes WHERE snapshot_id = ? AND destroyed_at IS NULL`, snapshotID)
+}
+
+func scanSnapshot(row sandboxScanner) (Snapshot, error) {
+	var (
+		sn      Snapshot
+		parent  sql.NullString
+		created int64
+		secret  int
+		listed  int
+		origin  sql.NullString
+	)
+	if err := row.Scan(
+		&sn.ID, &sn.TemplateName, &parent, &sn.SizeBytes, &created,
+		&secret, &listed, &origin,
+	); err != nil {
+		return Snapshot{}, err
+	}
+	sn.ParentID = parent.String
+	sn.CreatedAt = time.Unix(created, 0).UTC()
+	sn.SecretBearing = secret != 0
+	sn.Listed = listed != 0
+	sn.OriginSandboxID = origin.String
+	return sn, nil
 }

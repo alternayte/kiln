@@ -184,15 +184,19 @@ func (a *Attachment) Detach(ctx context.Context) error {
 	}
 	var first error
 	keep := func(err error) {
-		if err != nil && first == nil {
+		if err == nil || strings.Contains(err.Error(), "No such file or directory") {
+			return
+		}
+		if first == nil {
 			first = err
 		}
 	}
 	for _, suffix := range []string{"_fwd", "_in", "_dnat", "_src"} {
-		if _, err := run(ctx, "nft", "delete", "chain", "inet", Table, a.chain(suffix)); err != nil {
-			keep(err)
-		}
+		_, err := run(ctx, "nft", "delete", "chain", "inet", Table, a.chain(suffix))
+		keep(err)
 	}
+	_, err := run(ctx, "nft", "delete", "set", "inet", Table, a.setName())
+	keep(err)
 	if _, err := run(ctx, "ip", "rule", "del", "fwmark", strconv.Itoa(a.mark),
 		"to", runtime.GuestIP, "lookup", strconv.Itoa(a.table)); err != nil {
 		keep(err)

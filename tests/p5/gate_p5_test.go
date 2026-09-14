@@ -124,10 +124,10 @@ func TestGateP5(t *testing.T) {
 			t.Fatalf("get while sleeping: %+v, %v", got, err)
 		}
 
-		if out := execIn(t, cli, id, "cat", "/work/marker"); out.Stdout != "sleepy\n" {
+		if out := execIn(t, cli, id, "cat", "/work/marker"); out.Stdout != "sleepy" {
 			t.Fatalf("file after wake: %q", out.Stdout)
 		}
-		if out := execIn(t, cli, id, "cat", "/tmp/marker"); out.Stdout != "in-memory\n" {
+		if out := execIn(t, cli, id, "cat", "/tmp/marker"); out.Stdout != "in-memory" {
 			t.Fatalf("memory after wake: %q", out.Stdout)
 		}
 		waitServer(t, cli, id, 30*time.Second)
@@ -209,7 +209,7 @@ func TestGateP5(t *testing.T) {
 
 		for i, id := range ids {
 			waitState(t, cli, id, store.SandboxRunning, 30*time.Second)
-			if out := execIn(t, cli, id, "cat", fmt.Sprintf("/work/marker-%d", i)); out.Stdout != fmt.Sprintf("value-%d\n", i) {
+			if out := execIn(t, cli, id, "cat", fmt.Sprintf("/work/marker-%d", i)); out.Stdout != fmt.Sprintf("value-%d", i) {
 				t.Fatalf("adopted sandbox %d lost its file: %q", i, out.Stdout)
 			}
 			assertLimits(t, id, 512)

@@ -41,8 +41,11 @@ type resolver struct {
 // newResolver binds UDP and TCP sockets on the gateway address. The sockets
 // are bound to the VM's TAP device and firewall mark, so replies leave
 // through the right TAP. The guest reaches them through a DNAT rule.
+//
+// The resolver lives as long as the sandbox, not as long as the request that
+// created it, so it detaches from the caller's cancellation. Close stops it.
 func newResolver(parent context.Context, a *Attachment, allow []string, upstream []string) (*resolver, error) {
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
 	names, err := normalizeAllow(allow)
 	if err != nil {
 		cancel()

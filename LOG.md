@@ -102,3 +102,20 @@ credential. Only the machine identity of the host stays hidden.
 Also before the server: `infra/README.md` has the preview setup checklist,
 and the ingress now cleans the request path before the control-path check,
 so `//v1/...` cannot slip past it.
+
+## 2026-09-14 — the security gate
+
+`just gate sec` had no `TestSec` tests, so it failed closed. The P5 rule says
+a change to `internal/network`, the jailer setup or the resume hooks needs
+that gate in full, and P6 changed the network. `tests/sec/gate_sec_test.go`
+now holds `TestSecControls`: C1 jailer (chroot, cgroup, seccomp, uid 65534),
+C2 default-deny egress, C3 secrets never in a template and no secret fork by
+default, C4 entropy and C5 clock on restore, C6 hostname randomness, one
+stem per sandbox, no reuse of a retired hostname and the team session check
+before the guest, C6a the wake cap, C7 the cgroup limits, C8 the guest
+cannot reach the control port, and C9 the preview headers, credential
+stripping and host-only guest cookies.
+
+The gate does not need a zone or ACME: it runs the ingress handler in
+process behind an httptest TLS server, so it runs in CI. `sec` is now a
+matrix entry in `.github/workflows/kvm.yml`.

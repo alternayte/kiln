@@ -45,12 +45,12 @@ DNS and GoDaddy. Do not guess. Ask which zone the previews use.
 
 ## 2026-09-14 — P6 built, gate and demo held for the server
 
-Done: P6 public ingress on the branch `p6-public-ingress`. `internal/ingress`
+Done: P6 public ingress, on `main`. `internal/ingress`
 (hostname routing, Auth-All viewer login at `/_kiln/auth/`, wake-on-request
 with the request held, the two wake caps, header rules), the `published`
 table and the publish/retire API, the read-only status page at `GET /`, the
 `client` publish methods, `scripts/demo.sh` and `tests/p6/gate_p6_test.go`.
-`just check` passes.
+`just check` passes, and CI ran `check` and the P0 to P5 gates green.
 
 The DNS client is Cloudflare: `github.com/libdns/cloudflare` through
 `certmagic.DNS01Solver`, the one provider v1 imports. `config.json` carries

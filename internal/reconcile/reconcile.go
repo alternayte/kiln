@@ -6,6 +6,7 @@ package reconcile
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -73,6 +74,9 @@ func (r *Reconciler) Run(ctx context.Context) {
 
 // Sweep compares the store with the host once.
 func (r *Reconciler) Sweep(ctx context.Context) (Report, error) {
+	if r.Sandboxes == nil || r.Runtime == nil || r.Network == nil {
+		return Report{}, errors.New("reconcile: sandbox manager, runtime and network are required")
+	}
 	rows, err := r.Store.ListSandboxes(ctx)
 	if err != nil {
 		return Report{}, err
@@ -109,7 +113,7 @@ func (r *Reconciler) Sweep(ctx context.Context) (Report, error) {
 		case store.SandboxCreating, store.SandboxWaking, store.SandboxStopping:
 			// A request may still be working on this row. Only a state a
 			// previous daemon left behind is stale.
-			if r.Sandboxes != nil && r.Sandboxes.Active(row.ID) {
+			if r.Sandboxes.Active(row.ID) {
 				keep[row.ID] = row
 				continue
 			}
@@ -128,10 +132,9 @@ func (r *Reconciler) Sweep(ctx context.Context) (Report, error) {
 
 	r.failStuckTemplates(ctx, &report)
 	r.sweepOrphans(ctx, rows, keep, protected, host, &report)
-	if r.Sandboxes != nil {
-		if err := r.Sandboxes.ScheduleAll(ctx); err != nil {
-			return report, err
-		}
+	r.sweepRouting(ctx, &report)
+	if err := r.Sandboxes.ScheduleAll(ctx); err != nil {
+		return report, err
 	}
 	return report, nil
 }
@@ -169,9 +172,7 @@ func (r *Reconciler) adopt(ctx context.Context, row store.Sandbox, host *hostSta
 // failRow records that a row cannot run and removes its host resources.
 func (r *Reconciler) failRow(ctx context.Context, row store.Sandbox, reason string, host *hostState, report *Report) {
 	saveCtx := context.WithoutCancel(ctx)
-	if r.Sandboxes != nil {
-		r.Sandboxes.Forget(row.ID)
-	}
+	r.Sandboxes.Forget(row.ID)
 	if err := r.Store.SetSandboxState(saveCtx, row.ID, store.SandboxFailed); err != nil {
 		log.Printf("reconcile: %s: record failure: %v", row.ID, err)
 	}
@@ -522,6 +523,46 @@ func parseChains(out string) []string {
 		shorts = append(shorts, rest[:i])
 	}
 	return shorts
+}
+
+// sweepRouting removes a fwmark rule whose routing table points at a device
+// that no longer exists. A killed daemon can leave those behind.
+func (r *Reconciler) sweepRouting(ctx context.Context, report *Report) {
+	out, err := commandOutput(ctx, "ip", "rule", "show")
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(out, "\n") {
+		mark, table, ok := network.RuleFor(line)
+		if !ok {
+			continue
+		}
+		route, err := commandOutput(ctx, "ip", "route", "show", "table", strconv.Itoa(table))
+		if err != nil {
+			continue
+		}
+		dev := routeDevice(route)
+		if dev == "" {
+			continue
+		}
+		if _, err := os.Stat("/sys/class/net/" + dev); err == nil {
+			continue
+		}
+		report.Swept = append(report.Swept, "rule "+strconv.Itoa(mark))
+		_, _ = exec.CommandContext(ctx, "ip", "route", "flush", "table", strconv.Itoa(table)).CombinedOutput()
+		_, _ = exec.CommandContext(ctx, "ip", "rule", "del", "fwmark", strconv.Itoa(mark), "to", runtime.GuestIP, "lookup", strconv.Itoa(table)).CombinedOutput()
+	}
+}
+
+// routeDevice returns the device a route line sends traffic through.
+func routeDevice(route string) string {
+	fields := strings.Fields(route)
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "dev" {
+			return fields[i+1]
+		}
+	}
+	return ""
 }
 
 func commandOutput(ctx context.Context, name string, args ...string) (string, error) {

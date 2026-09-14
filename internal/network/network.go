@@ -325,7 +325,7 @@ func discover(ctx context.Context, tapName string) (int, int, error) {
 		return 0, 0, err
 	}
 	for _, line := range strings.Split(out, "\n") {
-		mark, table, ok := fwmarkLookup(line)
+		mark, table, ok := RuleFor(line)
 		if !ok {
 			continue
 		}
@@ -338,6 +338,19 @@ func discover(ctx context.Context, tapName string) (int, int, error) {
 		}
 	}
 	return 0, 0, fmt.Errorf("network: no routing state for %s", tapName)
+}
+
+// RuleFor reads the mark and table out of one Kiln fwmark rule line: a rule
+// that sends traffic to the guest address through a table Kiln owns.
+func RuleFor(line string) (int, int, bool) {
+	if !strings.Contains(line, "to "+runtime.GuestIP) {
+		return 0, 0, false
+	}
+	mark, table, ok := fwmarkLookup(line)
+	if !ok || table < 1001 {
+		return 0, 0, false
+	}
+	return mark, table, true
 }
 
 // fwmarkLookup reads the mark and table out of one ip rule line.

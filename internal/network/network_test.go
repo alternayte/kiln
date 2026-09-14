@@ -178,3 +178,23 @@ func TestResolverRefusesNamesOutsideTheAllowlist(t *testing.T) {
 		t.Fatalf("rcode %d, want servfail without an upstream", rcode)
 	}
 }
+
+func TestRuleForReadsKilnRulesOnly(t *testing.T) {
+	cases := []struct {
+		line  string
+		mark  int
+		table int
+		ok    bool
+	}{
+		{"32765:\tfrom all fwmark 0x1 to 172.31.0.2 lookup 1001", 1, 1001, true},
+		{"32765:\tfrom all fwmark 0x1 lookup 1001", 0, 0, false},
+		{"32765:\tfrom all fwmark 0x1 to 172.31.0.2 lookup 999", 0, 0, false},
+		{"0:\tfrom all lookup local", 0, 0, false},
+	}
+	for _, tc := range cases {
+		mark, table, ok := RuleFor(tc.line)
+		if mark != tc.mark || table != tc.table || ok != tc.ok {
+			t.Fatalf("RuleFor(%q) = %d, %d, %t; want %d, %d, %t", tc.line, mark, table, ok, tc.mark, tc.table, tc.ok)
+		}
+	}
+}

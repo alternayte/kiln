@@ -75,3 +75,13 @@ func TestSandboxIDFromPath(t *testing.T) {
 		t.Fatal("a template path produced a sandbox id")
 	}
 }
+
+func TestRouteDevice(t *testing.T) {
+	got := routeDevice("172.31.0.2 dev kiln-0123456789 scope link")
+	if got != "kiln-0123456789" {
+		t.Fatalf("routeDevice = %q", got)
+	}
+	if got := routeDevice("blackhole 172.31.0.0/30"); got != "" {
+		t.Fatalf("routeDevice without a device = %q", got)
+	}
+}

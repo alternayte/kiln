@@ -674,10 +674,22 @@ func startGuestServer(t *testing.T, ctx context.Context, sbx *sandbox.Manager, i
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("the in-guest server did not start")
+			log := guestOutput(t, ctx, sbx, id, "cat", "/tmp/sec_server.log")
+			listing := guestOutput(t, ctx, sbx, id, "sh", "-c", "ls -l /tmp; ps aux | head -20")
+			t.Fatalf("the in-guest server did not start; server log:\n%s\nguest state:\n%s", log, listing)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+}
+
+// guestOutput runs one command and returns its output whatever its exit code.
+func guestOutput(t *testing.T, ctx context.Context, sbx *sandbox.Manager, id string, argv ...string) string {
+	t.Helper()
+	out, err := sbx.Exec(ctx, id, runtime.ExecRequest{Cmd: argv, TimeoutSeconds: 30}, nil)
+	if err != nil {
+		return fmt.Sprintf("exec %v: %v", argv, err)
+	}
+	return out.Stdout + out.Stderr
 }
 
 // runGuest runs one command and fails when its exit code is not zero.

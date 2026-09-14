@@ -98,7 +98,7 @@ func TestGateP6(t *testing.T) {
 		}
 	})
 
-	server := strings.ReplaceAll(inGuestServer, "MARKER", sb.ID)
+	server := strings.ReplaceAll(inGuestServer, "__MARKER__", sb.ID)
 	if err := cli.WriteFile(ctx, sb.ID, "/tmp/server.py", strings.NewReader(server)); err != nil {
 		t.Fatalf("write the guest server: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestGateP6(t *testing.T) {
 const inGuestServer = `import http.server, socketserver, threading, time
 
 LOG = "/tmp/requests.log"
-MARKER = "MARKER"
+MARKER = "__MARKER__"
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):

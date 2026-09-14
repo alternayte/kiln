@@ -173,9 +173,24 @@ func checkJail(t *testing.T, ctx context.Context, st store.Store, sbx *sandbox.M
 	if err != nil {
 		t.Fatalf("read /proc/%d/root: %v", pid, err)
 	}
-	wantRoot := filepath.Join(runtime.SandboxDir(kilnRoot(), sb.ID), "jail", "firecracker", sb.ID, "root")
-	if root != wantRoot {
-		t.Fatalf("firecracker root %q, want the jail %q", root, wantRoot)
+	// The jail root holds the kernel and the drives that jailer linked in,
+	// and it has no host /etc. The readlink target alone is not reliable:
+	// a process in its own mount namespace reports "/".
+	entries, err := os.ReadDir(fmt.Sprintf("/proc/%d/root", pid))
+	if err != nil {
+		t.Fatalf("list the jail root %s: %v", root, err)
+	}
+	inside := map[string]bool{}
+	for _, entry := range entries {
+		inside[entry.Name()] = true
+	}
+	for _, name := range []string{"vmlinux", "rootfs.ext4"} {
+		if !inside[name] {
+			t.Fatalf("the jail root %s is missing %s: %v", root, name, inside)
+		}
+	}
+	if inside["etc"] {
+		t.Fatalf("the jail root %s carries the host /etc; the process is not jailed", root)
 	}
 	cgroup, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
 	if err != nil {
@@ -627,7 +642,7 @@ func execGuest(t *testing.T, ctx context.Context, sbx *sandbox.Manager, sb store
 const inGuestServer = `import http.server, socketserver, threading, time, json
 
 LOG = "/tmp/requests.log"
-MARKER = "MARKER"
+MARKER = "__MARKER__"
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -658,7 +673,7 @@ while True:
 
 func startGuestServer(t *testing.T, ctx context.Context, sbx *sandbox.Manager, id string) {
 	t.Helper()
-	script := strings.ReplaceAll(inGuestServer, "MARKER", id)
+	script := strings.ReplaceAll(inGuestServer, "__MARKER__", id)
 	if err := sbx.WriteFile(ctx, id, "/tmp/sec_server.py", strings.NewReader(script)); err != nil {
 		t.Fatalf("write the guest server: %v", err)
 	}

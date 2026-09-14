@@ -9,11 +9,9 @@ import (
 	"log"
 	"net"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/alternayte/kiln/internal/runtime"
-	"golang.org/x/sys/unix"
 )
 
 // maxDNS is the largest DNS message either side accepts.
@@ -60,7 +58,7 @@ func newResolver(parent context.Context, a *Attachment, allow []string, upstream
 		cancel: cancel,
 		sem:    make(chan struct{}, 16),
 	}
-	lc := net.ListenConfig{Control: r.control(a.mark)}
+	lc := net.ListenConfig{Control: bindControl(a.TAPName, a.mark)}
 	pc, err := lc.ListenPacket(ctx, "udp4", net.JoinHostPort(runtime.GuestGateway, "0"))
 	if err != nil {
 		cancel()
@@ -78,25 +76,6 @@ func newResolver(parent context.Context, a *Attachment, allow []string, upstream
 	go r.serveUDP(ctx)
 	go r.serveTCP(ctx)
 	return r, nil
-}
-
-// control binds the socket to the VM's TAP and mark before it is used.
-func (r *resolver) control(mark int) func(network, address string, c syscall.RawConn) error {
-	return func(_, _ string, c syscall.RawConn) error {
-		var opErr error
-		if err := c.Control(func(fd uintptr) {
-			if err := unix.SetsockoptString(int(fd), unix.SOL_SOCKET, soBindToDevice, r.tap); err != nil {
-				opErr = err
-				return
-			}
-			if err := unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, soMark, mark); err != nil {
-				opErr = err
-			}
-		}); err != nil {
-			return err
-		}
-		return opErr
-	}
 }
 
 func (r *resolver) udpPort() int { return r.udp.LocalAddr().(*net.UDPAddr).Port }

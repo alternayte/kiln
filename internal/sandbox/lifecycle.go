@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -416,6 +417,30 @@ func (m *Manager) Adopt(ctx context.Context, row store.Sandbox, vm *runtime.VM, 
 	}
 	m.mu.Unlock()
 	m.arm(row)
+}
+
+// DialGuest opens a TCP connection to one guest port. A sleeping sandbox
+// wakes first, so the caller waits for the restore. A preview request counts
+// as activity, because an idle timer must not sleep a preview that a person
+// is using. The connection outlives the call; the caller closes it.
+func (m *Manager) DialGuest(ctx context.Context, id string, port int) (net.Conn, error) {
+	row, unlock, err := m.acquireRunning(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	m.mu.Lock()
+	att := m.attrs[id]
+	m.mu.Unlock()
+	if att == nil {
+		return nil, store.ErrConflict
+	}
+	conn, err := att.DialGuest(ctx, port)
+	if err != nil {
+		return nil, err
+	}
+	m.touch(ctx, row)
+	return conn, nil
 }
 
 // Has reports whether the manager already holds handles for one sandbox.

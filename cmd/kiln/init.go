@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alternayte/kiln/internal/ingress"
 	"github.com/alternayte/kiln/internal/network"
 	"github.com/alternayte/kiln/internal/store"
 )
@@ -29,16 +31,32 @@ type configFile struct {
 	BearerToken string            `json:"bearer_token"`
 	ControlAddr string            `json:"control_addr"`
 	IngressAddr string            `json:"ingress_addr"`
+	Zone        string            `json:"zone,omitempty"`
+	ACME        acmeSettings      `json:"acme"`
 	Secrets     map[string]string `json:"secrets,omitempty"`
+}
+
+// acmeSettings is the certificate part of the config. v1 imports the
+// Cloudflare DNS client, so dns_provider is "cloudflare".
+type acmeSettings struct {
+	Email       string            `json:"email,omitempty"`
+	DNSProvider string            `json:"dns_provider,omitempty"`
+	Credentials map[string]string `json:"credentials,omitempty"`
 }
 
 // cmdInit is first-run setup. It creates the Kiln root, fetches the pinned
 // Firecracker tarball and kernel, verifies each checksum, installs the
-// binaries, applies the nftables base, creates the database and writes
-// config.json with mode 0600.
+// binaries, applies the nftables base, creates the database and the viewer
+// tables, and writes config.json with mode 0600.
 func cmdInit(args []string) error {
-	if len(args) != 0 {
-		return fmt.Errorf("init takes no arguments")
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	zone := fs.String("zone", "", "preview zone for published sandboxes, for example example.com")
+	email := fs.String("acme-email", "", "ACME account email for the wildcard certificate")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("init takes no positional arguments")
 	}
 	root := os.Getenv("KILN_ROOT")
 	if root == "" {
@@ -51,6 +69,7 @@ func cmdInit(args []string) error {
 		filepath.Join(root, "templates"),
 		filepath.Join(root, "sandboxes"),
 		filepath.Join(root, "snapshots"),
+		filepath.Join(root, "acme"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
@@ -96,7 +115,11 @@ func cmdInit(args []string) error {
 	}
 
 	cfgPath := filepath.Join(root, "config.json")
-	if err := writeConfig(cfgPath); err != nil {
+	cfg, err := writeConfig(cfgPath, *zone, *email)
+	if err != nil {
+		return err
+	}
+	if err := initViewer(context.Background(), root, cfg.Zone); err != nil {
 		return err
 	}
 
@@ -106,7 +129,46 @@ func cmdInit(args []string) error {
 	fmt.Printf("kilninit -> %s\n", kilninitPath)
 	fmt.Printf("nftables base -> table inet kiln\n")
 	fmt.Printf("database -> %s\n", filepath.Join(root, "kiln.db"))
+	if cfg.Zone != "" {
+		fmt.Printf("preview zone -> %s\n", cfg.Zone)
+	}
+	if cfg.ACME.Email != "" {
+		fmt.Printf("acme email -> %s (%s)\n", cfg.ACME.Email, cfg.ACME.DNSProvider)
+	}
 	fmt.Printf("config -> %s (mode 0600)\n", cfgPath)
+	return nil
+}
+
+// initViewer opens the viewer store on the Kiln database, applies its
+// migrations, and creates the first viewer from the environment. There is no
+// self-signup, so the operator makes the first account here.
+func initViewer(ctx context.Context, root, zone string) error {
+	auth, db, err := ingress.NewAuth(ctx, filepath.Join(root, "kiln.db"), zone)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	address := strings.TrimSpace(os.Getenv("KILN_VIEWER_EMAIL"))
+	password := os.Getenv("KILN_VIEWER_PASSWORD")
+	if address == "" && password == "" {
+		fmt.Printf("viewer -> none. Set KILN_VIEWER_EMAIL and KILN_VIEWER_PASSWORD and re-run kiln init to create the first viewer.\n")
+		return nil
+	}
+	if address == "" || password == "" {
+		return fmt.Errorf("init: KILN_VIEWER_EMAIL and KILN_VIEWER_PASSWORD must be set together")
+	}
+	exists, err := ingress.ViewerExists(ctx, auth, address)
+	if err != nil {
+		return fmt.Errorf("init: viewer lookup: %w", err)
+	}
+	if exists {
+		fmt.Printf("viewer -> %s (already exists)\n", address)
+		return nil
+	}
+	if err := ingress.CreateViewer(ctx, auth, address, password); err != nil {
+		return fmt.Errorf("init: create viewer: %w", err)
+	}
+	fmt.Printf("viewer -> %s\n", address)
 	return nil
 }
 
@@ -293,23 +355,25 @@ func writeExecutable(dst string, r io.Reader) error {
 }
 
 // writeConfig keeps an existing bearer token, so a re-run does not lock out
-// clients. Missing listeners take the fixed v1 addresses.
-func writeConfig(path string) error {
+// clients. Missing listeners take the fixed v1 addresses. The zone, the ACME
+// email and the Cloudflare API token come from the arguments and the
+// environment.
+func writeConfig(path, zone, email string) (configFile, error) {
 	cfg := configFile{}
 	existing, err := os.ReadFile(path)
 	switch {
 	case err == nil:
 		if err := json.Unmarshal(existing, &cfg); err != nil {
-			return fmt.Errorf("%s: %w", path, err)
+			return configFile{}, fmt.Errorf("%s: %w", path, err)
 		}
 	case errors.Is(err, os.ErrNotExist):
 	default:
-		return err
+		return configFile{}, err
 	}
 	if cfg.BearerToken == "" {
 		token, err := newToken()
 		if err != nil {
-			return err
+			return configFile{}, err
 		}
 		cfg.BearerToken = token
 	}
@@ -319,20 +383,36 @@ func writeConfig(path string) error {
 	if cfg.IngressAddr == "" {
 		cfg.IngressAddr = "0.0.0.0:443"
 	}
+	if zone != "" {
+		cfg.Zone = zone
+	}
+	if email != "" {
+		cfg.ACME.Email = email
+	}
+	if token := os.Getenv(ingress.CloudflareTokenKey); token != "" {
+		if cfg.ACME.Credentials == nil {
+			cfg.ACME.Credentials = map[string]string{}
+		}
+		cfg.ACME.Credentials[ingress.CloudflareTokenKey] = token
+		cfg.ACME.DNSProvider = ingress.CloudflareProvider
+	}
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return err
+		return configFile{}, err
 	}
 	b = append(b, '\n')
 	tmp := path + ".part"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
+		return configFile{}, err
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)
-		return err
+		return configFile{}, err
 	}
-	return os.Chmod(path, 0o600)
+	if err := os.Chmod(path, 0o600); err != nil {
+		return configFile{}, err
+	}
+	return cfg, nil
 }
 
 func newToken() (string, error) {

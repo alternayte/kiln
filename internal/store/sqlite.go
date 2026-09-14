@@ -10,9 +10,10 @@ import (
 	"io/fs"
 	"path"
 	"sort"
+	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	sqlite "modernc.org/sqlite"
 )
 
 //go:embed migrations/*.sql
@@ -230,6 +231,12 @@ func (s *sqliteStore) DeleteTemplate(ctx context.Context, name string) error {
 		return err
 	}
 	defer tx.Rollback()
+	// Published rows reference the sandbox rows, so they go first.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM published WHERE sandbox_id IN (
+		SELECT id FROM sandboxes WHERE template_name = ? AND destroyed_at IS NOT NULL
+	)`, name); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM sandboxes WHERE template_name = ? AND destroyed_at IS NOT NULL`, name); err != nil {
 		return err
@@ -683,6 +690,104 @@ func (s *sqliteStore) DeleteSnapshot(ctx context.Context, id string) error {
 func (s *sqliteStore) CountRestoredChildren(ctx context.Context, snapshotID string) (int, error) {
 	return s.countWhere(ctx, "sandboxes",
 		`SELECT count(*) FROM sandboxes WHERE snapshot_id = ? AND destroyed_at IS NULL`, snapshotID)
+}
+
+func (s *sqliteStore) PublishSandbox(ctx context.Context, p Published) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO published (
+		sandbox_id, guest_port, subdomain, visibility, created_at
+	) VALUES (?, ?, ?, ?, ?)`,
+		p.SandboxID, p.GuestPort, p.Subdomain, p.Visibility, p.CreatedAt.Unix())
+	if err != nil && isUniqueViolation(err) {
+		return ErrConflict
+	}
+	return err
+}
+
+func (s *sqliteStore) GetPublished(ctx context.Context, sandboxID string, port int) (Published, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT
+		sandbox_id, guest_port, subdomain, visibility, created_at
+	FROM published WHERE sandbox_id = ? AND guest_port = ?`, sandboxID, port)
+	p, err := scanPublished(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Published{}, ErrNotFound
+	}
+	return p, err
+}
+
+func (s *sqliteStore) ListPublished(ctx context.Context, sandboxID string) ([]Published, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT
+		sandbox_id, guest_port, subdomain, visibility, created_at
+	FROM published WHERE sandbox_id = ? ORDER BY created_at, guest_port`, sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Published
+	for rows.Next() {
+		p, err := scanPublished(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) PublishedBySubdomain(ctx context.Context, subdomain string) (Published, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT
+		sandbox_id, guest_port, subdomain, visibility, created_at
+	FROM published WHERE subdomain = ?`, subdomain)
+	p, err := scanPublished(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Published{}, ErrNotFound
+	}
+	return p, err
+}
+
+func (s *sqliteStore) RetirePublished(ctx context.Context, sandboxID string, port int) error {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM published WHERE sandbox_id = ? AND guest_port = ?`, sandboxID, port)
+	if err != nil {
+		return err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *sqliteStore) DeletePublishedForSandbox(ctx context.Context, sandboxID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM published WHERE sandbox_id = ?`, sandboxID)
+	return err
+}
+
+// isUniqueViolation reports whether a modernc.org/sqlite error is a unique or
+// primary key conflict.
+func isUniqueViolation(err error) bool {
+	var e *sqlite.Error
+	if errors.As(err, &e) {
+		// 2067 is SQLITE_CONSTRAINT_UNIQUE and 1555 is SQLITE_CONSTRAINT_PRIMARYKEY.
+		if e.Code() == 2067 || e.Code() == 1555 {
+			return true
+		}
+	}
+	return strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
+
+func scanPublished(row scanner) (Published, error) {
+	var (
+		p       Published
+		created int64
+	)
+	if err := row.Scan(&p.SandboxID, &p.GuestPort, &p.Subdomain, &p.Visibility, &created); err != nil {
+		return Published{}, err
+	}
+	p.CreatedAt = time.Unix(created, 0).UTC()
+	return p, nil
 }
 
 func scanSnapshot(row sandboxScanner) (Snapshot, error) {

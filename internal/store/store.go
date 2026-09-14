@@ -32,6 +32,13 @@ const (
 	SandboxFailed    = "failed"
 )
 
+// Preview visibility. A public preview needs no credential; a team preview
+// needs a viewer session.
+const (
+	VisibilityPublic = "public"
+	VisibilityTeam   = "team"
+)
+
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("store: not found")
 
@@ -99,6 +106,15 @@ type Snapshot struct {
 	OriginSandboxID string
 }
 
+// Published is one hostname a sandbox port is served on.
+type Published struct {
+	SandboxID  string
+	GuestPort  int
+	Subdomain  string
+	Visibility string
+	CreatedAt  time.Time
+}
+
 // MinVsockCID is the first guest CID the pool hands out. The host is CID 2.
 const MinVsockCID = 3
 
@@ -149,5 +165,20 @@ type Store interface {
 	DeleteSnapshot(ctx context.Context, id string) error
 	// CountRestoredChildren counts live sandboxes restored from one snapshot.
 	CountRestoredChildren(ctx context.Context, snapshotID string) (int, error)
+
+	// PublishSandbox inserts one preview. A subdomain another row already
+	// holds is ErrConflict, and the caller draws a new one.
+	PublishSandbox(ctx context.Context, p Published) error
+	// GetPublished returns one preview by sandbox and port.
+	GetPublished(ctx context.Context, sandboxID string, port int) (Published, error)
+	// ListPublished returns every preview of one sandbox, oldest first.
+	ListPublished(ctx context.Context, sandboxID string) ([]Published, error)
+	// PublishedBySubdomain returns the preview one hostname serves.
+	PublishedBySubdomain(ctx context.Context, subdomain string) (Published, error)
+	// RetirePublished removes one hostname. It 404s from then on and is
+	// never handed out again.
+	RetirePublished(ctx context.Context, sandboxID string, port int) error
+	// DeletePublishedForSandbox removes every hostname of one sandbox.
+	DeletePublishedForSandbox(ctx context.Context, sandboxID string) error
 	Close() error
 }

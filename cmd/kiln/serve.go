@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +14,10 @@ import (
 	"syscall"
 	"time"
 
+	authall "github.com/alternayte/auth-all"
+
 	"github.com/alternayte/kiln/internal/api"
+	"github.com/alternayte/kiln/internal/ingress"
 	"github.com/alternayte/kiln/internal/network"
 	"github.com/alternayte/kiln/internal/reconcile"
 	"github.com/alternayte/kiln/internal/runtime"
@@ -23,8 +27,8 @@ import (
 	"github.com/alternayte/kiln/internal/template"
 )
 
-// cmdServe runs the API server, store and VM supervisor on the control
-// listener from config.json.
+// cmdServe runs the API server, store, VM supervisor, reconciler, viewer
+// login and preview ingress from config.json.
 func cmdServe() error {
 	root := os.Getenv("KILN_ROOT")
 	if root == "" {
@@ -82,6 +86,7 @@ func cmdServe() error {
 		Pages:      func() snapshot.PageFaultSource { return &snapshot.Process{Binary: exe} },
 		KernelPath: mgr.KernelPath,
 		Secrets:    cfg.Secrets,
+		Zone:       cfg.Zone,
 	})
 
 	// The sweep runs before the listener: a restart adopts the microVMs the
@@ -111,6 +116,7 @@ func cmdServe() error {
 			Sandboxes:          sbx,
 			Token:              cfg.BearerToken,
 			FirecrackerVersion: firecrackerVersion,
+			Root:               root,
 			Base:               ctx,
 		}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -121,12 +127,62 @@ func cmdServe() error {
 	}
 	fmt.Printf("kiln serve: control on %s\n", cfg.ControlAddr)
 
+	// The viewer login and the preview ingress share this process. The
+	// ingress needs a zone and an ACME account; without them the control
+	// listener still serves every other endpoint.
+	var viewer *authall.Auth
+	if cfg.Zone != "" {
+		auth, authDB, err := ingress.NewAuth(ctx, filepath.Join(root, "kiln.db"), cfg.Zone)
+		if err != nil {
+			return fmt.Errorf("serve: viewer login: %w", err)
+		}
+		defer authDB.Close()
+		viewer = auth
+	}
+	var ingressSrv *http.Server
+	if cfg.Zone != "" && cfg.ACME.Email != "" && len(cfg.ACME.Credentials) > 0 {
+		magic, err := ingress.NewCertMagic(ctx, root, cfg.Zone, ingress.ACMEConfig{
+			Email:       cfg.ACME.Email,
+			DNSProvider: cfg.ACME.DNSProvider,
+			Credentials: cfg.ACME.Credentials,
+		})
+		if err != nil {
+			return fmt.Errorf("serve: %w", err)
+		}
+		preview := ingress.New(ingress.Config{Zone: cfg.Zone, Store: st, Sandboxes: sbx, Auth: viewer})
+		addr := cfg.IngressAddr
+		if addr == "" {
+			addr = "0.0.0.0:443"
+		}
+		public, err := net.Listen("tcp", addr)
+		if err != nil {
+			return fmt.Errorf("serve: ingress: %w", err)
+		}
+		ingressSrv = &http.Server{
+			Addr:              addr,
+			Handler:           preview.Handler(),
+			TLSConfig:         magic.TLSConfig(),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			if err := ingressSrv.Serve(tls.NewListener(public, ingressSrv.TLSConfig)); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				fmt.Fprintf(os.Stderr, "kiln serve: ingress: %v\n", err)
+			}
+		}()
+		fmt.Printf("kiln serve: ingress on %s for *.%s\n", addr, cfg.Zone)
+	} else if cfg.Zone != "" {
+		fmt.Printf("kiln serve: ingress disabled: config.json has no acme account\n")
+	}
+
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(ln) }()
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+		if ingressSrv != nil {
+			_ = ingressSrv.Shutdown(shutdownCtx)
+		}
 		return srv.Shutdown(shutdownCtx)
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {

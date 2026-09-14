@@ -209,6 +209,14 @@ type Sandbox struct {
 	CreatedAt    time.Time       `json:"created_at"`
 	LastActiveAt time.Time       `json:"last_active_at"`
 	DestroyedAt  *time.Time      `json:"destroyed_at,omitempty"`
+	Published    []Published     `json:"published"`
+}
+
+// Published is one preview of a sandbox port.
+type Published struct {
+	Port       int    `json:"port"`
+	URL        string `json:"url"`
+	Visibility string `json:"visibility"`
 }
 
 // CreateSandbox restores a template snapshot into a running sandbox.
@@ -241,6 +249,35 @@ func (c *Client) Sandbox(ctx context.Context, id string) (Sandbox, error) {
 // DeleteSandbox destroys one sandbox and every host resource named after it.
 func (c *Client) DeleteSandbox(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/sandboxes/"+url.PathEscape(id), nil, nil)
+}
+
+// PublishRequest is one POST /v1/sandboxes/{id}/publish body. Visibility is
+// required and is "public" or "team".
+type PublishRequest struct {
+	Port       int    `json:"port"`
+	Visibility string `json:"visibility"`
+}
+
+// PublishCreated is the answer to a publish call.
+type PublishCreated struct {
+	URL        string `json:"url"`
+	Visibility string `json:"visibility"`
+}
+
+// Publish serves one guest port on a hostname. Republishing the same port
+// returns the same URL.
+func (c *Client) Publish(ctx context.Context, id string, req PublishRequest) (PublishCreated, error) {
+	var out PublishCreated
+	if err := c.do(ctx, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/publish", req, &out); err != nil {
+		return PublishCreated{}, err
+	}
+	return out, nil
+}
+
+// Retire removes one published hostname. It 404s from then on.
+func (c *Client) Retire(ctx context.Context, id string, port int) error {
+	path := "/v1/sandboxes/" + url.PathEscape(id) + "/publish/" + strconv.Itoa(port)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
 // ExecRequest is one command to run inside a sandbox.

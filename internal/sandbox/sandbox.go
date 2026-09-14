@@ -61,6 +61,9 @@ type Config struct {
 	KernelPath string
 	// Secrets maps secret names to values. Values are never written to disk.
 	Secrets map[string]string
+	// Zone is the preview zone. Published hostnames sit under it. An empty
+	// zone refuses every publish.
+	Zone string
 	// Now returns the current time. Tests set it.
 	Now func() time.Time
 }
@@ -604,6 +607,10 @@ func (m *Manager) destroyLocked(ctx context.Context, id string) error {
 		return err
 	}
 	m.event(ctx, id, row.State, store.SandboxStopping, "destroy", m.now())
+	// Publishing dies with the sandbox. The hostnames 404 from then on.
+	if err := m.cfg.Store.DeletePublishedForSandbox(ctx, id); err != nil {
+		return err
+	}
 	m.cleanup(ctx, id)
 	if err := os.RemoveAll(runtime.SandboxDir(m.cfg.Root, id)); err != nil {
 		return err

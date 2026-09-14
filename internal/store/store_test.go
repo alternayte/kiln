@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -203,8 +204,12 @@ func TestReopenAppliesMigrationsOnce(t *testing.T) {
 	if err := sq.db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 3 {
-		t.Fatalf("schema_migrations rows %d, want 3", count)
+	files, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != len(files) {
+		t.Fatalf("schema_migrations rows %d, want one per migration file (%d)", count, len(files))
 	}
 }
 
@@ -409,5 +414,59 @@ func TestTemplateDependentsCountsChildren(t *testing.T) {
 	}
 	if live != 0 || snapshots != 0 {
 		t.Fatalf("other template: %d live, %d snapshots, want 0 and 0", live, snapshots)
+	}
+}
+
+// TestPublishedRoundTrip pins the preview rows: a subdomain is unique, a
+// retire removes it, and a sandbox delete takes its hostnames.
+func TestPublishedRoundTrip(t *testing.T) {
+	s, _ := openTest(t)
+	ctx := context.Background()
+	if err := s.CreateTemplate(ctx, sample("py312")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateSandbox(ctx, sandboxRow("one")); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Unix(1700000000, 0).UTC()
+	first := Published{SandboxID: "one", GuestPort: 8000, Subdomain: "abcd", Visibility: VisibilityPublic, CreatedAt: at}
+	if err := s.PublishSandbox(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PublishSandbox(ctx, Published{
+		SandboxID: "one", GuestPort: 8001, Subdomain: "efgh", Visibility: VisibilityTeam, CreatedAt: at,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A second sandbox may not take a subdomain that is already served.
+	if _, err := s.CreateSandbox(ctx, sandboxRow("two")); err != nil {
+		t.Fatal(err)
+	}
+	clash := Published{SandboxID: "two", GuestPort: 8000, Subdomain: "abcd", Visibility: VisibilityPublic, CreatedAt: at}
+	if err := s.PublishSandbox(ctx, clash); !errors.Is(err, ErrConflict) {
+		t.Fatalf("clashing subdomain: %v, want ErrConflict", err)
+	}
+	got, err := s.PublishedBySubdomain(ctx, "efgh")
+	if err != nil || got.SandboxID != "one" || got.GuestPort != 8001 || got.Visibility != VisibilityTeam {
+		t.Fatalf("published by subdomain: %+v, %v", got, err)
+	}
+	rows, err := s.ListPublished(ctx, "one")
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("list published: %d rows, %v; want 2", len(rows), err)
+	}
+	if err := s.RetirePublished(ctx, "one", 8001); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PublishedBySubdomain(ctx, "efgh"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("retired hostname: %v, want ErrNotFound", err)
+	}
+	if err := s.RetirePublished(ctx, "one", 8001); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("retire twice: %v, want ErrNotFound", err)
+	}
+	if err := s.DeletePublishedForSandbox(ctx, "one"); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := s.ListPublished(ctx, "one"); err != nil || len(rows) != 0 {
+		t.Fatalf("list after delete: %d rows, %v", len(rows), err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,7 @@ func testServer(t *testing.T) (*httptest.Server, store.Store) {
 		Root:    t.TempDir(),
 		Store:   st,
 		Secrets: map[string]string{"S": "v"},
+		Zone:    "example.com",
 	})
 	ts := httptest.NewServer((&Server{Store: st, Templates: mgr, Sandboxes: sbx, Token: "secret", Base: context.Background()}).Handler())
 	t.Cleanup(ts.Close)
@@ -325,5 +327,42 @@ func TestGuestFilePath(t *testing.T) {
 	got, err := guestFilePath("work/marker")
 	if err != nil || got != "/work/marker" {
 		t.Fatalf("got %q err %v", got, err)
+	}
+}
+
+// TestStatusPageIsLocalAndReadOnly pins the control page: no token, HTML
+// only, and no form or script.
+func TestStatusPageIsLocalAndReadOnly(t *testing.T) {
+	ts, _ := testServer(t)
+	resp, body := call(t, http.MethodGet, ts.URL+"/", "", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d, want 200", resp.StatusCode)
+	}
+	page := string(body)
+	if !strings.Contains(page, "<!doctype html>") || !strings.Contains(page, "Kiln") {
+		t.Fatalf("the status page is not HTML: %q", page)
+	}
+	for _, banned := range []string{"<form", "<script", "<button", "<input"} {
+		if strings.Contains(page, banned) {
+			t.Fatalf("the status page carries %s", banned)
+		}
+	}
+}
+
+// TestPublishValidation pins the publish contract: visibility is required,
+// and an unknown sandbox is not found.
+func TestPublishValidation(t *testing.T) {
+	ts, _ := testServer(t)
+	resp, body := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/missing/publish", "secret", `{"port":8000}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("missing visibility: status %d: %s", resp.StatusCode, body)
+	}
+	resp, body = call(t, http.MethodPost, ts.URL+"/v1/sandboxes/missing/publish", "secret", `{"port":8000,"visibility":"public"}`)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown sandbox: status %d: %s", resp.StatusCode, body)
+	}
+	resp, body = call(t, http.MethodDelete, ts.URL+"/v1/sandboxes/missing/publish/8000", "secret", "")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("retire unknown: status %d: %s", resp.StatusCode, body)
 	}
 }

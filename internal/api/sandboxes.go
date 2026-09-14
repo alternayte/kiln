@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,16 +38,17 @@ type execRequest struct {
 }
 
 type sandboxResponse struct {
-	ID           string          `json:"id"`
-	State        string          `json:"state"`
-	Template     string          `json:"template"`
-	Lifecycle    string          `json:"lifecycle"`
-	IdleSeconds  int             `json:"idle_seconds"`
-	TTLSeconds   *int            `json:"ttl_seconds"`
-	Metadata     json.RawMessage `json:"metadata"`
-	CreatedAt    time.Time       `json:"created_at"`
-	LastActiveAt time.Time       `json:"last_active_at"`
-	DestroyedAt  *time.Time      `json:"destroyed_at,omitempty"`
+	ID           string              `json:"id"`
+	State        string              `json:"state"`
+	Template     string              `json:"template"`
+	Lifecycle    string              `json:"lifecycle"`
+	IdleSeconds  int                 `json:"idle_seconds"`
+	TTLSeconds   *int                `json:"ttl_seconds"`
+	Metadata     json.RawMessage     `json:"metadata"`
+	CreatedAt    time.Time           `json:"created_at"`
+	LastActiveAt time.Time           `json:"last_active_at"`
+	DestroyedAt  *time.Time          `json:"destroyed_at,omitempty"`
+	Published    []publishedResponse `json:"published"`
 }
 
 type execResponse struct {
@@ -57,12 +59,13 @@ type execResponse struct {
 	Truncated bool   `json:"truncated,omitempty"`
 }
 
-func sandboxJSON(sb store.Sandbox) sandboxResponse {
+// sandboxJSON renders one sandbox with its published hostnames.
+func (s *Server) sandboxJSON(ctx context.Context, sb store.Sandbox) (sandboxResponse, error) {
 	metadata := json.RawMessage(sb.Metadata)
 	if len(metadata) == 0 || !json.Valid(metadata) {
 		metadata = json.RawMessage("{}")
 	}
-	return sandboxResponse{
+	out := sandboxResponse{
 		ID:           sb.ID,
 		State:        sb.State,
 		Template:     sb.TemplateName,
@@ -73,7 +76,20 @@ func sandboxJSON(sb store.Sandbox) sandboxResponse {
 		CreatedAt:    sb.CreatedAt,
 		LastActiveAt: sb.LastActiveAt,
 		DestroyedAt:  sb.DestroyedAt,
+		Published:    []publishedResponse{},
 	}
+	rows, err := s.Sandboxes.Published(ctx, sb.ID)
+	if err != nil {
+		return sandboxResponse{}, err
+	}
+	for _, row := range rows {
+		out.Published = append(out.Published, publishedResponse{
+			Port:       row.GuestPort,
+			URL:        s.Sandboxes.PublishedURL(row),
+			Visibility: row.Visibility,
+		})
+	}
+	return out, nil
 }
 
 // createSandbox restores a template snapshot into a running sandbox.
@@ -106,7 +122,12 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, sandboxJSON(sb))
+	view, err := s.sandboxJSON(r.Context(), sb)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, view)
 }
 
 // listSandboxes returns every sandbox.
@@ -118,7 +139,12 @@ func (s *Server) listSandboxes(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]sandboxResponse, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, sandboxJSON(row))
+		view, err := s.sandboxJSON(r.Context(), row)
+		if err != nil {
+			s.writeErr(w, err)
+			return
+		}
+		out = append(out, view)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -130,7 +156,12 @@ func (s *Server) getSandbox(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, sandboxJSON(sb))
+	view, err := s.sandboxJSON(r.Context(), sb)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 // deleteSandbox destroys one sandbox.

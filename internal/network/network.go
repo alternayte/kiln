@@ -15,8 +15,11 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
+	"time"
 
 	"github.com/alternayte/kiln/internal/runtime"
+	"golang.org/x/sys/unix"
 )
 
 // Table is the one nftables table Kiln owns.
@@ -392,7 +395,39 @@ func Purge(ctx context.Context, tapName string) error {
 	return err
 }
 
-// Forget removes the per-VM chains and the allow set of one sandbox id.
+// bindControl binds a socket to one TAP device and firewall mark before it
+// is used. The mark selects the sandbox's routing table; the device is the
+// only path to its guest address.
+func bindControl(tap string, mark int) func(network, address string, c syscall.RawConn) error {
+	return func(_, _ string, c syscall.RawConn) error {
+		var opErr error
+		if err := c.Control(func(fd uintptr) {
+			if err := unix.SetsockoptString(int(fd), unix.SOL_SOCKET, soBindToDevice, tap); err != nil {
+				opErr = err
+				return
+			}
+			if err := unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, soMark, mark); err != nil {
+				opErr = err
+			}
+		}); err != nil {
+			return err
+		}
+		return opErr
+	}
+}
+
+// DialGuest opens a TCP connection to one guest port through this
+// attachment's TAP device and routing table. Every guest has the same
+// address, so the mark and the device are what select the sandbox.
+func (a *Attachment) DialGuest(ctx context.Context, port int) (net.Conn, error) {
+	if port < 1 || port > 65535 {
+		return nil, fmt.Errorf("network: port %d is outside 1..65535", port)
+	}
+	d := net.Dialer{Timeout: 15 * time.Second, Control: bindControl(a.TAPName, a.mark)}
+	return d.DialContext(ctx, "tcp", net.JoinHostPort(runtime.GuestIP, strconv.Itoa(port)))
+}
+
+// forget removes the per-VM chains and the allow set of one sandbox id.
 func Forget(ctx context.Context, id string) error {
 	return ForgetShort(ctx, shortID(id))
 }

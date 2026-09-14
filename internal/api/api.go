@@ -36,11 +36,14 @@ type Server struct {
 	Token     string
 	// FirecrackerVersion is the pinned version GET /v1/health reports.
 	FirecrackerVersion string
+	// Root is the Kiln root, for the status page's disk use.
+	Root string
 	// Base is the lifetime context for asynchronous work.
 	Base context.Context
 }
 
-// Handler returns the /v1 surface behind bearer authentication.
+// Handler returns the control surface: the /v1 API behind bearer
+// authentication and the read-only status page at /.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", s.health)
@@ -56,13 +59,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sandboxes/{id}/exec", s.execSandbox)
 	mux.HandleFunc("POST /v1/sandboxes/{id}/snapshot", s.createSnapshot)
 	mux.HandleFunc("POST /v1/sandboxes/{id}/fork", s.forkSandbox)
+	mux.HandleFunc("POST /v1/sandboxes/{id}/publish", s.publishSandbox)
+	mux.HandleFunc("DELETE /v1/sandboxes/{id}/publish/{port}", s.unpublishSandbox)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/files/{path...}", s.getSandboxFile)
 	mux.HandleFunc("PUT /v1/sandboxes/{id}/files/{path...}", s.putSandboxFile)
 	mux.HandleFunc("GET /v1/snapshots", s.listSnapshots)
 	mux.HandleFunc("GET /v1/snapshots/{id}", s.getSnapshot)
 	mux.HandleFunc("DELETE /v1/snapshots/{id}", s.deleteSnapshot)
 	mux.HandleFunc("POST /v1/snapshots/{id}/restore", s.restoreSnapshot)
-	return s.auth(mux)
+	// The status page is local to the control listener, so it needs no
+	// token. Everything under /v1 keeps the bearer check.
+	root := http.NewServeMux()
+	root.HandleFunc("GET /{$}", s.statusPage)
+	root.Handle("/v1/", s.auth(mux))
+	return root
 }
 
 func (s *Server) base() context.Context {

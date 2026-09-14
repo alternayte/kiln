@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -165,7 +164,9 @@ func cmdServe() error {
 			ReadHeaderTimeout: 10 * time.Second,
 		}
 		go func() {
-			if err := ingressSrv.Serve(tls.NewListener(public, ingressSrv.TLSConfig)); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			// ServeTLS adds the HTTP protocols to the certificate manager's
+			// ALPN list, which bare tls.NewListener would not do.
+			if err := ingressSrv.ServeTLS(public, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				fmt.Fprintf(os.Stderr, "kiln serve: ingress: %v\n", err)
 			}
 		}()

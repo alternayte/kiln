@@ -357,22 +357,6 @@ func checkHostnamesAndSession(t *testing.T, ctx context.Context, st store.Store,
 	if strings.Contains(public.Subdomain, sb.ID) {
 		t.Fatal("the hostname is derived from the sandbox id")
 	}
-	// A retired hostname leaves a tombstone and is never handed out again.
-	if err := sbx.Retire(ctx, sb.ID, 7001); err != nil {
-		t.Fatal(err)
-	}
-	other := createSandbox(t, ctx, sbx, sandbox.CreateRequest{
-		Template:    templateName,
-		Lifecycle:   store.LifecycleEphemeral,
-		IdleSeconds: 900,
-	})
-	t.Cleanup(func() { _ = sbx.Destroy(context.WithoutCancel(ctx), other.ID) })
-	if err := st.PublishSandbox(ctx, store.Published{
-		SandboxID: other.ID, GuestPort: 9000, Subdomain: team.Subdomain,
-		Visibility: store.VisibilityPublic, CreatedAt: time.Now(),
-	}); !errors.Is(err, store.ErrConflict) {
-		t.Fatalf("reusing the retired hostname returned %v, want conflict", err)
-	}
 
 	// A team preview challenges before the guest sees the request.
 	auth := newAuth(t, ctx)
@@ -404,8 +388,24 @@ func checkHostnamesAndSession(t *testing.T, ctx context.Context, st store.Store,
 		t.Fatalf("the public preview answered %d %q", status, body)
 	}
 	assertPreviewHeaders(t, header)
-	if status, _, _ = fetch(t, ts, publicHost(team.Subdomain), "/", ""); status != http.StatusNotFound {
+	// A retired hostname 404s, even for a viewer, and leaves a tombstone.
+	if err := sbx.Retire(ctx, sb.ID, 7001); err != nil {
+		t.Fatal(err)
+	}
+	if status, _, _ = fetch(t, ts, publicHost(team.Subdomain), "/", cookie); status != http.StatusNotFound {
 		t.Fatalf("the retired hostname answered %d, want 404", status)
+	}
+	other := createSandbox(t, ctx, sbx, sandbox.CreateRequest{
+		Template:    templateName,
+		Lifecycle:   store.LifecycleEphemeral,
+		IdleSeconds: 900,
+	})
+	t.Cleanup(func() { _ = sbx.Destroy(context.WithoutCancel(ctx), other.ID) })
+	if err := st.PublishSandbox(ctx, store.Published{
+		SandboxID: other.ID, GuestPort: 9000, Subdomain: team.Subdomain,
+		Visibility: store.VisibilityPublic, CreatedAt: time.Now(),
+	}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("reusing the retired hostname returned %v, want conflict", err)
 	}
 }
 

@@ -151,7 +151,7 @@ func humanBytes(n uint64) string {
 		div *= unit
 		exp++
 	}
-	return strconv.FormatUint(n/div, 10) + " " + string("KiMGTPE"[exp]) + "iB"
+	return strconv.FormatUint(n/div, 10) + " " + string("KMGTPE"[exp]) + "iB"
 }
 
 var statusTemplateHTML = template.Must(template.New("status").Parse(`<!doctype html>

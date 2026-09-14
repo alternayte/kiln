@@ -231,7 +231,31 @@ func (s *sqliteStore) DeleteTemplate(ctx context.Context, name string) error {
 		return err
 	}
 	defer tx.Rollback()
-	// Published rows reference the sandbox rows, so they go first.
+	// Published rows reference the sandbox rows, so they go first. Every
+	// hostname leaves a tombstone, because a retired hostname is never reused.
+	rows, err := tx.QueryContext(ctx, `SELECT subdomain FROM published WHERE sandbox_id IN (
+		SELECT id FROM sandboxes WHERE template_name = ? AND destroyed_at IS NOT NULL
+	)`, name)
+	if err != nil {
+		return err
+	}
+	var subdomains []string
+	for rows.Next() {
+		var subdomain string
+		if err := rows.Scan(&subdomain); err != nil {
+			rows.Close()
+			return err
+		}
+		subdomains = append(subdomains, subdomain)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if err := retireHostnames(ctx, tx, subdomains...); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM published WHERE sandbox_id IN (
 		SELECT id FROM sandboxes WHERE template_name = ? AND destroyed_at IS NOT NULL
 	)`, name); err != nil {
@@ -693,14 +717,29 @@ func (s *sqliteStore) CountRestoredChildren(ctx context.Context, snapshotID stri
 }
 
 func (s *sqliteStore) PublishSandbox(ctx context.Context, p Published) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO published (
-		sandbox_id, guest_port, subdomain, visibility, created_at
-	) VALUES (?, ?, ?, ?, ?)`,
-		p.SandboxID, p.GuestPort, p.Subdomain, p.Visibility, p.CreatedAt.Unix())
-	if err != nil && isUniqueViolation(err) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var retired int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM retired_hostnames WHERE subdomain = ?`, p.Subdomain).Scan(&retired); err != nil {
+		return err
+	}
+	if retired > 0 {
 		return ErrConflict
 	}
-	return err
+	if _, err := tx.ExecContext(ctx, `INSERT INTO published (
+		sandbox_id, guest_port, subdomain, visibility, created_at
+	) VALUES (?, ?, ?, ?, ?)`,
+		p.SandboxID, p.GuestPort, p.Subdomain, p.Visibility, p.CreatedAt.Unix()); err != nil {
+		if isUniqueViolation(err) {
+			return ErrConflict
+		}
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *sqliteStore) GetPublished(ctx context.Context, sandboxID string, port int) (Published, error) {
@@ -745,24 +784,76 @@ func (s *sqliteStore) PublishedBySubdomain(ctx context.Context, subdomain string
 }
 
 func (s *sqliteStore) RetirePublished(ctx context.Context, sandboxID string, port int) error {
-	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM published WHERE sandbox_id = ? AND guest_port = ?`, sandboxID, port)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	changed, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if changed == 0 {
+	defer tx.Rollback()
+	var subdomain string
+	err = tx.QueryRowContext(ctx,
+		`SELECT subdomain FROM published WHERE sandbox_id = ? AND guest_port = ?`, sandboxID, port).Scan(&subdomain)
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if err := retireHostnames(ctx, tx, subdomain); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM published WHERE sandbox_id = ? AND guest_port = ?`, sandboxID, port); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *sqliteStore) DeletePublishedForSandbox(ctx context.Context, sandboxID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM published WHERE sandbox_id = ?`, sandboxID)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT subdomain FROM published WHERE sandbox_id = ?`, sandboxID)
+	if err != nil {
+		return err
+	}
+	var subdomains []string
+	for rows.Next() {
+		var subdomain string
+		if err := rows.Scan(&subdomain); err != nil {
+			rows.Close()
+			return err
+		}
+		subdomains = append(subdomains, subdomain)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, subdomain := range subdomains {
+		if err := retireHostnames(ctx, tx, subdomain); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM published WHERE sandbox_id = ?`, sandboxID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// retireHostnames writes the tombstones that make each hostname unreusable.
+// Retiring an already retired hostname is not an error.
+func retireHostnames(ctx context.Context, tx *sql.Tx, subdomains ...string) error {
+	for _, subdomain := range subdomains {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO retired_hostnames (subdomain, retired_at) VALUES (?, ?)
+			 ON CONFLICT(subdomain) DO NOTHING`, subdomain, time.Now().Unix()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // isUniqueViolation reports whether a modernc.org/sqlite error is a unique or

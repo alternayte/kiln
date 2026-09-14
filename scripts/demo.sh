@@ -240,7 +240,7 @@ after="$(guest "$PREVIEW" wc -l /tmp/http.log | awk '{print $1}')"
 step "team preview challenges, guest untouched"
 
 # 17. A control path on the preview host is never routed.
-[ "$(status GET "$PUBLIC_URL/v1/sandboxes")" = "404" ] || fail "a control path was routed on the preview host"
+[ "$(status GET "${PUBLIC_URL%/}/v1/sandboxes")" = "404" ] || fail "a control path was routed on the preview host"
 step "control path 404 on the preview host"
 
 # 18. Destroy everything. Every host resource and every hostname goes.
@@ -256,11 +256,11 @@ sandboxes=()
 snapshots=()
 live="$(api GET /v1/sandboxes | jq '[.[] | select(.destroyed_at == null)] | length')"
 [ "$live" = "0" ] || fail "$live sandbox rows survived"
-[ "$(pgrep -c firecracker 2>/dev/null || echo 0)" = "0" ] || fail "firecracker processes survived"
-[ "$(ip -o link show 2>/dev/null | grep -c 'kiln-' || echo 0)" = "0" ] || fail "TAP devices survived"
-[ "$(nft list chains 2>/dev/null | grep -c 'kiln_' || echo 0)" = "0" ] || fail "nftables chains survived"
-[ "$(grep -c " $ROOT" /proc/mounts 2>/dev/null || echo 0)" = "0" ] || fail "mounts survived"
-[ "$(ls -1 "$ROOT/sandboxes" 2>/dev/null | wc -l | tr -d ' ')" = "0" ] || fail "sandbox directories survived"
+if pgrep firecracker >/dev/null 2>&1; then fail "firecracker processes survived"; fi
+if ip -o link show 2>/dev/null | grep -q 'kiln-'; then fail "TAP devices survived"; fi
+if nft list chains 2>/dev/null | grep -q 'kiln_'; then fail "nftables chains survived"; fi
+if grep -q " $ROOT" /proc/mounts 2>/dev/null; then fail "mounts survived"; fi
+if [ -n "$(ls -1 "$ROOT/sandboxes" 2>/dev/null)" ]; then fail "sandbox directories survived"; fi
 for url in "${published[@]}"; do
   [ "$(status GET "$url")" = "404" ] || fail "a retired hostname still answers: $url"
 done

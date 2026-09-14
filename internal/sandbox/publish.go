@@ -49,16 +49,34 @@ func (m *Manager) Publish(ctx context.Context, id string, port int, visibility s
 	if err != nil {
 		return store.Published{}, err
 	}
+	label := ""
+	for _, host := range hosts {
+		if stem, ok := previewLabel(host.Subdomain); ok {
+			label = stem
+			break
+		}
+	}
 	now := m.now()
 	for attempt := 0; attempt < 8; attempt++ {
-		label, err := newSubdomain(len(hosts) == 0, port)
-		if err != nil {
-			return store.Published{}, err
+		stem := label
+		if stem == "" {
+			drawn, err := drawLabel()
+			if err != nil {
+				return store.Published{}, err
+			}
+			stem = drawn
+		}
+		// The first published port of a sandbox takes the bare stem; a later
+		// port carries the port number, so every hostname of one sandbox
+		// shares its random stem.
+		subdomain := stem
+		if len(hosts) > 0 {
+			subdomain = fmt.Sprintf("%s-%d", stem, port)
 		}
 		published := store.Published{
 			SandboxID:  id,
 			GuestPort:  port,
-			Subdomain:  label,
+			Subdomain:  subdomain,
 			Visibility: visibility,
 			CreatedAt:  now,
 		}
@@ -74,19 +92,37 @@ func (m *Manager) Publish(ctx context.Context, id string, port int, visibility s
 	return store.Published{}, fmt.Errorf("sandbox: no preview hostname was free after 8 draws")
 }
 
-// newSubdomain draws 128 bits from the CSPRNG. The first hostname of a
-// sandbox is <random>; a later port carries the port number. The value is
-// never derived from the sandbox id, a branch name or a commit.
-func newSubdomain(first bool, port int) (string, error) {
+// drawLabel returns 128 fresh bits as 32 hex characters.
+func drawLabel() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	label := hex.EncodeToString(b)
-	if !first {
-		label = fmt.Sprintf("%s-%d", label, port)
+	return hex.EncodeToString(b), nil
+}
+
+// previewLabel returns the random stem of a hostname: 32 hex characters,
+// with the port number appended after the first published port.
+func previewLabel(subdomain string) (string, bool) {
+	if len(subdomain) < 32 {
+		return "", false
 	}
-	return label, nil
+	stem := subdomain[:32]
+	if _, err := hex.DecodeString(stem); err != nil {
+		return "", false
+	}
+	if len(subdomain) == 32 {
+		return stem, true
+	}
+	if subdomain[32] != '-' || len(subdomain) == 33 {
+		return "", false
+	}
+	for i := 33; i < len(subdomain); i++ {
+		if subdomain[i] < '0' || subdomain[i] > '9' {
+			return "", false
+		}
+	}
+	return stem, true
 }
 
 // Published returns every hostname of one sandbox, oldest first.

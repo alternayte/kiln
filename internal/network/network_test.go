@@ -198,3 +198,21 @@ func TestRuleForReadsKilnRulesOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestInputRuleAcceptsEstablishedReplies pins the rule that lets a guest
+// answer a host-originated connection, which is how the ingress reaches a
+// published port. Without it the final drop rule eats every reply.
+func TestInputRuleAcceptsEstablishedReplies(t *testing.T) {
+	script := inputRuleScript("kiln_abc_in", "kiln-abc", 7, 40000, 40001)
+	accept := strings.Index(script, "ct state established,related accept")
+	if accept < 0 {
+		t.Fatalf("the input chain has no established accept rule:\n%s", script)
+	}
+	drop := strings.Index(script, metadataAddr)
+	if drop < 0 || drop > accept {
+		t.Fatalf("the metadata drop must come before the established accept:\n%s", script)
+	}
+	if !strings.Contains(script, "iifname \"kiln-abc\"") {
+		t.Fatalf("the input chain does not name its TAP:\n%s", script)
+	}
+}

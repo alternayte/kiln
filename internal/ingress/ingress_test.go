@@ -131,6 +131,9 @@ func TestRoutingWithoutDialing(t *testing.T) {
 		{"outside the zone", "abc.example.org", "/", http.StatusNotFound},
 		{"apex", "example.com", "/", http.StatusNotFound},
 		{"control path", published.Subdomain + ".example.com", "/v1/sandboxes", http.StatusNotFound},
+		{"control path, exact", published.Subdomain + ".example.com", "/v1", http.StatusNotFound},
+		{"control path with a double slash", published.Subdomain + ".example.com", "//v1/sandboxes", http.StatusNotFound},
+		{"control path with a dot segment", published.Subdomain + ".example.com", "/./v1/sandboxes", http.StatusNotFound},
 		{"auth without a viewer store", published.Subdomain + ".example.com", "/_kiln/auth/session", http.StatusNotFound},
 		{"team without a viewer store", published.Subdomain + ".example.com", "/", http.StatusServiceUnavailable},
 	}

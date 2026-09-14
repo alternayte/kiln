@@ -72,3 +72,33 @@ operator says the server is ready. When it is:
     just demo
 
 Gate: no `gate/P6` tag. P6 is attended, so the operator runs the gate.
+
+## 2026-09-14 — P6 review findings, fixed
+
+`just review gate/P5` ran against the P6 diff (axis 1 openai, axis 2 spec).
+Axis 1 found five bugs. Four were real and are fixed; the fifth was a wording
+reading kept deliberately.
+
+1. Later published ports drew a fresh random value. The spec's `<random>` is
+   one stem per sandbox, so port 8001 is `<stem>-8001`. Fixed in
+   `internal/sandbox/publish.go`, and the P6 gate already asserted this.
+2. The `_in` chain had no `ct state established,related accept`, so the
+   guest's replies to host-originated ingress connections hit the final drop.
+   Public previews could not answer. Fixed in `internal/network/network.go`.
+3. A retired hostname could be handed out again. Migration
+   `0005_retired_hostnames.sql` adds a tombstone table; retire and sandbox
+   destroy write tombstones, and publish refuses a tombstoned hostname.
+4. `scripts/demo.sh` used `pgrep -c ... || echo 0`, which prints `00` when
+   there is no process, so the zero-leak assertion failed on a clean host.
+   The checks now use `grep -q` and empty-output tests.
+5. The status page's unit table was `KiMGTPE`, so a mebibyte rendered as
+   `iiB`. Fixed and unit tested.
+
+Axis 2 read "forwards no host credential" as "forwards no Host header". The
+proxy keeps the preview hostname in the guest's Host header on purpose: a
+dev server needs it to build correct URLs, and the preview hostname is not a
+credential. Only the machine identity of the host stays hidden.
+
+Also before the server: `infra/README.md` has the preview setup checklist,
+and the ingress now cleans the request path before the control-path check,
+so `//v1/...` cannot slip past it.

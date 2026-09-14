@@ -470,3 +470,49 @@ func TestPublishedRoundTrip(t *testing.T) {
 		t.Fatalf("list after delete: %d rows, %v", len(rows), err)
 	}
 }
+
+// TestRetiredHostnameIsNeverReused proves the tombstone: a retired hostname
+// cannot be handed out again, even after its published row is gone.
+func TestRetiredHostnameIsNeverReused(t *testing.T) {
+	s, _ := openTest(t)
+	ctx := context.Background()
+	if err := s.CreateTemplate(ctx, sample("py312")); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"one", "two"} {
+		if _, err := s.CreateSandbox(ctx, sandboxRow(id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at := time.Unix(1700000000, 0).UTC()
+	const retired = "0123456789abcdef0123456789abcdef"
+	if err := s.PublishSandbox(ctx, Published{
+		SandboxID: "one", GuestPort: 8000, Subdomain: retired, Visibility: VisibilityPublic, CreatedAt: at,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RetirePublished(ctx, "one", 8000); err != nil {
+		t.Fatal(err)
+	}
+	err := s.PublishSandbox(ctx, Published{
+		SandboxID: "two", GuestPort: 9000, Subdomain: retired, Visibility: VisibilityPublic, CreatedAt: at,
+	})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("reusing a retired hostname: %v, want ErrConflict", err)
+	}
+	// The same holds when a destroyed sandbox takes its hostnames with it.
+	if err := s.PublishSandbox(ctx, Published{
+		SandboxID: "two", GuestPort: 9000, Subdomain: "fedcba9876543210fedcba9876543210", Visibility: VisibilityTeam, CreatedAt: at,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeletePublishedForSandbox(ctx, "two"); err != nil {
+		t.Fatal(err)
+	}
+	err = s.PublishSandbox(ctx, Published{
+		SandboxID: "one", GuestPort: 9001, Subdomain: "fedcba9876543210fedcba9876543210", Visibility: VisibilityPublic, CreatedAt: at,
+	})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("reusing a destroyed sandbox hostname: %v, want ErrConflict", err)
+	}
+}

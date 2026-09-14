@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -101,13 +102,15 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	waking := sb.State == store.SandboxSleeping || sb.State == store.SandboxWaking
 	// The viewer login is served on every published hostname, and nowhere
-	// else.
+	// else. Only the exact prefix counts, so a decorated path cannot claim to
+	// be the login.
 	if r.URL.Path == AuthPrefix || strings.HasPrefix(r.URL.Path, AuthPrefix+"/") {
 		s.serveAuth(w, r)
 		return
 	}
-	// A control path on the ingress port is a 404 and is never routed.
-	if r.URL.Path == "/v1" || strings.HasPrefix(r.URL.Path, "/v1/") {
+	// A control path on the ingress port is a 404 and is never routed. The
+	// cleaned path is checked, so //v1 or /./v1 cannot slip past it.
+	if cleaned := path.Clean(r.URL.Path); cleaned == "/v1" || strings.HasPrefix(cleaned, "/v1/") {
 		s.notFound(w, r)
 		return
 	}

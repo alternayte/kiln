@@ -64,3 +64,36 @@ copies the tree and re-runs the commands.
 
 `pulumi up` copies the whole working tree, including untracked files. Gates run
 under `sudo`, because jailer needs root.
+
+## Preview setup (P6)
+
+`just gate P6` and `just demo` need a public hostname, wildcard DNS and an
+ACME account. One-time setup after the server has its IP:
+
+1. Buy a domain and put its DNS on Cloudflare. The one DNS client v1 imports
+   is `github.com/libdns/cloudflare`.
+2. Create an API token with `Zone:Read` and `Zone:DNS:Edit` for that zone.
+3. Add a wildcard record: type `A`, name `*`, content the server IP, proxy
+   off (DNS only). The wildcard certificate is `*.<zone>`, so every preview
+   hostname is covered.
+4. Open TCP 443. Nothing else is needed inbound: the ACME challenge is a TXT
+   record written through the Cloudflare API.
+5. On the server, from the repo:
+
+```sh
+export KILN_ROOT=/var/lib/kiln
+export CLOUDFLARE_DNS_API_TOKEN=...        # the token from step 2
+export KILN_VIEWER_EMAIL=you@example.com   # the first viewer account
+export KILN_VIEWER_PASSWORD=...            # at least 8 characters
+sudo -E go run ./cmd/kiln init --zone example.com --acme-email you@example.com
+sudo env "PATH=$PATH" just gate P6
+sudo env "PATH=$PATH" just demo
+```
+
+`gate P6` creates its own viewer account and cleans up after itself. The
+demo only asserts the team preview's challenge, so a viewer is for the
+operator, not for the script.
+
+The wildcard certificate is cached under `$KILN_ROOT/acme`. Let's Encrypt
+limits duplicate certificates to five a week, so keep that directory between
+runs.

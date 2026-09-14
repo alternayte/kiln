@@ -296,15 +296,23 @@ func (a *Attachment) forwardRules() string {
 }
 
 // inputRules is the chain for traffic the guest sends to its gateway. Only
-// the resolver answers there.
+// the resolver answers there, and only replies to host-originated
+// connections pass, so a published port can answer the proxy.
 func (a *Attachment) inputRules() string {
-	tap := a.TAPName
+	return inputRuleScript(a.chain("_in"), a.TAPName, a.mark, a.resolver.udpPort(), a.resolver.tcpPort())
+}
+
+// inputRuleScript builds the input chain of one attachment.
+func inputRuleScript(chain, tap string, mark, udpPort, tcpPort int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ct mark set %d\n", Table, a.chain("_in"), tap, a.mark)
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s drop\n", Table, a.chain("_in"), tap, metadataAddr)
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s udp dport %d accept\n", Table, a.chain("_in"), tap, runtime.GuestGateway, a.resolver.udpPort())
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s tcp dport %d accept\n", Table, a.chain("_in"), tap, runtime.GuestGateway, a.resolver.tcpPort())
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter drop\n", Table, a.chain("_in"), tap)
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ct mark set %d\n", Table, chain, tap, mark)
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s drop\n", Table, chain, tap, metadataAddr)
+	// A host-originated connection to a guest port answers on this TAP. Its
+	// reply is an established flow, so it must pass before the drop.
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ct state established,related accept\n", Table, chain, tap)
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s udp dport %d accept\n", Table, chain, tap, runtime.GuestGateway, udpPort)
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s tcp dport %d accept\n", Table, chain, tap, runtime.GuestGateway, tcpPort)
+	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter drop\n", Table, chain, tap)
 	return b.String()
 }
 

@@ -196,12 +196,12 @@ func (f *Firecracker) Stop(ctx context.Context, vm *VM) error {
 		_ = syscall.Kill(vm.PID, syscall.SIGKILL)
 		<-vm.done
 	}
-	return vm.cleanup()
+	return vm.cleanup(true)
 }
 
 // StopPaused kills a paused VM without resuming it, then removes its host
-// resources. A sleeping sandbox uses it: the memory image is already saved,
-// and the guest must not run again.
+// resources but keeps its directory. A sleeping sandbox uses it: the memory
+// image and the writable drive stay for the wake.
 func (f *Firecracker) StopPaused(ctx context.Context, vm *VM) error {
 	select {
 	case <-vm.done:
@@ -209,7 +209,7 @@ func (f *Firecracker) StopPaused(ctx context.Context, vm *VM) error {
 		_ = syscall.Kill(vm.PID, syscall.SIGKILL)
 		<-vm.done
 	}
-	return vm.cleanup()
+	return vm.cleanup(false)
 }
 
 // Pause freezes the VM.
@@ -525,8 +525,9 @@ func (f *Firecracker) askShutdown(ctx context.Context, vm *VM) {
 	_, _, _ = guestproto.ReadFrame(ac.br)
 }
 
-// cleanup removes the sandbox directory and the cgroup. It is idempotent.
-func (vm *VM) cleanup() error {
+// cleanup removes the cgroup and, when removeDir is set, the sandbox
+// directory. It is idempotent. A sleep keeps the directory.
+func (vm *VM) cleanup(removeDir bool) error {
 	if vm.cmd != nil && vm.cmd.Process != nil {
 		select {
 		case <-vm.done:
@@ -539,8 +540,10 @@ func (vm *VM) cleanup() error {
 		_ = vm.console.Close()
 	}
 	var first error
-	if err := os.RemoveAll(vm.Dir); err != nil && first == nil {
-		first = err
+	if removeDir {
+		if err := os.RemoveAll(vm.Dir); err != nil && first == nil {
+			first = err
+		}
 	}
 	if err := removeCgroup(vm.ID); err != nil && first == nil {
 		first = err
@@ -629,7 +632,7 @@ func (f *Firecracker) fail(vm *VM, err error) error {
 	if tail := vm.LogTail(); tail != "" {
 		err = fmt.Errorf("%w; firecracker log: %s", err, tail)
 	}
-	_ = vm.cleanup()
+	_ = vm.cleanup(true)
 	return err
 }
 

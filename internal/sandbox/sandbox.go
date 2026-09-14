@@ -522,9 +522,11 @@ func (m *Manager) makeCopies(ctx context.Context, img image, base store.Sandbox,
 		}
 		m.event(ctx, id, "", store.SandboxCreating, "fork", now)
 		made = append(made, row)
-		if _, err := m.restore(ctx, img, row, nil); err != nil {
+		stored, err := m.restore(ctx, img, row, nil)
+		if err != nil {
 			return fail(err)
 		}
+		made[len(made)-1] = stored
 	}
 	return made, nil
 }

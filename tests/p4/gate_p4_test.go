@@ -177,6 +177,8 @@ func TestGateP4(t *testing.T) {
 
 	var forks []string
 
+	// The copies must outlive this subtest: the egress checks drive them.
+	outer := t
 	t.Run("ForkEight", func(t *testing.T) {
 		copies := cli.fork(source, 8, false)
 		if len(copies) != 8 {
@@ -193,7 +195,8 @@ func TestGateP4(t *testing.T) {
 			}
 			seen[copy.ID] = true
 			forks = append(forks, copy.ID)
-			t.Cleanup(func() { cli.deleteSandboxIfPresent(copy.ID) })
+			id := copy.ID
+			outer.Cleanup(func() { cli.deleteSandboxIfPresent(id) })
 		}
 		if len(cidSet(t, ctx, st, forks)) != 8 {
 			t.Fatalf("fork copies do not hold eight distinct vsock cids")
@@ -383,15 +386,16 @@ func TestGateP4(t *testing.T) {
 	})
 
 	t.Run("PartialFailure", func(t *testing.T) {
+		before := liveSandboxes(t, ctx, st, name)
 		pages.arm(5)
 		code, body := cli.forkRaw(source, 8, false)
 		pages.arm(0)
 		if code != http.StatusInternalServerError {
 			t.Fatalf("fork with a failed copy: status %d, want 500: %s", code, body)
 		}
-		live := liveSandboxes(t, ctx, st, name)
-		if len(live) != 1 || live[0] != source {
-			t.Fatalf("live sandboxes after the failed fork: %v, want only the source", live)
+		after := liveSandboxes(t, ctx, st, name)
+		if !sameSet(before, after) {
+			t.Fatalf("live sandboxes after the failed fork: %v, want %v", after, before)
 		}
 		if out := cli.exec(source, "sh", "-c", "echo alive"); out.Stdout != "alive\n" {
 			t.Fatalf("the source did not survive: %q", out.Stdout)
@@ -460,6 +464,23 @@ func liveSandboxes(t *testing.T, ctx context.Context, st store.Store, name strin
 		}
 	}
 	return out
+}
+
+// sameSet reports whether two id lists hold the same ids.
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, id := range a {
+		seen[id] = true
+	}
+	for _, id := range b {
+		if !seen[id] {
+			return false
+		}
+	}
+	return true
 }
 
 // processPSSKiB sums the proportional set size of one process. PSS counts a

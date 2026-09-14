@@ -125,6 +125,11 @@ type Store interface {
 	DeleteTemplate(ctx context.Context, name string) error
 	AppendEvent(ctx context.Context, e Event) error
 	ListEvents(ctx context.Context, sandboxID string) ([]Event, error)
+	// ListEventsSince returns every event with an id greater than afterID,
+	// oldest first. The events endpoint polls it.
+	ListEventsSince(ctx context.Context, afterID int64) ([]Event, error)
+	// LastEventID returns the newest event id, or zero when there are none.
+	LastEventID(ctx context.Context) (int64, error)
 
 	// CreateSandbox inserts one row. A nil VsockCID takes the next free CID
 	// from the pool, and the stored row is returned with the value set.

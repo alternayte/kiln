@@ -34,6 +34,8 @@ type Server struct {
 	Templates *template.Manager
 	Sandboxes *sandbox.Manager
 	Token     string
+	// FirecrackerVersion is the pinned version GET /v1/health reports.
+	FirecrackerVersion string
 	// Base is the lifetime context for asynchronous work.
 	Base context.Context
 }
@@ -41,6 +43,8 @@ type Server struct {
 // Handler returns the /v1 surface behind bearer authentication.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/health", s.health)
+	mux.HandleFunc("GET /v1/events", s.events)
 	mux.HandleFunc("GET /v1/templates", s.listTemplates)
 	mux.HandleFunc("POST /v1/templates", s.createTemplate)
 	mux.HandleFunc("GET /v1/templates/{name}", s.getTemplate)

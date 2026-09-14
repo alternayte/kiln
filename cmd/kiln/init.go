@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,6 +17,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/alternayte/kiln/internal/network"
+	"github.com/alternayte/kiln/internal/store"
 )
 
 const defaultRoot = "/var/lib/kiln"
@@ -28,9 +32,10 @@ type configFile struct {
 	Secrets     map[string]string `json:"secrets,omitempty"`
 }
 
-// cmdInit is first-run setup. It fetches the pinned Firecracker tarball and
-// kernel, verifies each checksum, installs firecracker and jailer under the
-// Kiln root, and writes config.json with mode 0600.
+// cmdInit is first-run setup. It creates the Kiln root, fetches the pinned
+// Firecracker tarball and kernel, verifies each checksum, installs the
+// binaries, applies the nftables base, creates the database and writes
+// config.json with mode 0600.
 func cmdInit(args []string) error {
 	if len(args) != 0 {
 		return fmt.Errorf("init takes no arguments")
@@ -41,7 +46,12 @@ func cmdInit(args []string) error {
 	}
 	binDir := filepath.Join(root, "bin")
 	kernelDir := filepath.Join(root, "kernel")
-	for _, dir := range []string{root, binDir, kernelDir} {
+	for _, dir := range []string{
+		root, binDir, kernelDir,
+		filepath.Join(root, "templates"),
+		filepath.Join(root, "sandboxes"),
+		filepath.Join(root, "snapshots"),
+	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
@@ -70,6 +80,21 @@ func cmdInit(args []string) error {
 		return err
 	}
 
+	// The nftables base is host state, not sandbox state: one table, the
+	// mark-copy chain, forwarding and the reverse path filter.
+	if err := network.New().EnsureBase(context.Background()); err != nil {
+		return err
+	}
+	// Opening the store applies every migration, then closes. The daemon
+	// opens it again at serve time.
+	st, err := store.Open(filepath.Join(root, "kiln.db"))
+	if err != nil {
+		return err
+	}
+	if err := st.Close(); err != nil {
+		return err
+	}
+
 	cfgPath := filepath.Join(root, "config.json")
 	if err := writeConfig(cfgPath); err != nil {
 		return err
@@ -79,6 +104,8 @@ func cmdInit(args []string) error {
 	fmt.Printf("jailer %s -> %s\n", firecrackerVersion, filepath.Join(binDir, "jailer"))
 	fmt.Printf("kernel %s -> %s\n", kernelVersion, kernelPath)
 	fmt.Printf("kilninit -> %s\n", kilninitPath)
+	fmt.Printf("nftables base -> table inet kiln\n")
+	fmt.Printf("database -> %s\n", filepath.Join(root, "kiln.db"))
 	fmt.Printf("config -> %s (mode 0600)\n", cfgPath)
 	return nil
 }

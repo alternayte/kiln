@@ -15,6 +15,7 @@ import (
 
 	"github.com/alternayte/kiln/internal/api"
 	"github.com/alternayte/kiln/internal/network"
+	"github.com/alternayte/kiln/internal/reconcile"
 	"github.com/alternayte/kiln/internal/runtime"
 	"github.com/alternayte/kiln/internal/sandbox"
 	"github.com/alternayte/kiln/internal/snapshot"
@@ -83,9 +84,35 @@ func cmdServe() error {
 		Secrets:    cfg.Secrets,
 	})
 
+	// The sweep runs before the listener: a restart adopts the microVMs the
+	// host still has and destroys what no row owns, so the first request never
+	// sees half of a previous daemon.
+	reconciler := &reconcile.Reconciler{
+		Root:      root,
+		Store:     st,
+		Sandboxes: sbx,
+		Network:   nm,
+		Templates: mgr,
+		Runtime:   rt,
+	}
+	if report, err := reconciler.Sweep(ctx); err != nil {
+		return fmt.Errorf("serve: reconcile: %w", err)
+	} else if n := len(report.Adopted) + len(report.Failed) + len(report.Swept) + len(report.Stuck); n > 0 {
+		fmt.Printf("kiln serve: swept: %d adopted, %d failed, %d destroyed, %d templates\n",
+			len(report.Adopted), len(report.Failed), len(report.Swept), len(report.Stuck))
+	}
+	go reconciler.Run(ctx)
+
 	srv := &http.Server{
-		Addr:              cfg.ControlAddr,
-		Handler:           (&api.Server{Store: st, Templates: mgr, Sandboxes: sbx, Token: cfg.BearerToken, Base: ctx}).Handler(),
+		Addr: cfg.ControlAddr,
+		Handler: (&api.Server{
+			Store:              st,
+			Templates:          mgr,
+			Sandboxes:          sbx,
+			Token:              cfg.BearerToken,
+			FirecrackerVersion: firecrackerVersion,
+			Base:               ctx,
+		}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	ln, err := net.Listen("tcp", cfg.ControlAddr)

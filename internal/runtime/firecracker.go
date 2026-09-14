@@ -180,21 +180,45 @@ func (f *Firecracker) Start(ctx context.Context, spec Spec) (*VM, error) {
 	return vm, nil
 }
 
+// Adopt reattaches to a Firecracker process from a previous daemon. The jail
+// directory and both sockets must still exist, and the process must answer on
+// its API socket. The guest keeps running.
+func (f *Firecracker) Adopt(ctx context.Context, spec AdoptSpec) (*VM, error) {
+	if !idPattern.MatchString(spec.ID) {
+		return nil, fmt.Errorf("invalid: id %q is not a safe identifier", spec.ID)
+	}
+	if spec.PID <= 0 || !processAlive(spec.PID) {
+		return nil, fmt.Errorf("runtime: no process %d for sandbox %s", spec.PID, spec.ID)
+	}
+	vm := &VM{
+		ID:        spec.ID,
+		PID:       spec.PID,
+		Dir:       SandboxDir(f.root, spec.ID),
+		VsockPort: guestproto.Port,
+	}
+	vm.Socket = filepath.Join(vm.chrootDir(), "run", "firecracker.sock")
+	vm.VsockSocket = filepath.Join(vm.chrootDir(), "run", "vsock.sock")
+	for _, path := range []string{vm.Socket, vm.VsockSocket} {
+		if _, err := os.Stat(path); err != nil {
+			return nil, fmt.Errorf("runtime: adopt %s: %w", spec.ID, err)
+		}
+	}
+	vm.api = newAPI(vm.Socket)
+	callCtx, cancel := context.WithTimeout(ctx, apiSocketTimeout)
+	defer cancel()
+	if _, err := vm.api.get(callCtx, "/machine-config"); err != nil {
+		return nil, fmt.Errorf("runtime: adopt %s: %w", spec.ID, err)
+	}
+	return vm, nil
+}
+
 // Stop asks the guest to power off, waits, and removes every host resource.
 func (f *Firecracker) Stop(ctx context.Context, vm *VM) error {
-	select {
-	case <-vm.done:
-	default:
+	if vm.alive() {
 		f.askShutdown(ctx, vm)
 	}
-	select {
-	case <-vm.done:
-	case <-ctx.Done():
-		_ = syscall.Kill(vm.PID, syscall.SIGKILL)
-		<-vm.done
-	case <-time.After(stopGrace):
-		_ = syscall.Kill(vm.PID, syscall.SIGKILL)
-		<-vm.done
+	if !vm.waitExit(ctx, stopGrace) {
+		_ = KillProcess(vm.PID)
 	}
 	return vm.cleanup(true)
 }
@@ -203,12 +227,7 @@ func (f *Firecracker) Stop(ctx context.Context, vm *VM) error {
 // resources but keeps its directory. A sleeping sandbox uses it: the memory
 // image and the writable drive stay for the wake.
 func (f *Firecracker) StopPaused(ctx context.Context, vm *VM) error {
-	select {
-	case <-vm.done:
-	default:
-		_ = syscall.Kill(vm.PID, syscall.SIGKILL)
-		<-vm.done
-	}
+	_ = KillProcess(vm.PID)
 	return vm.cleanup(false)
 }
 
@@ -265,7 +284,8 @@ func checkKVM() error {
 }
 
 // prepare builds the jail skeleton, links the kernel and rootfs into it, and
-// makes the per-VM cgroup. The jailer creates /dev/kvm inside the jail.
+// makes the per-VM cgroup with the template's limits. The jailer creates
+// /dev/kvm inside the jail.
 func (f *Firecracker) prepare(spec Spec, vm *VM) error {
 	chroot := vm.chrootDir()
 	runDir := filepath.Join(chroot, "run")
@@ -302,7 +322,53 @@ func (f *Firecracker) prepare(spec Spec, vm *VM) error {
 			return err
 		}
 	}
-	return os.MkdirAll(filepath.Join(cgroupRoot, "kiln", spec.ID), 0o755)
+	if err := ensureCgroupBase(); err != nil {
+		return err
+	}
+	dir := CgroupDir(spec.ID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return applyCgroupLimits(dir, spec.VCPUs, spec.MemoryMiB)
+}
+
+// memoryOverheadMiB is the headroom a sandbox cgroup keeps above the guest's
+// memory. Firecracker, its page tables and the faulted memory live in the same
+// cgroup, so a limit equal to the guest size would kill the VM.
+const memoryOverheadMiB = 64
+
+// SandboxMemoryLimit is the cgroup memory limit of a sandbox with the given
+// guest memory. The gate asserts the host value against it.
+func SandboxMemoryLimit(memoryMiB int) int64 {
+	return int64(memoryMiB+memoryOverheadMiB) << 20
+}
+
+// ensureCgroupBase creates the cgroup parent and enables the controllers the
+// per-VM limits need. The parent holds no process, so the kernel accepts the
+// write.
+func ensureCgroupBase() error {
+	dir := ManagerCgroupDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("runtime: cgroup base: %w", err)
+	}
+	path := filepath.Join(dir, "cgroup.subtree_control")
+	if err := os.WriteFile(path, []byte("+cpu +memory\n"), 0o644); err != nil {
+		return fmt.Errorf("runtime: enable cgroup controllers: %w", err)
+	}
+	return nil
+}
+
+// applyCgroupLimits sets the memory and cpu bounds of one sandbox cgroup.
+func applyCgroupLimits(dir string, vcpus, memoryMiB int) error {
+	memory := strconv.Itoa((memoryMiB + memoryOverheadMiB) << 20)
+	if err := os.WriteFile(filepath.Join(dir, "memory.max"), []byte(memory+"\n"), 0o644); err != nil {
+		return fmt.Errorf("runtime: cgroup memory limit: %w", err)
+	}
+	quota := strconv.Itoa(vcpus * 100000)
+	if err := os.WriteFile(filepath.Join(dir, "cpu.max"), []byte(quota+" 100000\n"), 0o644); err != nil {
+		return fmt.Errorf("runtime: cgroup cpu limit: %w", err)
+	}
+	return nil
 }
 
 // launch execs jailer, which copies Firecracker into the chroot, drops
@@ -528,14 +594,7 @@ func (f *Firecracker) askShutdown(ctx context.Context, vm *VM) {
 // cleanup removes the cgroup and, when removeDir is set, the sandbox
 // directory. It is idempotent. A sleep keeps the directory.
 func (vm *VM) cleanup(removeDir bool) error {
-	if vm.cmd != nil && vm.cmd.Process != nil {
-		select {
-		case <-vm.done:
-		default:
-			_ = syscall.Kill(vm.PID, syscall.SIGKILL)
-			<-vm.done
-		}
-	}
+	_ = KillProcess(vm.PID)
 	if vm.console != nil {
 		_ = vm.console.Close()
 	}
@@ -551,17 +610,81 @@ func (vm *VM) cleanup(removeDir bool) error {
 	return first
 }
 
-func removeCgroup(id string) error {
-	dir := filepath.Join(cgroupRoot, "kiln", id)
-	var err error
-	for i := 0; i < 20; i++ {
-		err = os.Remove(dir)
-		if err == nil || errors.Is(err, fs.ErrNotExist) {
-			return nil
+// alive reports whether the VM process still runs.
+func (vm *VM) alive() bool {
+	if vm.cmd != nil {
+		select {
+		case <-vm.done:
+			return false
+		default:
+			return true
+		}
+	}
+	return processAlive(vm.PID)
+}
+
+// waitExit waits until the process is gone. It returns false on timeout.
+func (vm *VM) waitExit(ctx context.Context, grace time.Duration) bool {
+	if vm.cmd != nil {
+		select {
+		case <-vm.done:
+			return true
+		case <-ctx.Done():
+			return false
+		case <-time.After(grace):
+			return false
+		}
+	}
+	deadline := time.Now().Add(grace)
+	for processAlive(vm.PID) {
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return false
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return fmt.Errorf("runtime: remove cgroup %s: %w", dir, err)
+	return true
+}
+
+// processAlive reports whether a process exists and has not become a zombie.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	if err := syscall.Kill(pid, 0); err != nil {
+		return errors.Is(err, syscall.EPERM)
+	}
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	// The second field is the command name in parentheses, and it may contain
+	// spaces. The state is the first field after the last ')'.
+	i := strings.LastIndex(string(b), ")")
+	if i < 0 {
+		return true
+	}
+	fields := strings.Fields(string(b)[i+1:])
+	return len(fields) == 0 || fields[0] != "Z"
+}
+
+func removeCgroup(id string) error {
+	dir := CgroupDir(id)
+	// Jailer creates a child cgroup named after the id. Remove it first, then
+	// the parent, which is the cgroup that carries the limits.
+	for _, target := range []string{filepath.Join(dir, id), dir} {
+		var err error
+		for i := 0; i < 20; i++ {
+			err = os.Remove(target)
+			if err == nil || errors.Is(err, fs.ErrNotExist) {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("runtime: remove cgroup %s: %w", target, err)
+		}
+	}
+	return nil
 }
 
 // linkOrCopy links src into the jail. A different filesystem falls back to a

@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"time"
 )
 
@@ -23,13 +25,23 @@ type PageFaultSource interface {
 	Stop() error
 }
 
-// Process is a PageFaultSource that runs the snapfault subcommand.
+// Process is a PageFaultSource that runs the snapfault subcommand. It also
+// carries a process that outlived the daemon, adopted by the reconciler.
 type Process struct {
 	// Binary is the kiln executable.
 	Binary string
+	// PID is the adopted snapfault process. A handle built by Start uses cmd
+	// instead.
+	PID int
 
 	cmd  *exec.Cmd
 	done chan struct{}
+}
+
+// Adopt returns a handle to a snapfault process that survived a daemon
+// restart. The pages it serves are still registered with its microVM.
+func Adopt(pid int) *Process {
+	return &Process{PID: pid}
 }
 
 // Start launches snapfault and waits until its socket appears.
@@ -80,6 +92,9 @@ func (p *Process) Start(ctx context.Context, memPath, socketPath string) error {
 
 // Stop stops the process. It is idempotent.
 func (p *Process) Stop() error {
+	if p.PID > 0 {
+		return killPID(p.PID)
+	}
 	if p.cmd == nil || p.cmd.Process == nil {
 		return nil
 	}
@@ -96,4 +111,36 @@ func (p *Process) Stop() error {
 		<-p.done
 	}
 	return nil
+}
+
+// killPID sends SIGKILL and waits until the process is gone.
+func killPID(pid int) error {
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for processAlive(pid) {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("snapshot: process %d did not exit", pid)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return nil
+}
+
+// processAlive reports whether a process exists and is not a zombie.
+func processAlive(pid int) bool {
+	if err := syscall.Kill(pid, 0); err != nil {
+		return errors.Is(err, syscall.EPERM)
+	}
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	i := strings.LastIndex(string(b), ")")
+	if i < 0 {
+		return true
+	}
+	fields := strings.Fields(string(b)[i+1:])
+	return len(fields) == 0 || fields[0] != "Z"
 }

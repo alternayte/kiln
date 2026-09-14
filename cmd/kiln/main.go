@@ -20,7 +20,7 @@ func main() {
 	case "snapfault":
 		err = cmdSnapfault(os.Args[2:])
 	case "ctl":
-		err = cmdCtl()
+		err = cmdCtl(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -40,11 +40,7 @@ func usage() {
 
 commands:
   init    first-run setup: fetch the pinned Firecracker and kernel, write config.json
-  serve   API server, store and VM supervisor
-  ctl     CLI client for the HTTP API (lands in a later slice)
+  serve   API server, store, supervisor and reconciler
+  ctl     CLI client for the HTTP API
 `)
-}
-
-func cmdCtl() error {
-	return fmt.Errorf("ctl lands in a later slice; there is no client yet")
 }

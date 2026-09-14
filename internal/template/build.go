@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -105,6 +106,11 @@ type Manager struct {
 	Now func() time.Time
 
 	nextCID atomic.Uint32
+
+	// buildMu guards building, the names this process is building now. The
+	// reconciler must not sweep a live build VM or fail its template.
+	buildMu  sync.Mutex
+	building map[string]bool
 }
 
 // TemplateDir is the on-disk directory of one template.
@@ -129,7 +135,14 @@ func (m *Manager) Start(ctx context.Context, req BuildRequest) error {
 		State:       store.TemplateBuilding,
 		CreatedAt:   now,
 	}
+	if m.IsBuilding(req.Name) {
+		return store.ErrConflict
+	}
+	// Protect the build before the row lands, so a sweep that runs in between
+	// never reads a building row as stale.
+	m.setBuilding(req.Name, true)
 	if err := m.Store.StartTemplateBuild(ctx, row); err != nil {
+		m.setBuilding(req.Name, false)
 		return err
 	}
 	if err := m.Store.AppendEvent(ctx, store.Event{
@@ -143,6 +156,39 @@ func (m *Manager) Start(ctx context.Context, req BuildRequest) error {
 	}
 	go m.build(ctx, req)
 	return nil
+}
+
+// IsBuilding reports whether this process is building one template now.
+func (m *Manager) IsBuilding(name string) bool {
+	m.buildMu.Lock()
+	defer m.buildMu.Unlock()
+	return m.building[name]
+}
+
+// Protected returns the internal ids of the build VMs this process runs. The
+// reconciler keeps their host resources.
+func (m *Manager) Protected() map[string]bool {
+	m.buildMu.Lock()
+	defer m.buildMu.Unlock()
+	out := make(map[string]bool, 2*len(m.building))
+	for name := range m.building {
+		out[m.buildID(name, "s")] = true
+		out[m.buildID(name, "n")] = true
+	}
+	return out
+}
+
+func (m *Manager) setBuilding(name string, on bool) {
+	m.buildMu.Lock()
+	defer m.buildMu.Unlock()
+	if m.building == nil {
+		m.building = map[string]bool{}
+	}
+	if on {
+		m.building[name] = true
+		return
+	}
+	delete(m.building, name)
 }
 
 // TemplateInfo returns the row with its snapshot size and child count.
@@ -190,6 +236,7 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 
 // build runs one build and records its terminal state.
 func (m *Manager) build(ctx context.Context, req BuildRequest) {
+	defer m.setBuilding(req.Name, false)
 	err := m.runBuild(ctx, req)
 	now := m.now()
 	message := ""

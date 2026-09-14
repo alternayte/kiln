@@ -4,9 +4,12 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"syscall"
+	"time"
 )
 
 // Config locates the Kiln root and the installed binaries.
@@ -45,6 +48,13 @@ type RestoreSpec struct {
 	UffdSocket string
 }
 
+// AdoptSpec names a microVM whose process survived a daemon restart. The
+// jail directory and both sockets are still in place.
+type AdoptSpec struct {
+	ID  string
+	PID int
+}
+
 // SnapshotFiles are the two files a full snapshot consists of.
 type SnapshotFiles struct {
 	StatePath string
@@ -52,9 +62,13 @@ type SnapshotFiles struct {
 }
 
 // Runtime starts, pauses, resumes, snapshots and stops microVMs. A sleep
-// leaves a paused VM stopped without letting it run again.
+// leaves a paused VM stopped without letting it run again. Adopt reattaches
+// to a VM whose process survived a daemon restart.
 type Runtime interface {
 	Start(ctx context.Context, spec Spec) (*VM, error)
+	// Adopt reattaches to a running Firecracker process from a previous
+	// daemon. It proves the process answers on its API socket.
+	Adopt(ctx context.Context, spec AdoptSpec) (*VM, error)
 	Pause(ctx context.Context, vm *VM) error
 	Resume(ctx context.Context, vm *VM) error
 	// Snapshot pauses the VM, writes a full snapshot into dir, and resumes it.
@@ -165,6 +179,45 @@ const (
 func SandboxDir(root, id string) string {
 	return filepath.Join(root, "sandboxes", id)
 }
+
+// ManagerCgroupDir is the cgroup parent of every Kiln microVM. Jailer puts
+// each VM in a cgroup named after its id below this directory.
+func ManagerCgroupDir() string {
+	return filepath.Join(cgroupRoot, "kiln")
+}
+
+// CgroupDir is the cgroup directory whose limits cover one microVM.
+func CgroupDir(id string) string {
+	return filepath.Join(ManagerCgroupDir(), id)
+}
+
+// RemoveCgroup removes the cgroup of one microVM, including the child cgroup
+// jailer creates for the process. It is idempotent.
+func RemoveCgroup(id string) error {
+	return removeCgroup(id)
+}
+
+// KillProcess sends SIGKILL and waits until the process is gone. It is
+// idempotent: a process that is already gone is not an error.
+func KillProcess(pid int) error {
+	if pid <= 0 {
+		return nil
+	}
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	deadline := time.Now().Add(stopGrace)
+	for processAlive(pid) {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("runtime: process %d did not exit", pid)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return nil
+}
+
+// KVMReady reports whether /dev/kvm is present and usable.
+func KVMReady() bool { return checkKVM() == nil }
 
 // RestoreUffdSocket returns the host path of the UFFD socket a restoring
 // microVM connects to. Firecracker sees the same socket at /run/uffd.sock.

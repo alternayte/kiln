@@ -1,5 +1,5 @@
 // Package sandbox owns the sandbox lifecycle: restore, exec, files, snapshot,
-// fork, sleep, destroy.
+// fork, sleep, wake, destroy.
 package sandbox
 
 import (
@@ -65,7 +65,7 @@ type Config struct {
 	Now func() time.Time
 }
 
-// Manager creates, forks and destroys sandboxes.
+// Manager creates, forks, sleeps, wakes and destroys sandboxes.
 type Manager struct {
 	cfg Config
 
@@ -73,15 +73,35 @@ type Manager struct {
 	vms   map[string]*runtime.VM
 	pages map[string]snapshot.PageFaultSource
 	attrs map[string]*network.Attachment
+
+	// opMu guards the lifecycle lock table. One lock per sandbox serializes
+	// its state transitions; exec and file requests take the read side so
+	// they run together but never during a sleep or a wake.
+	opMu sync.Mutex
+	ops  map[string]*opLock
+
+	// timerMu guards the single timer each sandbox has for its idle and ttl
+	// deadlines.
+	timerMu sync.Mutex
+	timers  map[string]*time.Timer
+
+	// activeMu guards active, the sandboxes with a transition in flight. The
+	// reconciler must not fail a creating, waking or stopping row that a
+	// request is still working on.
+	activeMu sync.Mutex
+	active   map[string]bool
 }
 
 // New returns a sandbox manager.
 func New(cfg Config) *Manager {
 	return &Manager{
-		cfg:   cfg,
-		vms:   map[string]*runtime.VM{},
-		pages: map[string]snapshot.PageFaultSource{},
-		attrs: map[string]*network.Attachment{},
+		cfg:    cfg,
+		vms:    map[string]*runtime.VM{},
+		pages:  map[string]snapshot.PageFaultSource{},
+		attrs:  map[string]*network.Attachment{},
+		ops:    map[string]*opLock{},
+		timers: map[string]*time.Timer{},
+		active: map[string]bool{},
 	}
 }
 
@@ -114,7 +134,8 @@ func (r CreateRequest) validate() error {
 }
 
 // image is one memory and state pair a restore reads: a template snapshot, a
-// listed snapshot, or the image a fork wrote for its children.
+// listed snapshot, the image a fork wrote for its children, or a sandbox's
+// own sleep image.
 type image struct {
 	dir        string
 	template   store.Template
@@ -124,6 +145,17 @@ type image struct {
 
 func (i image) memPath() string   { return filepath.Join(i.dir, "mem") }
 func (i image) statePath() string { return filepath.Join(i.dir, "state") }
+
+// restoreOptions carries what differs between a create, a fork and a wake.
+type restoreOptions struct {
+	// from is the state the transition started in, for the event.
+	from string
+	// reason is the event reason.
+	reason string
+	// reuseOverlay keeps the writable drive of a waking sandbox. A wake must
+	// never recreate it: the drive holds the sandbox files.
+	reuseOverlay bool
+}
 
 // Create restores a template snapshot into a running sandbox. It returns when
 // the sandbox answers a fresh vsock hello and the resume hooks have run.
@@ -163,6 +195,8 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (store.Sandbox,
 		metadata = string(b)
 	}
 	now := m.now()
+	m.markActive(id)
+	defer m.clearActive(id)
 	row, err := m.cfg.Store.CreateSandbox(ctx, store.Sandbox{
 		ID:            id,
 		TemplateName:  tpl.Name,
@@ -187,7 +221,7 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (store.Sandbox,
 		dir:      filepath.Join(m.cfg.Root, "templates", tpl.Name),
 		template: tpl,
 	}
-	running, err := m.restore(ctx, img, row, env)
+	running, err := m.restore(ctx, img, row, env, restoreOptions{from: store.SandboxCreating, reason: "restored"})
 	if err != nil {
 		// The restore must not leave a VM, a TAP or files behind.
 		m.cleanup(context.WithoutCancel(ctx), id)
@@ -203,7 +237,7 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (store.Sandbox,
 
 // restore brings one sandbox row up from an image. It returns when the guest
 // answers a fresh vsock hello. The caller owns the row and every failure.
-func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env map[string]string) (store.Sandbox, error) {
+func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env map[string]string, opts restoreOptions) (store.Sandbox, error) {
 	if row.VsockCID == nil {
 		return store.Sandbox{}, fmt.Errorf("sandbox: %s has no vsock cid", row.ID)
 	}
@@ -212,8 +246,10 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 		return store.Sandbox{}, err
 	}
 	overlay := filepath.Join(dir, "overlay.ext4")
-	if err := createOverlay(ctx, overlay, int64(img.template.DiskMB)); err != nil {
-		return store.Sandbox{}, err
+	if !opts.reuseOverlay {
+		if err := createOverlay(ctx, overlay, int64(img.template.DiskMB)); err != nil {
+			return store.Sandbox{}, err
+		}
 	}
 	att, err := m.cfg.Network.Attach(ctx, row.ID, img.template.EgressAllow)
 	if err != nil {
@@ -267,13 +303,19 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 	if err := m.cfg.Store.SetSandboxRuntime(ctx, row.ID, att.TAPName, row.VsockCID, vm.PID); err != nil {
 		return store.Sandbox{}, err
 	}
-	if err := m.cfg.Store.SetSandboxState(ctx, row.ID, store.SandboxRunning); err != nil {
-		return store.Sandbox{}, err
-	}
+	now := m.now()
 	row.State = store.SandboxRunning
 	row.TapName = att.TAPName
 	row.PID = vm.PID
-	m.event(ctx, row.ID, store.SandboxCreating, store.SandboxRunning, "restored", m.now())
+	row.LastActiveAt = now
+	if err := m.cfg.Store.TouchSandbox(ctx, row.ID, now); err != nil {
+		return store.Sandbox{}, err
+	}
+	if err := m.cfg.Store.SetSandboxState(ctx, row.ID, store.SandboxRunning); err != nil {
+		return store.Sandbox{}, err
+	}
+	m.event(ctx, row.ID, opts.from, store.SandboxRunning, opts.reason, now)
+	m.arm(row)
 	return row, nil
 }
 
@@ -281,11 +323,13 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 // the sandbox also sleeps: its own image is written under its directory and
 // the VM stops. The sandbox keeps its id and its files.
 func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Snapshot, error) {
-	row, err := m.cfg.Store.GetSandbox(ctx, id)
+	unlock := m.lockOps(id)
+	defer unlock()
+	row, err := m.ensureRunningLocked(ctx, id)
 	if err != nil {
 		return store.Snapshot{}, err
 	}
-	vm, err := m.running(ctx, id)
+	vm, err := m.vmFor(row)
 	if err != nil {
 		return store.Snapshot{}, err
 	}
@@ -338,26 +382,29 @@ func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Sna
 		}
 		m.event(ctx, id, store.SandboxRunning, store.SandboxSleeping, "sleep", now)
 		m.release(context.WithoutCancel(ctx), id, true)
+		row.State = store.SandboxSleeping
+		m.arm(row)
+	} else {
+		m.touch(ctx, row)
 	}
-	_ = m.cfg.Store.TouchSandbox(ctx, id, now)
 	return snap, nil
 }
 
 // Fork snapshots a running sandbox and restores count copies from that one
 // image. Every copy gets a fresh overlay and its own page-fault source. A
-// failure at any copy destroys every copy made in the call.
+// failure at any copy destroys every copy made in the call. A sleeping source
+// wakes first.
 func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bool) ([]store.Sandbox, error) {
 	if count < 1 {
 		return nil, invalidf("count must be greater than zero")
 	}
-	row, err := m.cfg.Store.GetSandbox(ctx, id)
+	unlock := m.lockOps(id)
+	defer unlock()
+	row, err := m.ensureRunningLocked(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if row.State != store.SandboxRunning {
-		return nil, store.ErrConflict
-	}
-	vm, err := m.running(ctx, id)
+	vm, err := m.vmFor(row)
 	if err != nil {
 		return nil, err
 	}
@@ -396,7 +443,7 @@ func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bo
 		return nil, err
 	}
 	writeParentFile(dir, row.SnapshotID, row.TemplateName)
-	_ = m.cfg.Store.TouchSandbox(ctx, id, m.now())
+	m.touch(ctx, row)
 
 	copies, err := m.makeCopies(ctx, img, row, count)
 	if err != nil {
@@ -439,7 +486,7 @@ func (m *Manager) RestoreSnapshot(ctx context.Context, snapshotID string, count 
 		snapshotID: snapshotID,
 		secret:     snap.SecretBearing,
 	}
-	_ = m.cfg.Store.TouchSandbox(ctx, origin.ID, m.now())
+	m.touch(ctx, origin)
 	copies, err := m.makeCopies(ctx, img, origin, count)
 	if err != nil {
 		return nil, err
@@ -501,6 +548,7 @@ func (m *Manager) makeCopies(ctx context.Context, img image, base store.Sandbox,
 			return fail(err)
 		}
 		now := m.now()
+		m.markActive(id)
 		row, err := m.cfg.Store.CreateSandbox(ctx, store.Sandbox{
 			ID:            id,
 			TemplateName:  base.TemplateName,
@@ -515,6 +563,7 @@ func (m *Manager) makeCopies(ctx context.Context, img image, base store.Sandbox,
 			SecretBearing: img.secret,
 		})
 		if err != nil {
+			m.clearActive(id)
 			if errors.Is(err, store.ErrExhausted) {
 				return fail(ErrExhausted)
 			}
@@ -522,7 +571,8 @@ func (m *Manager) makeCopies(ctx context.Context, img image, base store.Sandbox,
 		}
 		m.event(ctx, id, "", store.SandboxCreating, "fork", now)
 		made = append(made, row)
-		stored, err := m.restore(ctx, img, row, nil)
+		stored, err := m.restore(ctx, img, row, nil, restoreOptions{from: store.SandboxCreating, reason: "restored"})
+		m.clearActive(id)
 		if err != nil {
 			return fail(err)
 		}
@@ -532,15 +582,24 @@ func (m *Manager) makeCopies(ctx context.Context, img image, base store.Sandbox,
 }
 
 // Destroy stops a sandbox and removes every host resource named after it. It
-// is idempotent.
+// is idempotent and works on a sleeping sandbox without waking it.
 func (m *Manager) Destroy(ctx context.Context, id string) error {
+	unlock := m.lockOps(id)
+	defer unlock()
+	return m.destroyLocked(ctx, id)
+}
+
+func (m *Manager) destroyLocked(ctx context.Context, id string) error {
 	row, err := m.cfg.Store.GetSandbox(ctx, id)
 	if err != nil {
 		return err
 	}
 	if row.State == store.SandboxDestroyed || row.DestroyedAt != nil {
+		m.stopTimer(id)
 		return nil
 	}
+	m.markActive(id)
+	defer m.clearActive(id)
 	if err := m.cfg.Store.SetSandboxState(ctx, id, store.SandboxStopping); err != nil {
 		return err
 	}
@@ -554,6 +613,7 @@ func (m *Manager) Destroy(ctx context.Context, id string) error {
 		return err
 	}
 	m.event(ctx, id, store.SandboxStopping, store.SandboxDestroyed, "destroyed", now)
+	m.stopTimer(id)
 	m.reapSnapshot(ctx, row.SnapshotID)
 	return nil
 }
@@ -641,8 +701,13 @@ func (m *Manager) running(ctx context.Context, id string) (*runtime.VM, error) {
 	if row.State != store.SandboxRunning {
 		return nil, store.ErrConflict
 	}
+	return m.vmFor(row)
+}
+
+// vmFor returns the in-memory VM handle of one sandbox row.
+func (m *Manager) vmFor(row store.Sandbox) (*runtime.VM, error) {
 	m.mu.Lock()
-	vm := m.vms[id]
+	vm := m.vms[row.ID]
 	m.mu.Unlock()
 	if vm == nil {
 		return nil, store.ErrConflict
@@ -743,42 +808,60 @@ func copyInt(v *int) *int {
 	return &n
 }
 
-// Exec runs one command in a running sandbox.
+// Exec runs one command in a running sandbox. A sleeping sandbox wakes first.
 func (m *Manager) Exec(ctx context.Context, id string, req runtime.ExecRequest, onOutput func(byte, []byte) error) (runtime.ExecResult, error) {
-	vm, err := m.running(ctx, id)
+	row, unlock, err := m.acquireRunning(ctx, id)
+	if err != nil {
+		return runtime.ExecResult{}, err
+	}
+	defer unlock()
+	vm, err := m.vmFor(row)
 	if err != nil {
 		return runtime.ExecResult{}, err
 	}
 	res, err := vm.ExecStream(ctx, req, onOutput)
 	if err == nil {
-		_ = m.cfg.Store.TouchSandbox(ctx, id, m.now())
+		m.touch(ctx, row)
 	}
 	return res, err
 }
 
-// OpenFile opens one guest file for reading.
+// OpenFile opens one guest file for reading. A sleeping sandbox wakes first.
+// The read lock is held until the reader is closed, so the sandbox cannot
+// sleep mid-read.
 func (m *Manager) OpenFile(ctx context.Context, id, path string) (io.ReadCloser, error) {
-	vm, err := m.running(ctx, id)
+	row, unlock, err := m.acquireRunning(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+	vm, err := m.vmFor(row)
+	if err != nil {
+		unlock()
 		return nil, err
 	}
 	r, err := vm.OpenFile(ctx, path)
 	if err != nil {
+		unlock()
 		return nil, err
 	}
-	_ = m.cfg.Store.TouchSandbox(ctx, id, m.now())
-	return r, nil
+	m.touch(ctx, row)
+	return &lockedReader{ReadCloser: r, unlock: unlock}, nil
 }
 
-// WriteFile writes one guest file.
+// WriteFile writes one guest file. A sleeping sandbox wakes first.
 func (m *Manager) WriteFile(ctx context.Context, id, path string, body io.Reader) error {
-	vm, err := m.running(ctx, id)
+	row, unlock, err := m.acquireRunning(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	vm, err := m.vmFor(row)
 	if err != nil {
 		return err
 	}
 	if err := vm.WriteFile(ctx, path, body); err != nil {
 		return err
 	}
-	_ = m.cfg.Store.TouchSandbox(ctx, id, m.now())
+	m.touch(ctx, row)
 	return nil
 }

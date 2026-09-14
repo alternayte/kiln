@@ -195,17 +195,9 @@ func (s *Server) execSandbox(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// streamExec runs one command with server-sent events.
+// streamExec runs one command with server-sent events. A sleeping sandbox
+// wakes inside Exec, so there is no state check here.
 func (s *Server) streamExec(w http.ResponseWriter, r *http.Request, id string, run runtime.ExecRequest) {
-	sb, err := s.Sandboxes.Get(r.Context(), id)
-	if err != nil {
-		s.writeErr(w, err)
-		return
-	}
-	if sb.State != store.SandboxRunning {
-		writeError(w, http.StatusConflict, CodeConflict, "sandbox is not running")
-		return
-	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, CodeInternal, "streaming is not supported")

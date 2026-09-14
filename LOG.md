@@ -118,4 +118,14 @@ stripping and host-only guest cookies.
 
 The gate does not need a zone or ACME: it runs the ingress handler in
 process behind an httptest TLS server, so it runs in CI. `sec` is now a
-matrix entry in `.github/workflows/kvm.yml`.
+matrix entry in `.github/workflows/kvm.yml`, and it passes there.
+
+Bringing the gate up found three more bugs, two of them in the P6 gate:
+- Both gates replaced every `MARKER` in the in-guest server script, which
+  rewrote the variable name and gave Python a syntax error. The placeholder
+  is now `__MARKER__`. The P6 gate would have failed on the VPS for this.
+- The jail check asserted `readlink /proc/<pid>/root`. A process in its own
+  mount namespace reports `/`, so the check now reads the jail root's
+  directory listing: it holds `vmlinux` and `rootfs.ext4` and no host `/etc`.
+- C6 retired the team hostname before the session checks, so the challenge
+  answer was 404. Retirement runs last now.

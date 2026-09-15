@@ -302,7 +302,6 @@ func checkEntropyAndClock(t *testing.T, ctx context.Context, sbx *sandbox.Manage
 		t.Cleanup(func() { _ = sbx.Destroy(context.WithoutCancel(ctx), copyRow.ID) })
 	}
 	values := map[string]bool{}
-	hostNow := time.Now().Unix()
 	for i, copyRow := range copies {
 		out := execGuest(t, ctx, sbx, copyRow, "python", "-c", "import os; print(os.urandom(16).hex())")
 		value := strings.TrimSpace(out.Stdout)
@@ -310,13 +309,17 @@ func checkEntropyAndClock(t *testing.T, ctx context.Context, sbx *sandbox.Manage
 			t.Fatalf("copy %d urandom %q", i, value)
 		}
 		values[value] = true
+		// Bracket the guest read with host reads, so exec time on a slow host
+		// does not count as clock drift.
+		before := time.Now().Unix()
 		clock := execGuest(t, ctx, sbx, copyRow, "python", "-c", "import time; print(int(time.time()))")
+		after := time.Now().Unix()
 		guestNow, err := strconv.ParseInt(strings.TrimSpace(clock.Stdout), 10, 64)
 		if err != nil {
 			t.Fatalf("copy %d clock %q", i, clock.Stdout)
 		}
-		if delta := guestNow - hostNow; delta > 2 || delta < -2 {
-			t.Fatalf("copy %d clock differs by %ds", i, delta)
+		if guestNow < before-2 || guestNow > after+2 {
+			t.Fatalf("copy %d clock %d is outside host window [%d, %d] by more than 2s", i, guestNow, before, after)
 		}
 	}
 	if len(values) != 3 {

@@ -1,0 +1,22 @@
+[Unit]
+Description=Kiln microVM sandboxes
+Documentation=https://github.com/alternayte/kiln
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+# jailer needs root. It drops each microVM to its own uid inside the jail.
+User=root
+Environment=KILN_ROOT=/var/lib/kiln
+ExecStart=/var/lib/kiln/bin/kiln serve
+Restart=on-failure
+RestartSec=2
+# Stop only the daemon. The next start adopts the microVMs and page servers
+# that are still running, so a restart does not kill every sandbox.
+KillMode=process
+TimeoutStopSec=30
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

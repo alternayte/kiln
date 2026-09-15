@@ -129,3 +129,33 @@ Bringing the gate up found three more bugs, two of them in the P6 gate:
   directory listing: it holds `vmlinux` and `rootfs.ext4` and no host `/etc`.
 - C6 retired the team hostname before the session checks, so the challenge
   answer was 404. Retirement runs last now.
+
+## 2026-09-15 — v1 done on the server
+
+Host: Scaleway Dedibox Start-2-L, Xeon D-1531, 32 GB, Ubuntu 24.04, kernel
+6.8. The EUR 4.99 Atom plan cannot run Firecracker: no XSAVE, so every start
+fails with `Missing KVM capabilities: 0x38`.
+
+Every gate passes on it: P0 to P6 and sec. `just demo` passes all 18 steps
+against `statapad.com`, with a real wildcard certificate.
+
+P6 attended review: signed off by the operator after reading the team auth
+check (`internal/ingress/ingress.go`, the session is checked before the proxy
+runs) and the wake path (wake limit before any restore, the request held in
+`DialGuest`).
+
+Done-line decision: the operator's laptop is an M1, and Firecracker in Lima
+needs nested virtualization, which Apple silicon has from M3. The VPS is the
+only done-line host for v1. The SDD is unchanged.
+
+Found on the server and fixed: reconcile read cgroup interface files as
+sandbox cgroups (about 50s per serve start); a snapshot delete failed its
+foreign key when a later snapshot named it as parent, after the files were
+already gone; the sec clock check and demo steps 9 and 10 measured exec time
+as drift or counted a jq newline as a value; jq 1.7 took the guest's `-c`.
+
+`infra/kiln.service` runs `kiln serve` under systemd with `KillMode=process`.
+A `systemctl restart kiln` adopted a running sandbox and kept its files.
+
+AGENTS.md: the operator asked for the Run and What-this-is lines to match the
+code.

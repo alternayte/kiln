@@ -129,6 +129,26 @@ are the same for both.
 Remove `kiln:gate` for a checks-only run. `pulumi up` again after a code change
 copies the tree and re-runs the commands.
 
+## Run as a service
+
+`infra/kiln.service` runs `kiln serve` under systemd. Install it after `kiln
+init`, on the server, from the repo:
+
+```sh
+go build -o /tmp/kiln ./cmd/kiln
+sudo install -m 755 /tmp/kiln /var/lib/kiln/bin/kiln
+sudo install -m 644 infra/kiln.service /etc/systemd/system/kiln.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now kiln
+journalctl -u kiln -f
+```
+
+`KillMode=process` stops only the daemon. A restart adopts the running
+microVMs, so `systemctl restart kiln` keeps every sandbox. Stop the service
+before a gate or `just demo` with a daemon of its own: both bind the same
+ports. After a code change, build and install the binary again, then
+`sudo systemctl restart kiln`.
+
 ## Config
 
 | Key | Default | Use |

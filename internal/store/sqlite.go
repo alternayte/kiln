@@ -697,6 +697,11 @@ func (s *sqliteStore) DeleteSnapshot(ctx context.Context, id string) error {
 	if _, err := tx.ExecContext(ctx, `UPDATE sandboxes SET snapshot_id = NULL WHERE snapshot_id = ?`, id); err != nil {
 		return err
 	}
+	// parent_id is lineage only: a child snapshot holds its own files, so it
+	// outlives its parent.
+	if _, err := tx.ExecContext(ctx, `UPDATE snapshots SET parent_id = NULL WHERE parent_id = ?`, id); err != nil {
+		return err
+	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM snapshots WHERE id = ?`, id)
 	if err != nil {
 		return err

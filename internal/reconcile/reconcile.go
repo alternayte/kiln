@@ -398,7 +398,12 @@ func (r *Reconciler) scan(ctx context.Context) *hostState {
 		}
 	}
 	if entries, err := os.ReadDir(runtime.ManagerCgroupDir()); err == nil {
+		// A cgroup directory also holds interface files such as cgroup.procs.
+		// Only child directories are sandbox cgroups.
 		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
 			h.cgroups[entry.Name()] = true
 		}
 	}

@@ -357,6 +357,34 @@ func TestSnapshotListingHidesUnlistedImages(t *testing.T) {
 	}
 }
 
+// A snapshot of a restored sandbox names the image it came from as its
+// parent. The demo deletes the parent first, and the foreign key refused it.
+func TestDeleteSnapshotKeepsChildSnapshot(t *testing.T) {
+	s, _ := openTest(t)
+	ctx := context.Background()
+	if err := s.CreateTemplate(ctx, sample("py312")); err != nil {
+		t.Fatal(err)
+	}
+	created := time.Unix(1700000000, 0).UTC()
+	parent := Snapshot{ID: "parent", TemplateName: "py312", SizeBytes: 10, CreatedAt: created, Listed: true, OriginSandboxID: "one"}
+	child := Snapshot{ID: "child", TemplateName: "py312", ParentID: "parent", SizeBytes: 10, CreatedAt: created, Listed: true, OriginSandboxID: "two"}
+	for _, snap := range []Snapshot{parent, child} {
+		if err := s.CreateSnapshot(ctx, snap); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.DeleteSnapshot(ctx, "parent"); err != nil {
+		t.Fatalf("delete a parent snapshot: %v", err)
+	}
+	got, err := s.GetSnapshot(ctx, "child")
+	if err != nil {
+		t.Fatalf("get child: %v", err)
+	}
+	if got.ParentID != "" {
+		t.Fatalf("child parent %q, want cleared", got.ParentID)
+	}
+}
+
 // sandboxRow is a minimal row for the pool tests.
 func sandboxRow(id string) Sandbox {
 	return Sandbox{

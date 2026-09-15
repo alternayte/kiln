@@ -49,12 +49,14 @@ trap cleanup EXIT
 
 api() { # method path [body]
   local method="$1" path="$2" body="${3:-}"
-  if [ -n "$body" ]; then
-    curl -sSf -X "$method" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-      --data "$body" "$CONTROL$path"
-  else
-    curl -sSf -X "$method" -H "Authorization: Bearer $TOKEN" "$CONTROL$path"
+  local args=(-sS --fail-with-body -X "$method" -H "Authorization: Bearer $TOKEN")
+  [ -n "$body" ] && args+=(-H 'Content-Type: application/json' --data "$body")
+  local out
+  if ! out="$(curl "${args[@]}" "$CONTROL$path")"; then
+    echo "demo: $method $path failed: $out" >&2
+    return 1
   fi
+  printf '%s' "$out"
 }
 
 status() { # method url -> HTTP status, 000 when the call fails
@@ -66,20 +68,22 @@ status() { # method url -> HTTP status, 000 when the call fails
 guest() { # id cmd...  -> stdout; the call fails on a non-zero exit
   local id="$1"; shift
   local payload out code
-  payload="$(jq -n --args '{cmd: $ARGS.positional, timeout_seconds: 300}' "$@")"
+  payload="$(jq -n '{cmd: $ARGS.positional, timeout_seconds: 300}' --args -- "$@")"
   out="$(api POST "/v1/sandboxes/$id/exec" "$payload")"
   code="$(jq -r .exit_code <<<"$out")"
   if [ "$code" != "0" ]; then
     echo "demo: guest exec failed ($code): $out" >&2
     exit 1
   fi
-  jq -r '.stdout' <<<"$out"
+  # -j prints stdout exactly. -r appends a newline, which a loop that
+  # collects outputs counts as one more empty value.
+  jq -j '.stdout' <<<"$out"
 }
 
 guest_ok() { # id cmd...  -> "yes" when the command exits zero
   local id="$1"; shift
   local payload
-  payload="$(jq -n --args '{cmd: $ARGS.positional, timeout_seconds: 60}' "$@")"
+  payload="$(jq -n '{cmd: $ARGS.positional, timeout_seconds: 60}' --args -- "$@")"
   local code
   code="$(api POST "/v1/sandboxes/$id/exec" "$payload" | jq -r .exit_code)"
   [ "$code" = "0" ] && echo yes || echo no
@@ -171,11 +175,13 @@ mapfile -t DISTINCT < <(printf '%s\n' "${RANDOMS[@]}" | sort -u)
 step "8 forks, 8 random values"
 
 # 10. Every fork's clock is within two seconds of the host.
-host_now="$(date +%s)"
+# Bracket each guest read with host reads, so exec time is not clock drift.
 for i in "${!FORKS[@]}"; do
+  before="$(date +%s)"
   guest_now="$(guest "${FORKS[$i]}" python -c 'import time; print(int(time.time()))')"
-  delta=$((guest_now - host_now))
-  [ "$delta" -le 2 ] && [ "$delta" -ge -2 ] || fail "fork $i clock differs by ${delta}s"
+  after="$(date +%s)"
+  [ "$guest_now" -ge $((before - 2)) ] && [ "$guest_now" -le $((after + 2)) ] \
+    || fail "fork $i clock $guest_now is outside host window [$before, $after] by more than 2s"
 done
 step "clocks within 2s"
 

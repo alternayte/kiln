@@ -528,10 +528,12 @@ func (m *Manager) DeleteSnapshot(ctx context.Context, id string) error {
 	if live > 0 {
 		return store.ErrConflict
 	}
-	if err := os.RemoveAll(filepath.Join(m.cfg.Root, "snapshots", id)); err != nil {
+	// Delete the row first. A failed row delete then leaves the files, not a
+	// row that names missing files.
+	if err := m.cfg.Store.DeleteSnapshot(ctx, snap.ID); err != nil {
 		return err
 	}
-	return m.cfg.Store.DeleteSnapshot(ctx, id)
+	return os.RemoveAll(filepath.Join(m.cfg.Root, "snapshots", snap.ID))
 }
 
 // makeCopies creates count rows from one image and restores each of them. Any

@@ -10,7 +10,8 @@ import { cn } from "@/lib/cn";
 type Phase = "connecting" | "connected" | "disconnected";
 
 // A dropped socket is usually a wake or a blip, so the shell retries by
-// itself and only says so once retrying has stopped helping.
+// itself and only says so once retrying has stopped helping. A sandbox that
+// is asleep takes seconds to restore, so the open bound outlasts a wake.
 const RETRIES = 4;
 const BACKOFF_MS = [500, 1000, 2000, 4000];
 // A socket that never opens and never closes is the shape of a server in
@@ -18,7 +19,7 @@ const BACKOFF_MS = [500, 1000, 2000, 4000];
 // WebSocket upgrade needs Extended CONNECT there, which the host does not
 // serve. Without this bound the pane says "connecting" for ever and blames
 // nothing.
-const OPEN_TIMEOUT_MS = 10_000;
+const OPEN_TIMEOUT_MS = 30_000;
 
 /**
  * SandboxTerminal is the interactive shell of one sandbox. The socket carries
@@ -114,10 +115,17 @@ export function SandboxTerminal({
 
     const socket = new WebSocket(url);
     socket.binaryType = "arraybuffer";
+    // A close this effect causes, by tearing down or by giving up, must not
+    // look like the shell dropping. Without this the cleanup's close feeds
+    // the retry path, which re-runs the effect, which cleans up again: a
+    // loop that opens a socket every few hundred milliseconds and never
+    // waits long enough for one to connect.
+    let ours = false;
     const encoder = new TextEncoder();
 
     const openTimer = setTimeout(() => {
       if (socket.readyState === WebSocket.CONNECTING) {
+        ours = true;
         xterm.write(
           "\r\n\x1b[2m[the connection never opened. Something in front of the gateway may be " +
             "serving HTTP/2 or HTTP/3, where a WebSocket needs Extended CONNECT.]\x1b[0m\r\n",
@@ -136,6 +144,7 @@ export function SandboxTerminal({
     socket.onmessage = (message) => xterm.write(new Uint8Array(message.data as ArrayBuffer));
     socket.onclose = (event) => {
       clearTimeout(openTimer);
+      if (ours) return;
       const why = event.reason || "the connection closed";
       xterm.write(`\r\n\x1b[2m[${why}]\x1b[0m\r\n`);
       // The shell exiting is the person's own doing, so it never retries.
@@ -170,6 +179,7 @@ export function SandboxTerminal({
     observer.observe(element);
 
     return () => {
+      ours = true;
       clearTimeout(openTimer);
       if (retryTimer.current) clearTimeout(retryTimer.current);
       observer.disconnect();

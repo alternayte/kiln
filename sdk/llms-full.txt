@@ -305,3 +305,16 @@ Path:
 - `name` (string): Name of the template.
 
 Answers 200 with `Template`.
+
+### createViewer
+
+`POST /v1/viewers`
+
+Add a viewer of this tenant. A viewer opens team previews and nothing else.
+
+Body:
+
+- `email` (string, required): Address the viewer signs in with.
+- `password` (string, required): Password of the viewer.
+
+Answers 201 with `Viewer`.

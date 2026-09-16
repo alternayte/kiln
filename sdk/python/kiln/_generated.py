@@ -173,3 +173,11 @@ class GeneratedClient:
     def get_template(self, name: str) -> Any:
         """Read one template."""
         return self._json("GET", f"/v1/templates/{name}")
+
+    def create_viewer(self, email: str, password: str) -> Any:
+        """Add a viewer of this tenant. A viewer opens team previews and nothing else."""
+        body = {k: v for k, v in {
+            "email": email,
+            "password": password,
+        }.items() if v is not None}
+        return self._json("POST", "/v1/viewers", body)

@@ -166,4 +166,9 @@ export class GeneratedClient {
   getTemplate(name: string): Promise<unknown> {
     return this.json("GET", `/v1/templates/${encodeURIComponent(String(name))}`);
   }
+
+  /** Add a viewer of this tenant. A viewer opens team previews and nothing else. */
+  createViewer(body: { email: string; password: string }): Promise<unknown> {
+    return this.json("POST", "/v1/viewers", body);
+  }
 }

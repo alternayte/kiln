@@ -235,6 +235,17 @@
           "$ref": "#/components/schemas/Tenant"
         },
         "type": "array"
+      },
+      "Viewer": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "tenant": {
+            "type": "string"
+          }
+        },
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -2008,6 +2019,96 @@
           }
         },
         "summary": "Read one template."
+      }
+    },
+    "/v1/viewers": {
+      "post": {
+        "operationId": "createViewer",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "email": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "email",
+                  "password"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Viewer"
+                }
+              }
+            },
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap."
+          }
+        },
+        "summary": "Add a viewer of this tenant. A viewer opens team previews and nothing else."
       }
     }
   },

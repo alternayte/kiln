@@ -40,6 +40,18 @@ type Server struct {
 	Root string
 	// Base is the lifetime context for asynchronous work.
 	Base context.Context
+	// Viewers holds the people who open team previews. Nil on a host that
+	// serves no preview.
+	Viewers ViewerStore
+}
+
+// ViewerStore is the part of the viewer login the API touches. The ingress
+// implements it; the interface keeps this package free of that import.
+type ViewerStore interface {
+	// Create adds one viewer of one tenant.
+	Create(ctx context.Context, tenant, address, password string) error
+	// Exists reports whether an address already holds a viewer.
+	Exists(ctx context.Context, address string) (bool, error)
 }
 
 // Handler returns the control surface: the /v1 API behind bearer
@@ -63,6 +75,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/sandboxes/{id}/publish/{port}", s.unpublishSandbox)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/files/{path...}", s.getSandboxFile)
 	mux.HandleFunc("PUT /v1/sandboxes/{id}/files/{path...}", s.putSandboxFile)
+	mux.HandleFunc("POST /v1/viewers", s.createViewer)
 	mux.HandleFunc("POST /v1/tenants", s.createTenant)
 	mux.HandleFunc("GET /v1/tenants", s.listTenants)
 	mux.HandleFunc("GET /v1/tenants/{id}", s.getTenant)

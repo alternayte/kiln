@@ -32,8 +32,6 @@ import (
 	"testing"
 	"time"
 
-	authall "github.com/alternayte/auth-all"
-
 	"github.com/alternayte/kiln/internal/ingress"
 	"github.com/alternayte/kiln/internal/network"
 	"github.com/alternayte/kiln/internal/runtime"
@@ -752,7 +750,7 @@ func guestRequestLog(t *testing.T, ctx context.Context, sbx *sandbox.Manager, id
 
 // newAuth opens a viewer store in a temp file, so the gate never touches the
 // host's viewer accounts.
-func newAuth(t *testing.T, ctx context.Context) *authall.Auth {
+func newAuth(t *testing.T, ctx context.Context) *ingress.Viewers {
 	t.Helper()
 	auth, db, err := ingress.NewAuth(ctx, filepath.Join(t.TempDir(), "viewer.db"), zone)
 	if err != nil {
@@ -762,7 +760,7 @@ func newAuth(t *testing.T, ctx context.Context) *authall.Auth {
 	return auth
 }
 
-func newPreview(t *testing.T, ctx context.Context, st store.Store, sbx *sandbox.Manager, auth *authall.Auth) *httptest.Server {
+func newPreview(t *testing.T, ctx context.Context, st store.Store, sbx *sandbox.Manager, auth *ingress.Viewers) *httptest.Server {
 	t.Helper()
 	handler := ingress.New(ingress.Config{Zone: zone, Store: st, Sandboxes: sbx, Auth: auth}).Handler()
 	ts := httptest.NewTLSServer(handler)

@@ -204,6 +204,15 @@ func Operations() []Operation {
 			},
 			Returns: "SandboxList",
 		},
+		{
+			ID: "createViewer", Method: "POST", Path: "/v1/viewers", Status: 201,
+			Summary: "Add a viewer of this tenant. A viewer opens team previews and nothing else.",
+			Body: []Field{
+				{Name: "email", Type: "string", Required: true, Doc: "Address the viewer signs in with."},
+				{Name: "password", Type: "string", Required: true, Doc: "Password of the viewer."},
+			},
+			Returns: "Viewer",
+		},
 		// The tenant routes belong to the operator. A tenant never reaches
 		// them, and no MCP tool is made for them.
 		{ID: "createTenant", Method: "POST", Path: "/v1/tenants", Status: 201, Operator: true,

@@ -185,6 +185,7 @@ func schemas() map[string]any {
 			"id": str, "name": str, "max_sandboxes": num, "max_templates": num,
 			"max_snapshot_bytes": num, "sandboxes": num, "templates": num, "snapshot_bytes": num,
 		}),
+		"Viewer":     object(map[string]any{"email": str, "tenant": str}),
 		"TenantList": list("Tenant"),
 	}
 }

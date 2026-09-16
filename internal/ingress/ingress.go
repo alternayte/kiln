@@ -41,7 +41,7 @@ type Config struct {
 	Store     store.Store
 	Sandboxes *sandbox.Manager
 	// Auth is the viewer login. Nil refuses every team preview.
-	Auth *authall.Auth
+	Auth *Viewers
 	// Now returns the current time. Tests set it.
 	Now func() time.Time
 }
@@ -114,19 +114,29 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r)
 		return
 	}
-	proxy := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	toGuest := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.proxy(w, r, row, waking)
 	})
 	if row.Visibility != store.VisibilityTeam {
-		proxy.ServeHTTP(w, r)
+		toGuest.ServeHTTP(w, r)
 		return
 	}
 	if s.cfg.Auth == nil {
 		http.Error(w, "a team preview needs a viewer session, and no viewer store is configured", http.StatusServiceUnavailable)
 		return
 	}
-	// The session is checked before anything reaches the guest.
-	s.cfg.Auth.RequireAuth(proxy).ServeHTTP(w, r)
+	// The session is checked before anything reaches the guest, and the
+	// viewer of another tenant is refused the same way as a caller with no
+	// session at all, so a hostname leaks nothing.
+	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := authall.PrincipalFrom(r.Context())
+		if p == nil || p.User == nil || !s.cfg.Auth.Belongs(r.Context(), row.TenantID, p.User.ID) {
+			s.challenge(w, r)
+			return
+		}
+		toGuest.ServeHTTP(w, r)
+	})
+	s.cfg.Auth.Auth.RequireAuth(guarded).ServeHTTP(w, r)
 }
 
 // serveAuth mounts the viewer login. Only sign-in, sign-out and the session
@@ -138,10 +148,19 @@ func (s *Server) serveAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	switch strings.TrimPrefix(r.URL.Path, AuthPrefix) {
 	case "/session", "/sign-in/email", "/sign-out":
-		s.cfg.Auth.Handler().ServeHTTP(w, r)
+		s.cfg.Auth.Auth.Handler().ServeHTTP(w, r)
 	default:
 		s.notFound(w, r)
 	}
+}
+
+// challenge answers a viewer who has no session for this tenant. It is the
+// same answer as no session at all, so a caller learns nothing about which
+// tenant owns a hostname.
+func (s *Server) challenge(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	_, _ = w.Write([]byte(`{"error":{"code":"UNAUTHORIZED","message":"Authentication is required."}}`))
 }
 
 // proxy forwards one request to the guest port. A sleeping sandbox wakes

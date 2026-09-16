@@ -14,8 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	authall "github.com/alternayte/auth-all"
-
 	"github.com/alternayte/kiln/internal/api"
 	"github.com/alternayte/kiln/internal/hostca"
 	"github.com/alternayte/kiln/internal/ingress"
@@ -109,7 +107,20 @@ func cmdServe() error {
 	}
 	go reconciler.Run(ctx)
 
-	handler := (&api.Server{
+	// The viewer login and the preview ingress share this process. The
+	// ingress needs a zone and an ACME email; without them the control
+	// listener still serves every other endpoint.
+	var viewer *ingress.Viewers
+	if cfg.Zone != "" {
+		auth, authDB, err := ingress.NewAuth(ctx, filepath.Join(root, "kiln.db"), cfg.Zone)
+		if err != nil {
+			return fmt.Errorf("serve: viewer login: %w", err)
+		}
+		defer authDB.Close()
+		viewer = auth
+	}
+
+	apiServer := &api.Server{
 		Store:              st,
 		Templates:          mgr,
 		Sandboxes:          sbx,
@@ -117,7 +128,11 @@ func cmdServe() error {
 		FirecrackerVersion: firecrackerVersion,
 		Root:               root,
 		Base:               ctx,
-	}).Handler()
+	}
+	if viewer != nil {
+		apiServer.Viewers = viewer
+	}
+	handler := apiServer.Handler()
 
 	// The gateway listener is the only way in from another machine, and it
 	// demands a client certificate this host signed.
@@ -156,18 +171,6 @@ func cmdServe() error {
 	}
 	fmt.Printf("kiln serve: control on %s\n", cfg.ControlAddr)
 
-	// The viewer login and the preview ingress share this process. The
-	// ingress needs a zone and an ACME account; without them the control
-	// listener still serves every other endpoint.
-	var viewer *authall.Auth
-	if cfg.Zone != "" {
-		auth, authDB, err := ingress.NewAuth(ctx, filepath.Join(root, "kiln.db"), cfg.Zone)
-		if err != nil {
-			return fmt.Errorf("serve: viewer login: %w", err)
-		}
-		defer authDB.Close()
-		viewer = auth
-	}
 	var ingressSrv *http.Server
 	if cfg.Zone != "" && cfg.ACME.Email != "" && len(cfg.ACME.Credentials) > 0 {
 		magic, err := ingress.NewCertMagic(ctx, root, cfg.Zone, ingress.ACMEConfig{

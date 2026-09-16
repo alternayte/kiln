@@ -193,7 +193,7 @@ func TestViewerLogin(t *testing.T) {
 		t.Fatalf("viewer exists after create: %v, %v", exists, err)
 	}
 
-	ts := httptest.NewServer(auth.Handler())
+	ts := httptest.NewServer(auth.Auth.Handler())
 	t.Cleanup(ts.Close)
 	body := strings.NewReader(`{"email":"viewer@example.com","password":"a-long-enough-password"}`)
 	resp, err := http.Post(ts.URL+AuthPrefix+"/sign-in/email", "application/json", body)
@@ -225,8 +225,50 @@ func TestViewerLogin(t *testing.T) {
 	// makes before it forwards.
 	req := httptest.NewRequest(http.MethodGet, "https://abc123.example.com/", nil)
 	req.AddCookie(session)
-	got, err := auth.Session(ctx, req)
+	got, err := auth.Auth.Session(ctx, req)
 	if err != nil || got == nil {
 		t.Fatalf("session lookup: %+v, %v", got, err)
+	}
+}
+
+// A viewer opens the team previews of one tenant. A viewer of another tenant
+// gets the same answer as a caller with no session at all, so a hostname
+// tells nobody which tenant owns it.
+func TestTeamPreviewRefusesAViewerOfAnotherTenant(t *testing.T) {
+	ctx := context.Background()
+	viewers, db, err := NewAuth(ctx, filepath.Join(t.TempDir(), "viewer.db"), "example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := viewers.Create(ctx, "acme", "acme@example.com", "a-long-enough-password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := viewers.Create(ctx, "globex", "globex@example.com", "a-long-enough-password"); err != nil {
+		t.Fatal(err)
+	}
+	acme, err := viewers.Auth.GetUserByEmail(ctx, "acme@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	globex, err := viewers.Auth.GetUserByEmail(ctx, "globex@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !viewers.Belongs(ctx, "acme", acme.ID) {
+		t.Fatal("the viewer of acme cannot open an acme preview")
+	}
+	if viewers.Belongs(ctx, "globex", acme.ID) {
+		t.Fatal("the viewer of acme reached globex")
+	}
+	if !viewers.Belongs(ctx, "globex", globex.ID) {
+		t.Fatal("the viewer of globex cannot open a globex preview")
+	}
+	if viewers.Belongs(ctx, "acme", globex.ID) {
+		t.Fatal("the viewer of globex reached acme")
+	}
+	// A tenant with no viewer has no row here, so no session can match it.
+	if viewers.Belongs(ctx, "absent", acme.ID) {
+		t.Fatal("a tenant with no viewer accepted one")
 	}
 }

@@ -10,7 +10,7 @@ api() {
   curl -sS -X "$1" -H "Authorization: Bearer $KILN_API_KEY" -w $'\n%{http_code}' "$KILN_URL$2"
 }
 
-rows="$(api GET /v1/sandboxes | sed '$d' | python3 "$here/json.py" previews)"
+rows="$(api GET /v1/sandboxes | sed '$d' | python3 "$here/payload.py" previews)"
 while read -r id template; do
   [ -n "$id" ] || continue
   [ "$template" = "$keep" ] && continue

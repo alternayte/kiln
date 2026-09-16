@@ -3,6 +3,9 @@
 
 The shell owns the calls; this owns the JSON. A quote in a setup command or a
 space in a hostname breaks a body a shell assembles by hand.
+
+Not named json.py: the script's own directory comes first on sys.path, so
+`import json` would import this file and every dumps call would fail.
 """
 import json
 import os

@@ -4,6 +4,9 @@ check:
     #!/usr/bin/env bash
     set -uo pipefail
     fail=0
+    # The kiln binary embeds the guest agent, so the agent is built first.
+    # A stale one would install an agent nobody wrote.
+    bash scripts/build-kilninit.sh > /dev/null || fail=1
     for c in checks/*.sh; do
         [ -e "$c" ] || continue
         if ! bash "$c"; then

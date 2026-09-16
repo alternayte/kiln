@@ -12,6 +12,23 @@ Debian 12 machine with KVM works. `pulumi up` installs the Go version that
 Dedibox. Choose one, order the server, then follow its steps. The Pulumi steps
 are the same for both.
 
+## Install from a release
+
+A tagged release carries the host binary, so a box needs no Go and no source:
+
+```sh
+curl -fsSLO https://github.com/alternayte/kiln/releases/latest/download/kiln
+curl -fsSLO https://github.com/alternayte/kiln/releases/latest/download/SHA256SUMS
+sha256sum -c SHA256SUMS
+sudo install -m755 kiln /usr/local/bin/kiln
+sudo kiln init --zone example.com --acme-email you@example.com
+sudo kiln serve
+```
+
+The binary carries the guest agent, so `kiln init` writes it out. The steps
+below bootstrap a box from source instead, which is what a change to Kiln
+itself needs.
+
 ## OVH Eco
 
 - **Dedicated server: yes.** Bare metal, so `/dev/kvm` is available and the

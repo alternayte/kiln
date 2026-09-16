@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alternayte/kiln/internal/guestbin"
 	"github.com/alternayte/kiln/internal/hostca"
 	"github.com/alternayte/kiln/internal/ingress"
 	"github.com/alternayte/kiln/internal/network"
@@ -191,46 +192,11 @@ func initViewer(ctx context.Context, root, zone string) error {
 	return nil
 }
 
-// installKilninit builds the guest init for linux/amd64. The build needs the
-// source tree; a host without it keeps an existing binary.
+// installKilninit writes the guest init this binary carries. It behaves the
+// same in a repository and on a bare host, so one install path is the only
+// path, and the agent a host runs always matches the host that wrote it.
 func installKilninit(dst string) error {
-	_, goMod := os.Stat("go.mod")
-	_, source := os.Stat(filepath.Join("guest", "kilninit"))
-	if goMod == nil && source == nil {
-		cmd := exec.Command("go", "build", "-o", dst, "./guest/kilninit")
-		cmd.Env = append(withoutEnv(os.Environ(), "GOOS", "GOARCH", "CGO_ENABLED"),
-			"GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("build kilninit: %w: %s", err, out)
-		}
-		return nil
-	}
-	if fileExists(dst) {
-		return nil
-	}
-	return fmt.Errorf("kilninit: guest source not found and %s does not exist; run kiln init from the repo", dst)
-}
-
-// withoutEnv drops the named variables so the cross-compile settings win.
-func withoutEnv(env []string, keys ...string) []string {
-	drop := map[string]bool{}
-	for _, k := range keys {
-		drop[k+"="] = true
-	}
-	out := env[:0:0]
-	for _, e := range env {
-		skip := false
-		for prefix := range drop {
-			if strings.HasPrefix(e, prefix) {
-				skip = true
-				break
-			}
-		}
-		if !skip {
-			out = append(out, e)
-		}
-	}
-	return out
+	return guestbin.Write(dst)
 }
 
 func fileExists(path string) bool {

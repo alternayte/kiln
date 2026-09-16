@@ -4,6 +4,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/alternayte/kiln/internal/apispec"
 )
 
 func main() {
@@ -25,6 +27,11 @@ func main() {
 		err = cmdCA(os.Args[2:])
 	case "gateway-env":
 		err = cmdGatewayEnv(os.Args[2:])
+	case "version", "-v", "--version":
+		// The one constant that changes with every release, so a binary and
+		// the document the gateway serves can never disagree.
+		fmt.Println(apispec.Version)
+		return
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -48,5 +55,6 @@ commands:
   ctl     CLI client for the HTTP API
   ca      issue and revoke the client certificate one gateway uses
   gateway-env  print the address, token and certificates one gateway needs
+  version print the release this binary came from
 `)
 }

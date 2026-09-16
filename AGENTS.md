@@ -30,5 +30,8 @@ The server and the systemd unit: `infra/README.md`.
 - gateway: the public binary that holds tenants, keys, OAuth, rate limits, the audit log and MCP, and proxies /v1 to the host. Avoid: proxy, control plane, edge.
 - host: the machine and daemon that run microVMs and own the sandbox data. Avoid: node, worker, backend.
 - API key: a long-lived machine credential that names one tenant and its scopes. Avoid: secret, bearer token.
-- viewer: an account that opens team previews for one tenant and nothing else. Avoid: member.
+- viewer: a login that opens team previews for one tenant and nothing else. Avoid: preview user.
 - operator: the person who runs the host, holds the operator token and repairs the box. Avoid: owner. The auth-all API names a plugin admin, so that word alone stays legal.
+- reader: a member of a tenant who sees its templates, sandboxes and snapshots and changes nothing. Avoid: read-only member.
+- terminal: an interactive PTY session into a running sandbox, carried over a WebSocket. Avoid: shell session, console, SSH.
+- preview environment: one template and one sandbox built from one commit, published on a hostname for a pull request. Avoid: preview deployment, ephemeral environment, review app.

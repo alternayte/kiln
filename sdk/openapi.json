@@ -169,17 +169,41 @@
           "created_at": {
             "type": "string"
           },
+          "disk_mb": {
+            "type": "integer"
+          },
+          "egress_allow": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "error": {
             "type": "string"
           },
           "image": {
             "type": "string"
           },
+          "image_digest": {
+            "type": "string"
+          },
+          "memory_mb": {
+            "type": "integer"
+          },
           "name": {
             "type": "string"
           },
+          "sandboxes": {
+            "type": "integer"
+          },
+          "snapshot_bytes": {
+            "type": "integer"
+          },
           "state": {
             "type": "string"
+          },
+          "vcpus": {
+            "type": "integer"
           }
         },
         "type": "object"
@@ -238,7 +262,13 @@
       },
       "Viewer": {
         "properties": {
+          "created_at": {
+            "type": "string"
+          },
           "email": {
+            "type": "string"
+          },
+          "id": {
             "type": "string"
           },
           "tenant": {
@@ -246,6 +276,12 @@
           }
         },
         "type": "object"
+      },
+      "ViewerList": {
+        "items": {
+          "$ref": "#/components/schemas/Viewer"
+        },
+        "type": "array"
       }
     },
     "securitySchemes": {
@@ -2022,6 +2058,72 @@
       }
     },
     "/v1/viewers": {
+      "get": {
+        "operationId": "listViewers",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewerList"
+                }
+              }
+            },
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap."
+          }
+        },
+        "summary": "List the viewers of this tenant."
+      },
       "post": {
         "operationId": "createViewer",
         "requestBody": {
@@ -2109,6 +2211,78 @@
           }
         },
         "summary": "Add a viewer of this tenant. A viewer opens team previews and nothing else."
+      }
+    },
+    "/v1/viewers/{id}": {
+      "delete": {
+        "operationId": "deleteViewer",
+        "parameters": [
+          {
+            "description": "Viewer id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap."
+          }
+        },
+        "summary": "Revoke one viewer. The viewer is disabled and its sessions end."
       }
     }
   },

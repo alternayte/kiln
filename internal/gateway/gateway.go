@@ -56,16 +56,15 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	prefix := s.AuthPrefix
 	if prefix == "" {
-		prefix = "/auth/"
+		prefix = "/api/auth/"
 	}
-	// The two screens the OAuth flow needs. They are registered before the
-	// auth handler, so the more specific pattern wins.
-	mux.HandleFunc("GET "+strings.TrimSuffix(prefix, "/")+"/sign-in", s.signIn)
-	mux.HandleFunc("GET "+strings.TrimSuffix(prefix, "/")+"/consent", s.consent)
 	mux.Handle(prefix, http.StripPrefix(strings.TrimSuffix(prefix, "/"), s.Auth.Handler()))
 	mux.Handle("GET /healthz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}))
+	// The caller's tenant and role. The auth-all client cannot give these,
+	// because they live in the principal this gateway builds.
+	mux.Handle("GET /api/me", s.requireCaller(http.HandlerFunc(s.me)))
 	// Tenant administration is the operator's, and it creates the tenant on
 	// the host in the same call.
 	mux.Handle("POST /operator/tenants", s.Auth.RequireAuth(http.HandlerFunc(s.createTenant)))
@@ -82,6 +81,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /llms-full.txt", s.llmsFull)
 	mux.HandleFunc("GET /.well-known/ai-catalog.json", s.catalog)
 	s.oauthRoutes(mux)
+	// The web UI answers everything else, including the sign-in and consent
+	// screens the OAuth flow sends a browser to.
+	ui, err := uiHandler()
+	if err != nil {
+		panic("gateway: the web UI bundle is unreadable: " + err.Error())
+	}
+	mux.Handle("/", ui)
 	return mux
 }
 

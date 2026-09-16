@@ -61,9 +61,12 @@ func TestOpenAPICoversTheTenantAPI(t *testing.T) {
 	}
 	text := string(body)
 	for _, op := range Operations() {
-		if op.Operator {
+		if op.Operator || op.Terminal {
+			// OpenAPI 3.1 cannot describe a WebSocket, and an operator route
+			// is not a tenant's to call. A generated client that carried
+			// either would fail at run time.
 			if strings.Contains(text, `"operationId": "`+op.ID+`"`) {
-				t.Errorf("the document carries the operator route %s", op.ID)
+				t.Errorf("the document carries %s, which no generated client can call", op.ID)
 			}
 			continue
 		}

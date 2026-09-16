@@ -81,6 +81,19 @@ func (l *lockedReader) Close() error {
 	return err
 }
 
+// lockedTerminal holds the sandbox read lock for the life of a terminal.
+type lockedTerminal struct {
+	*runtime.Terminal
+	once   sync.Once
+	unlock func()
+}
+
+func (l *lockedTerminal) Close() error {
+	err := l.Terminal.Close()
+	l.once.Do(l.unlock)
+	return err
+}
+
 // touch records activity and moves the idle deadline. It is the only writer
 // of last_active_at after a restore.
 func (m *Manager) touch(ctx context.Context, row store.Sandbox) {

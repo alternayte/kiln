@@ -52,6 +52,10 @@ type ViewerStore interface {
 	Create(ctx context.Context, tenant, address, password string) error
 	// Exists reports whether an address already holds a viewer.
 	Exists(ctx context.Context, address string) (bool, error)
+	// List returns the viewers of one tenant.
+	List(ctx context.Context, tenant string) ([]store.Viewer, error)
+	// Delete revokes one viewer of one tenant.
+	Delete(ctx context.Context, tenant, userID string) error
 }
 
 // Handler returns the control surface: the /v1 API behind bearer
@@ -69,13 +73,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sandboxes/{id}", s.getSandbox)
 	mux.HandleFunc("DELETE /v1/sandboxes/{id}", s.deleteSandbox)
 	mux.HandleFunc("POST /v1/sandboxes/{id}/exec", s.execSandbox)
+	mux.HandleFunc("GET /v1/sandboxes/{id}/terminal", s.terminalSandbox)
 	mux.HandleFunc("POST /v1/sandboxes/{id}/snapshot", s.createSnapshot)
 	mux.HandleFunc("POST /v1/sandboxes/{id}/fork", s.forkSandbox)
 	mux.HandleFunc("POST /v1/sandboxes/{id}/publish", s.publishSandbox)
 	mux.HandleFunc("DELETE /v1/sandboxes/{id}/publish/{port}", s.unpublishSandbox)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/files/{path...}", s.getSandboxFile)
 	mux.HandleFunc("PUT /v1/sandboxes/{id}/files/{path...}", s.putSandboxFile)
+	mux.HandleFunc("GET /v1/viewers", s.listViewers)
 	mux.HandleFunc("POST /v1/viewers", s.createViewer)
+	mux.HandleFunc("DELETE /v1/viewers/{id}", s.deleteViewer)
 	mux.HandleFunc("POST /v1/tenants", s.createTenant)
 	mux.HandleFunc("GET /v1/tenants", s.listTenants)
 	mux.HandleFunc("GET /v1/tenants/{id}", s.getTenant)

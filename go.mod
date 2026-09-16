@@ -14,6 +14,7 @@ require (
 
 require (
 	github.com/caddyserver/zerossl v0.1.5 // indirect
+	github.com/coder/websocket v1.8.15 // indirect
 	github.com/docker/libtrust v0.0.0-20160708172513-aabc10ec26b7 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect

@@ -136,5 +136,5 @@ func (s *Server) issuer() string {
 	if s.Issuer != "" {
 		return strings.TrimSuffix(s.Issuer, "/")
 	}
-	return s.baseURL() + "/auth"
+	return s.baseURL() + "/api/auth"
 }

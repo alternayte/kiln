@@ -13,7 +13,7 @@ const Version = "0.2.0"
 func OpenAPI(serverURL string) map[string]any {
 	paths := map[string]any{}
 	for _, op := range Operations() {
-		if op.Operator {
+		if op.Operator || op.Terminal {
 			continue
 		}
 		path := openAPIPath(op.Path)
@@ -164,8 +164,13 @@ func schemas() map[string]any {
 		"Error": object(map[string]any{
 			"error": object(map[string]any{"code": str, "message": str}),
 		}),
-		"Health":        object(map[string]any{"ok": map[string]any{"type": "boolean"}, "kvm": map[string]any{"type": "boolean"}, "firecracker": str, "sandboxes": num}),
-		"Template":      object(map[string]any{"name": str, "image": str, "state": str, "error": str, "created_at": str}),
+		"Health": object(map[string]any{"ok": map[string]any{"type": "boolean"}, "kvm": map[string]any{"type": "boolean"}, "firecracker": str, "sandboxes": num}),
+		"Template": object(map[string]any{
+			"name": str, "image": str, "image_digest": str, "state": str, "error": str,
+			"vcpus": num, "memory_mb": num, "disk_mb": num,
+			"egress_allow":   map[string]any{"type": "array", "items": str},
+			"snapshot_bytes": num, "sandboxes": num, "created_at": str,
+		}),
 		"TemplateState": object(map[string]any{"name": str, "state": str}),
 		"TemplateList":  list("Template"),
 		"Sandbox":       sandbox,
@@ -185,7 +190,8 @@ func schemas() map[string]any {
 			"id": str, "name": str, "max_sandboxes": num, "max_templates": num,
 			"max_snapshot_bytes": num, "sandboxes": num, "templates": num, "snapshot_bytes": num,
 		}),
-		"Viewer":     object(map[string]any{"email": str, "tenant": str}),
+		"Viewer":     object(map[string]any{"id": str, "email": str, "tenant": str, "created_at": str}),
+		"ViewerList": list("Viewer"),
 		"TenantList": list("Tenant"),
 	}
 }

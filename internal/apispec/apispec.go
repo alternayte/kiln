@@ -38,6 +38,11 @@ type Operation struct {
 	// Streams marks a route that can stream, so a client reads it as it
 	// arrives instead of buffering.
 	Streams bool
+	// Terminal marks a WebSocket upgrade. OpenAPI 3.1 cannot describe one,
+	// so the document and the generated clients leave it out, and the
+	// handwritten SDK layer carries it. The route is still described here,
+	// so the host cannot serve a route no document names.
+	Terminal bool
 }
 
 // Operations is the whole API. A route the host serves and this list does not
@@ -127,6 +132,15 @@ func Operations() []Operation {
 			Returns: "ExecResult",
 		},
 		{
+			ID: "terminal", Method: "GET", Path: "/v1/sandboxes/{id}/terminal", Status: 101, Terminal: true,
+			Summary: "Open an interactive shell in a sandbox over a WebSocket. A binary message carries terminal bytes both ways, and a text message carries {\"cols\":n,\"rows\":n}.",
+			Params: []Field{
+				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
+				{Name: "cols", Type: "integer", Doc: "Terminal width at the moment the shell opens."},
+				{Name: "rows", Type: "integer", Doc: "Terminal height at the moment the shell opens."},
+			},
+		},
+		{
 			ID: "snapshot", Method: "POST", Path: "/v1/sandboxes/{id}/snapshot", Status: 201,
 			Summary: "Snapshot a sandbox. With stop the sandbox sleeps and keeps its hostnames.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
@@ -203,6 +217,16 @@ func Operations() []Operation {
 				{Name: "allow_secret_fork", Type: "boolean", Doc: "Allow a restore of a snapshot that holds secrets."},
 			},
 			Returns: "SandboxList",
+		},
+		{
+			ID: "listViewers", Method: "GET", Path: "/v1/viewers", Status: 200,
+			Summary: "List the viewers of this tenant.",
+			Returns: "ViewerList",
+		},
+		{
+			ID: "deleteViewer", Method: "DELETE", Path: "/v1/viewers/{id}", Status: 204,
+			Summary: "Revoke one viewer. The viewer is disabled and its sessions end.",
+			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Viewer id."}},
 		},
 		{
 			ID: "createViewer", Method: "POST", Path: "/v1/viewers", Status: 201,

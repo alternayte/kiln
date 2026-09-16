@@ -207,6 +207,22 @@ Body:
 
 Answers 201 with `SnapshotCreated`.
 
+### terminal
+
+`GET /v1/sandboxes/{id}/terminal`
+
+Open an interactive shell in a sandbox over a WebSocket. A binary message carries terminal bytes both ways, and a text message carries {"cols":n,"rows":n}.
+
+This call is a WebSocket upgrade, not a request and an answer. The OpenAPI document and the generated clients leave it out.
+
+Path:
+
+- `id` (string): Sandbox id.
+- `cols` (integer): Terminal width at the moment the shell opens.
+- `rows` (integer): Terminal height at the moment the shell opens.
+
+Answers 101 with no body.
+
 ### listSnapshots
 
 `GET /v1/snapshots`
@@ -306,6 +322,14 @@ Path:
 
 Answers 200 with `Template`.
 
+### listViewers
+
+`GET /v1/viewers`
+
+List the viewers of this tenant.
+
+Answers 200 with `ViewerList`.
+
 ### createViewer
 
 `POST /v1/viewers`
@@ -318,3 +342,15 @@ Body:
 - `password` (string, required): Password of the viewer.
 
 Answers 201 with `Viewer`.
+
+### deleteViewer
+
+`DELETE /v1/viewers/{id}`
+
+Revoke one viewer. The viewer is disabled and its sessions end.
+
+Path:
+
+- `id` (string): Viewer id.
+
+Answers 204 with no body.

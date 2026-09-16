@@ -30,6 +30,8 @@ const (
 	FrameStderr  byte = 'e'
 	FrameData    byte = 'd' // raw write_file chunk, host to guest
 	FrameResult  byte = 'r' // JSON Result
+	FrameStdin   byte = 'i' // raw terminal keystrokes, host to guest
+	FrameResize  byte = 'z' // JSON Winsize, host to guest
 )
 
 // Request operations.
@@ -40,7 +42,28 @@ const (
 	OpResume    = "resume"
 	OpReadFile  = "read_file"
 	OpWriteFile = "write_file"
+	OpTerminal  = "terminal"
 )
+
+// Terminal bounds. A window outside these is a client bug, and a pty ioctl
+// with a wild size confuses every curses program in the sandbox.
+const (
+	TerminalShell   = "/bin/sh"
+	TerminalMaxCols = 1000
+	TerminalMaxRows = 1000
+)
+
+// Winsize is the terminal window the client shows. The host sends one on
+// connect and one on every resize.
+type Winsize struct {
+	Cols int `json:"cols"`
+	Rows int `json:"rows"`
+}
+
+// Valid reports whether a window size is usable.
+func (w Winsize) Valid() bool {
+	return w.Cols > 0 && w.Rows > 0 && w.Cols <= TerminalMaxCols && w.Rows <= TerminalMaxRows
+}
 
 // Exec request bounds.
 const (
@@ -64,6 +87,9 @@ type Request struct {
 	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
 	// Path is the guest path of a file request.
 	Path string `json:"path,omitempty"`
+	// Cols and Rows are the terminal window at the moment the client opens it.
+	Cols int `json:"cols,omitempty"`
+	Rows int `json:"rows,omitempty"`
 	// Entropy, UnixNanos, Hostname and Secrets carry the resume hook data.
 	Entropy   []byte            `json:"entropy,omitempty"`
 	UnixNanos int64             `json:"unix_nanos,omitempty"`

@@ -1,0 +1,7 @@
+node_modules
+# The bundle is built, not committed. The placeholder keeps the go:embed
+# glob satisfied on a fresh checkout.
+dist/*
+!dist/.gitkeep
+*.tsbuildinfo
+openapi-ts-error-*.log

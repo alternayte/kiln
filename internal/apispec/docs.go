@@ -41,6 +41,9 @@ func LLMsFullTXT(baseURL string) string {
 			continue
 		}
 		fmt.Fprintf(&b, "\n### %s\n\n`%s %s`\n\n%s\n", op.ID, op.Method, op.Path, op.Summary)
+		if op.Terminal {
+			b.WriteString("\nThis call is a WebSocket upgrade, not a request and an answer. The OpenAPI document and the generated clients leave it out.\n")
+		}
 		if op.Streams {
 			b.WriteString("\nThis call can stream. Read the body as it arrives.\n")
 		}

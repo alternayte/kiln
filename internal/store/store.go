@@ -225,3 +225,11 @@ type Usage struct {
 	Templates     int
 	SnapshotBytes int64
 }
+
+// Viewer is one preview login of a tenant. It lives here because the API
+// and the ingress both name it, and neither imports the other.
+type Viewer struct {
+	ID        string    `json:"id"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+}

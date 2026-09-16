@@ -333,3 +333,32 @@ else's commit is worse than one that lags a release.
 
 Still not verified: a pull request from a fork, which is the one path where a
 stranger's code meets the tenant's API key.
+
+## 2026-09-17 — v0.6.0, a tag is enough to install a host
+
+Done: a tag publishes the kiln binary for linux/amd64 with a checksums file,
+and the gateway image to ghcr. The binary carries the guest agent, so
+`kiln init` writes it out instead of shelling to `go build`. A host needs no
+Go toolchain and no source.
+
+This closes a real trap, not only a packaging gap. `installKilninit` compiled
+the agent from the source tree, and when the source was missing it kept
+whatever binary already sat in the bin directory. A host could therefore run
+an agent nobody chose, and the failure surfaced far from its cause: earlier
+this session a sandbox refused a terminal because its template carried an
+older agent, and the browser saw an abrupt socket close with no reason.
+
+- The agent is built before the binary that embeds it, and it is not
+  committed, the way the web bundle is not. `just check` rebuilds it.
+- `kiln init` behaves the same in a repository and on a bare box. There is
+  one install path.
+- A tag runs `just check` and every gate first. A release binary is the one
+  thing people run without reading the code.
+- The publish step refuses a binary that does not report the tag, so a
+  release cannot carry a version nobody bumped.
+- `kiln version` prints that version, which is the constant the gateway
+  already serves in its document.
+
+Verified before tagging: the release binary, copied to the Dedibox with no
+source and no Go, ran `kiln init` into a scratch root and wrote a working
+guest agent.

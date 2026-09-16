@@ -52,7 +52,7 @@ jobs:
       # Pin a tag. @main tracks every push to Kiln, fixes and mistakes
       # alike, and a preview that breaks on somebody else's commit is worse
       # than one that lags a release.
-      - uses: alternayte/kiln/.github/actions/preview@v0.5.1
+      - uses: alternayte/kiln/.github/actions/preview@v0.6.0
         with:
           url: ${{ vars.KILN_URL }}
           api-key: ${{ secrets.KILN_API_KEY }}

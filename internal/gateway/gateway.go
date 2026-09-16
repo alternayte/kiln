@@ -1,11 +1,14 @@
 package gateway
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"strings"
@@ -194,6 +197,19 @@ func (w *statusWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack hands the raw connection to the caller. A terminal is a WebSocket
+// upgrade, and httputil.ReverseProxy switches protocols only when the writer
+// it holds can give up the connection. Without this the upgrade fails and
+// the audit wrapper is the reason.
+func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("gateway: the response writer cannot be hijacked")
+	}
+	w.status = http.StatusSwitchingProtocols
+	return h.Hijack()
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

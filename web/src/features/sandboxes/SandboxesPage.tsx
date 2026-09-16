@@ -71,7 +71,15 @@ function NewSandbox() {
   const ready = (templates.data ?? []).filter((row) => row.state === "ready");
   const create = useMutation({
     mutationFn: async () =>
-      (await createSandbox({ body: { template }, throwOnError: true })).data,
+      (
+        await createSandbox({
+          // The host requires a lifecycle and an idle deadline. A sandbox
+          // made from this screen is one a person works in, so it survives
+          // a sleep and sleeps after half an hour of nobody touching it.
+          body: { template, lifecycle: "persistent", idle_seconds: 1800 },
+          throwOnError: true,
+        })
+      ).data,
     onSuccess: () => {
       queries.invalidateQueries({ queryKey: ["sandboxes"] });
       setOpen(false);

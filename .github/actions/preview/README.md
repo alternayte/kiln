@@ -1,7 +1,10 @@
 # Kiln preview environment
 
 A pull request gets a running copy of its own application on a public
-hostname. You build and push the image; Kiln builds a template from it, runs
+hostname.
+
+Pin this Action to a tag, as the example below does. Inside the Kiln
+repository itself, `./.github/actions/preview` is the local path. You build and push the image; Kiln builds a template from it, runs
 one sandbox, publishes the port, and comments the link.
 
 ## Once, per tenant
@@ -46,7 +49,10 @@ jobs:
 
       # Build and push your image here, tagged with the commit SHA.
 
-      - uses: ./.github/actions/preview
+      # Pin a tag. @main tracks every push to Kiln, fixes and mistakes
+      # alike, and a preview that breaks on somebody else's commit is worse
+      # than one that lags a release.
+      - uses: alternayte/kiln/.github/actions/preview@v0.5.1
         with:
           url: ${{ vars.KILN_URL }}
           api-key: ${{ secrets.KILN_API_KEY }}

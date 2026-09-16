@@ -304,3 +304,32 @@ dead port. The feature shipped and could not have worked.
 Not verified here, and not claimed: the Action against a real pull request.
 The repository to try it on is restitch-gateway, which serves an API, has a
 Dockerfile, and calls upstreams that exercise egress_allow.
+
+## 2026-09-17 — v0.5.1, the Action proved against a real pull request
+
+Done: the preview Action ran on alternayte/restitch-gateway#30 and a person
+clicked the link. The whole chain worked unattended: build and push to ghcr,
+store a pull credential that expires with the job, build a template with a
+start command, wait for the port, create the sandbox, publish, comment the
+URL. The composition endpoint answered, composing two upstreams that
+egress_allow named and nothing else.
+
+Found by running it, not by reading it:
+- The Action never passed a start command, so every preview it made published
+  a port with nothing behind it. That is what sent v0.5.0 back to the guest
+  agent.
+- The Action's helper was called json.py. A script's own directory comes
+  first on sys.path, so import json imported the script itself and every
+  dumps call failed. It is payload.py now.
+
+Confirmed against the pull request, not asserted: the comment is edited in
+place rather than repeated, a later commit replaces the preview and retires
+the old hostname, and closing the pull request leaves no template, no sandbox
+and a hostname that answers 404.
+
+The Action is pinned by tag in the documentation now. A workflow on @main
+tracks every push to this repository, and a preview that breaks on somebody
+else's commit is worse than one that lags a release.
+
+Still not verified: a pull request from a fork, which is the one path where a
+stranger's code meets the tenant's API key.

@@ -5,7 +5,7 @@ reviewer clicks a link instead of reading a diff and imagining the result.
 
 Two things reach for this, and they use the same API.
 
-- **CI**, on every pull request. See [the Action](../.github/actions/preview/README.md).
+- **CI**, on every pull request. See [the Action](../.github/actions/preview/README.md), which a workflow pins by tag: `alternayte/kiln/.github/actions/preview@v0.5.1`.
 - **A coding agent**, which has finished a feature and wants to prove it runs.
   That is this page.
 
@@ -39,6 +39,8 @@ curl -X POST "$KILN_URL/v1/templates" \
   -d '{
     "name": "feature-checkout-a1b2c3d",
     "image": "ghcr.io/acme/shop:a1b2c3d",
+    "start": ["/app/server", "--port", "8000"],
+    "port": 8000,
     "egress_allow": ["db.acme.internal", "api.stripe.com"],
     "ttl_seconds": 604800,
     "vcpus": 1, "memory_mb": 1024, "disk_mb": 4096
@@ -48,8 +50,9 @@ curl -X POST "$KILN_URL/v1/templates" \
 curl -s "$KILN_URL/v1/templates/feature-checkout-a1b2c3d" \
   -H "Authorization: Bearer $KILN_API_KEY" | jq -r .state   # ready | building | failed
 
-# 3. One sandbox from it. The metadata is how you find this preview again;
-#    the UI shows it beside the sandbox.
+# 3. One sandbox from it. This answers only once the start command listens
+#    on the port, so the URL you publish next is a live one. The metadata is
+#    how you find this preview again; the UI shows it beside the sandbox.
 curl -X POST "$KILN_URL/v1/sandboxes" \
   -H "Authorization: Bearer $KILN_API_KEY" -H 'Content-Type: application/json' \
   -d '{
@@ -102,6 +105,11 @@ The sandbox goes first: a template with a live sandbox refuses to be deleted.
 reaches nothing, and DNS fails inside it. A preview that talks to a database
 or a payment API needs those hostnames listed, and nothing beyond them is
 reachable from the sandbox.
+
+**Name the start command.** Kiln boots its own init and ignores what the
+image says to run, so a template with no `start` gives you a sandbox holding
+your application's files with nothing listening, and a published hostname
+that answers nothing.
 
 **One template per commit.** The template is the unit a snapshot belongs to,
 so a preview per commit gets its own rootfs and a warm restore. Reusing one

@@ -21,6 +21,10 @@ func main() {
 		err = cmdSnapfault(os.Args[2:])
 	case "ctl":
 		err = cmdCtl(os.Args[2:])
+	case "ca":
+		err = cmdCA(os.Args[2:])
+	case "gateway-env":
+		err = cmdGatewayEnv(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -42,5 +46,7 @@ commands:
   init    first-run setup: fetch the pinned Firecracker and kernel, write config.json
   serve   API server, store, supervisor and reconciler
   ctl     CLI client for the HTTP API
+  ca      issue and revoke the client certificate one gateway uses
+  gateway-env  print the address, token and certificates one gateway needs
 `)
 }

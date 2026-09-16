@@ -108,7 +108,10 @@ type Snapshot struct {
 
 // Published is one hostname a sandbox port is served on.
 type Published struct {
-	SandboxID  string
+	SandboxID string
+	// TenantID owns the hostname. The ingress reads it to match a viewer
+	// session to the preview.
+	TenantID   string
 	GuestPort  int
 	Subdomain  string
 	Visibility string
@@ -180,5 +183,42 @@ type Store interface {
 	RetirePublished(ctx context.Context, sandboxID string, port int) error
 	// DeletePublishedForSandbox removes every hostname of one sandbox.
 	DeletePublishedForSandbox(ctx context.Context, sandboxID string) error
+
+	// CreateTenant inserts one tenant with its caps. A duplicate id is
+	// ErrConflict.
+	CreateTenant(ctx context.Context, t Tenant) error
+	GetTenant(ctx context.Context, id string) (Tenant, error)
+	ListTenants(ctx context.Context) ([]Tenant, error)
+	// SetTenantCaps replaces the caps of one tenant. A zero cap is no limit.
+	SetTenantCaps(ctx context.Context, id string, caps Caps) error
+	// DeleteTenant removes a tenant that owns no template and no live
+	// sandbox. Anything left is ErrConflict.
+	DeleteTenant(ctx context.Context, id string) error
+	// TenantUsage counts what one tenant holds now.
+	TenantUsage(ctx context.Context, id string) (Usage, error)
 	Close() error
+}
+
+// Tenant owns the rows one caller reaches. A self-hosted install runs the
+// DefaultTenant and never creates another.
+type Tenant struct {
+	ID        string
+	Name      string
+	Caps      Caps
+	CreatedAt time.Time
+}
+
+// Caps bound what one tenant holds on the host. A zero value is no limit.
+type Caps struct {
+	MaxSandboxes     int
+	MaxTemplates     int
+	MaxSnapshotBytes int64
+}
+
+// Usage is what one tenant holds now. The host compares it with Caps before
+// it admits a template, a sandbox or a snapshot.
+type Usage struct {
+	Sandboxes     int
+	Templates     int
+	SnapshotBytes int64
 }

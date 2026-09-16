@@ -418,15 +418,15 @@ func TestTemplateDependentsCountsChildren(t *testing.T) {
 		t.Fatal(err)
 	}
 	insert := `INSERT INTO sandboxes (
-		id, template_name, lifecycle, state, idle_seconds, last_active_at, metadata, created_at, destroyed_at
-	) VALUES (?, 'py312', 'ephemeral', 'running', 60, 0, '{}', 0, ?)`
+		id, tenant_id, template_name, lifecycle, state, idle_seconds, last_active_at, metadata, created_at, destroyed_at
+	) VALUES (?, 'default', 'py312', 'ephemeral', 'running', 60, 0, '{}', 0, ?)`
 	if _, err := sq.db.ExecContext(ctx, insert, "live", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := sq.db.ExecContext(ctx, insert, "dead", 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sq.db.ExecContext(ctx, `INSERT INTO snapshots (id, template_name, size_bytes, created_at) VALUES ('snap', 'py312', 0, 0)`); err != nil {
+	if _, err := sq.db.ExecContext(ctx, `INSERT INTO snapshots (id, tenant_id, template_name, size_bytes, created_at) VALUES ('snap', 'default', 'py312', 0, 0)`); err != nil {
 		t.Fatal(err)
 	}
 	live, snapshots, err := s.TemplateDependents(ctx, "py312")
@@ -542,5 +542,68 @@ func TestRetiredHostnameIsNeverReused(t *testing.T) {
 	})
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("reusing a destroyed sandbox hostname: %v, want ErrConflict", err)
+	}
+}
+
+// Tenant isolation is the whole point of the column: one tenant's call must
+// never see another tenant's rows, and two tenants may use one template name.
+func TestTenantIsolation(t *testing.T) {
+	s, _ := openTest(t)
+	base := context.Background()
+	for _, id := range []string{"a", "b"} {
+		if err := s.CreateTenant(base, Tenant{ID: id, Name: id, CreatedAt: time.Unix(1700000000, 0).UTC()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := WithTenant(base, "a")
+	b := WithTenant(base, "b")
+	if err := s.CreateTemplate(a, sample("py312")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateTemplate(b, sample("py312")); err != nil {
+		t.Fatalf("two tenants cannot hold one template name: %v", err)
+	}
+	if err := s.SetTemplateState(a, "py312", TemplateReady, ""); err != nil {
+		t.Fatal(err)
+	}
+	other, err := s.GetTemplate(b, "py312")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.State == TemplateReady {
+		t.Fatal("a write by tenant a changed the row of tenant b")
+	}
+
+	sb := sandboxRow("a-one")
+	if _, err := s.CreateSandbox(a, sb); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetSandbox(b, "a-one"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("tenant b read tenant a's sandbox: %v", err)
+	}
+	if err := s.DestroySandbox(b, "a-one", time.Unix(1700000001, 0).UTC()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("tenant b destroyed tenant a's sandbox: %v", err)
+	}
+	list, err := s.ListSandboxes(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("tenant b lists %d sandboxes of tenant a", len(list))
+	}
+	// The operator has no tenant and reaches every row.
+	all, err := s.ListSandboxes(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("the operator lists %d sandboxes, want 1", len(all))
+	}
+	usage, err := s.TenantUsage(base, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.Sandboxes != 1 || usage.Templates != 1 {
+		t.Fatalf("usage %+v, want one sandbox and one template", usage)
 	}
 }

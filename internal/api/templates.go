@@ -58,6 +58,10 @@ func templateJSON(info template.Info) templateResponse {
 
 // createTemplate starts a build and returns before it runs.
 func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
+	if err := s.admit(r.Context(), wantTemplate); err != nil {
+		s.writeErr(w, err)
+		return
+	}
 	var req createTemplateRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalid, err.Error())

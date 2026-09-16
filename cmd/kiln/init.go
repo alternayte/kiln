@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alternayte/kiln/internal/hostca"
 	"github.com/alternayte/kiln/internal/ingress"
 	"github.com/alternayte/kiln/internal/network"
 	"github.com/alternayte/kiln/internal/store"
@@ -28,12 +29,19 @@ const defaultRoot = "/var/lib/kiln"
 
 // configFile is the on-disk config. Later phases add fields.
 type configFile struct {
-	BearerToken string            `json:"bearer_token"`
-	ControlAddr string            `json:"control_addr"`
-	IngressAddr string            `json:"ingress_addr"`
-	Zone        string            `json:"zone,omitempty"`
-	ACME        acmeSettings      `json:"acme"`
-	Secrets     map[string]string `json:"secrets,omitempty"`
+	BearerToken string `json:"bearer_token"`
+	ControlAddr string `json:"control_addr"`
+	IngressAddr string `json:"ingress_addr"`
+	// GatewayAddr is the mTLS listener a gateway dials. An empty value keeps
+	// the host private to its control listener.
+	GatewayAddr string `json:"gateway_addr,omitempty"`
+	// GatewayNames are the hostnames and addresses a gateway dials. They go
+	// into the listener's certificate, so a gateway can verify the host it
+	// reaches. An empty list takes the host part of GatewayAddr.
+	GatewayNames []string          `json:"gateway_names,omitempty"`
+	Zone         string            `json:"zone,omitempty"`
+	ACME         acmeSettings      `json:"acme"`
+	Secrets      map[string]string `json:"secrets,omitempty"`
 }
 
 // acmeSettings is the certificate part of the config. v1 imports the
@@ -113,6 +121,11 @@ func cmdInit(args []string) error {
 	if err := st.Close(); err != nil {
 		return err
 	}
+	// The CA signs the certificate of every gateway. A second init keeps the
+	// CA a gateway already trusts.
+	if err := hostca.New(root).Ensure(); err != nil {
+		return err
+	}
 
 	cfgPath := filepath.Join(root, "config.json")
 	cfg, err := writeConfig(cfgPath, *zone, *email)
@@ -129,6 +142,7 @@ func cmdInit(args []string) error {
 	fmt.Printf("kilninit -> %s\n", kilninitPath)
 	fmt.Printf("nftables base -> table inet kiln\n")
 	fmt.Printf("database -> %s\n", filepath.Join(root, "kiln.db"))
+	fmt.Printf("gateway CA -> %s\n", filepath.Join(root, hostca.Dir))
 	if cfg.Zone != "" {
 		fmt.Printf("preview zone -> %s\n", cfg.Zone)
 	}

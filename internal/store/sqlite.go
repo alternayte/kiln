@@ -80,6 +80,12 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		if err != nil {
 			return err
 		}
+		// A migration that rebuilds a table drops a table other tables
+		// reference. The pragma is a no-op inside a transaction, so it goes
+		// here, and foreign_key_check below proves the result is sound.
+		if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+			return fmt.Errorf("store: migration %s: %w", name, err)
+		}
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
@@ -96,6 +102,18 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("store: migration %s: %w", name, err)
 		}
+		if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys=ON`); err != nil {
+			return fmt.Errorf("store: migration %s: %w", name, err)
+		}
+		var orphan string
+		err = db.QueryRowContext(ctx, `SELECT "table" FROM pragma_foreign_key_check LIMIT 1`).Scan(&orphan)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			return fmt.Errorf("store: migration %s: foreign key check: %w", name, err)
+		default:
+			return fmt.Errorf("store: migration %s: %s holds a row with no parent", name, orphan)
+		}
 	}
 	return nil
 }
@@ -106,10 +124,10 @@ func (s *sqliteStore) CreateTemplate(ctx context.Context, t Template) error {
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO templates (
-		name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
+		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
 		egress_allow, state, error, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.Name, t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		tenantOf(ctx), t.Name, t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
 		encoded, t.State, nullString(t.Error), t.CreatedAt.Unix(),
 	)
 	return err
@@ -128,14 +146,15 @@ func (s *sqliteStore) StartTemplateBuild(ctx context.Context, t Template) error 
 	}
 	defer tx.Rollback()
 	var state string
-	err = tx.QueryRowContext(ctx, `SELECT state FROM templates WHERE name = ?`, t.Name).Scan(&state)
+	err = tx.QueryRowContext(ctx,
+		`SELECT state FROM templates WHERE tenant_id = ? AND name = ?`, tenantOf(ctx), t.Name).Scan(&state)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if _, err := tx.ExecContext(ctx, `INSERT INTO templates (
-			name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
+			tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
 			egress_allow, state, error, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			t.Name, t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			tenantOf(ctx), t.Name, t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
 			encoded, t.State, nullString(t.Error), t.CreatedAt.Unix(),
 		); err != nil {
 			return err
@@ -148,9 +167,9 @@ func (s *sqliteStore) StartTemplateBuild(ctx context.Context, t Template) error 
 		if _, err := tx.ExecContext(ctx, `UPDATE templates SET
 			image_ref = ?, image_digest = ?, vcpus = ?, memory_mb = ?, disk_mb = ?,
 			egress_allow = ?, state = ?, error = NULL, created_at = ?
-		WHERE name = ?`,
+		WHERE tenant_id = ? AND name = ?`,
 			t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
-			encoded, t.State, t.CreatedAt.Unix(), t.Name,
+			encoded, t.State, t.CreatedAt.Unix(), tenantOf(ctx), t.Name,
 		); err != nil {
 			return err
 		}
@@ -159,7 +178,9 @@ func (s *sqliteStore) StartTemplateBuild(ctx context.Context, t Template) error 
 }
 
 func (s *sqliteStore) SetTemplateDigest(ctx context.Context, name, digest string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE templates SET image_digest = ? WHERE name = ?`, digest, name)
+	clause, args := scope(ctx, "tenant_id")
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE templates SET image_digest = ? WHERE name = ?`+clause, append([]any{digest, name}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -174,9 +195,10 @@ func (s *sqliteStore) SetTemplateDigest(ctx context.Context, name, digest string
 }
 
 func (s *sqliteStore) SetTemplateState(ctx context.Context, name, state, message string) error {
+	clause, args := scope(ctx, "tenant_id")
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE templates SET state = ?, error = ? WHERE name = ?`,
-		state, nullString(message), name)
+		`UPDATE templates SET state = ?, error = ? WHERE name = ?`+clause,
+		append([]any{state, nullString(message), name}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -191,10 +213,11 @@ func (s *sqliteStore) SetTemplateState(ctx context.Context, name, state, message
 }
 
 func (s *sqliteStore) GetTemplate(ctx context.Context, name string) (Template, error) {
+	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT
 		name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
 		egress_allow, state, error, created_at
-	FROM templates WHERE name = ?`, name)
+	FROM templates WHERE name = ?`+clause, append([]any{name}, args...)...)
 	t, err := scanTemplate(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Template{}, ErrNotFound
@@ -203,10 +226,11 @@ func (s *sqliteStore) GetTemplate(ctx context.Context, name string) (Template, e
 }
 
 func (s *sqliteStore) ListTemplates(ctx context.Context) ([]Template, error) {
+	clause, args := scope(ctx, "tenant_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
 		egress_allow, state, error, created_at
-	FROM templates ORDER BY name`)
+	FROM templates WHERE 1 = 1`+clause+` ORDER BY name`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -233,9 +257,10 @@ func (s *sqliteStore) DeleteTemplate(ctx context.Context, name string) error {
 	defer tx.Rollback()
 	// Published rows reference the sandbox rows, so they go first. Every
 	// hostname leaves a tombstone, because a retired hostname is never reused.
+	clause, args := scope(ctx, "tenant_id")
 	rows, err := tx.QueryContext(ctx, `SELECT subdomain FROM published WHERE sandbox_id IN (
-		SELECT id FROM sandboxes WHERE template_name = ? AND destroyed_at IS NOT NULL
-	)`, name)
+		SELECT id FROM sandboxes WHERE template_name = ? AND destroyed_at IS NOT NULL`+clause+`
+	)`, append([]any{name}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -253,19 +278,20 @@ func (s *sqliteStore) DeleteTemplate(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	if err := retireHostnames(ctx, tx, subdomains...); err != nil {
+	if err := retireHostnames(ctx, tx, tenantOf(ctx), subdomains...); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM published WHERE sandbox_id IN (
-		SELECT id FROM sandboxes WHERE template_name = ? AND destroyed_at IS NOT NULL
-	)`, name); err != nil {
+		SELECT id FROM sandboxes WHERE template_name = ? AND destroyed_at IS NOT NULL`+clause+`
+	)`, append([]any{name}, args...)...); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM sandboxes WHERE template_name = ? AND destroyed_at IS NOT NULL`, name); err != nil {
+		`DELETE FROM sandboxes WHERE template_name = ? AND destroyed_at IS NOT NULL`+clause,
+		append([]any{name}, args...)...); err != nil {
 		return err
 	}
-	res, err := tx.ExecContext(ctx, `DELETE FROM templates WHERE name = ?`, name)
+	res, err := tx.ExecContext(ctx, `DELETE FROM templates WHERE name = ?`+clause, append([]any{name}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -283,13 +309,15 @@ func (s *sqliteStore) DeleteTemplate(ctx context.Context, name string) error {
 // and snapshots tables arrive in later phases; a table that does not exist yet
 // holds nothing.
 func (s *sqliteStore) TemplateDependents(ctx context.Context, name string) (int, int, error) {
+	clause, args := scope(ctx, "tenant_id")
 	live, err := s.countWhere(ctx, "sandboxes",
-		`SELECT count(*) FROM sandboxes WHERE template_name = ? AND destroyed_at IS NULL`, name)
+		`SELECT count(*) FROM sandboxes WHERE template_name = ? AND destroyed_at IS NULL`+clause,
+		append([]any{name}, args...)...)
 	if err != nil {
 		return 0, 0, err
 	}
 	snapshots, err := s.countWhere(ctx, "snapshots",
-		`SELECT count(*) FROM snapshots WHERE template_name = ?`, name)
+		`SELECT count(*) FROM snapshots WHERE template_name = ?`+clause, append([]any{name}, args...)...)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -326,9 +354,9 @@ func encodeEgress(egress []string) (string, error) {
 
 func (s *sqliteStore) AppendEvent(ctx context.Context, e Event) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO events (
-		sandbox_id, from_state, to_state, reason, at
-	) VALUES (?, ?, ?, ?, ?)`,
-		nullString(e.SandboxID), nullString(e.FromState), nullString(e.ToState), nullString(e.Reason), e.At.Unix())
+		tenant_id, sandbox_id, from_state, to_state, reason, at
+	) VALUES (?, ?, ?, ?, ?, ?)`,
+		tenantOf(ctx), nullString(e.SandboxID), nullString(e.FromState), nullString(e.ToState), nullString(e.Reason), e.At.Unix())
 	return err
 }
 
@@ -341,20 +369,26 @@ func (s *sqliteStore) ListEvents(ctx context.Context, sandboxID string) ([]Event
 		query += ` WHERE sandbox_id = ?`
 		args = append(args, sandboxID)
 	}
-	query += ` ORDER BY id`
+	clause, tenantArgs := scope(ctx, "tenant_id")
+	query += clause + ` ORDER BY id`
+	args = append(args, tenantArgs...)
 	return s.queryEvents(ctx, query, args...)
 }
 
 // ListEventsSince returns every event after one id, oldest first.
 func (s *sqliteStore) ListEventsSince(ctx context.Context, afterID int64) ([]Event, error) {
+	clause, args := scope(ctx, "tenant_id")
 	return s.queryEvents(ctx,
-		`SELECT id, sandbox_id, from_state, to_state, reason, at FROM events WHERE id > ? ORDER BY id`, afterID)
+		`SELECT id, sandbox_id, from_state, to_state, reason, at FROM events WHERE id > ?`+clause+` ORDER BY id`,
+		append([]any{afterID}, args...)...)
 }
 
 // LastEventID returns the newest event id, or zero when the table is empty.
 func (s *sqliteStore) LastEventID(ctx context.Context) (int64, error) {
 	var id int64
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(max(id), 0) FROM events`).Scan(&id); err != nil {
+	clause, args := scope(ctx, "tenant_id")
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(max(id), 0) FROM events WHERE 1 = 1`+clause, args...).Scan(&id); err != nil {
 		return 0, err
 	}
 	return id, nil
@@ -476,10 +510,10 @@ func (s *sqliteStore) CreateSandbox(ctx context.Context, sb Sandbox) (Sandbox, e
 		cid = &next
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO sandboxes (
-		id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
+		id, tenant_id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
 		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, secret_bearing
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sb.ID, sb.TemplateName, nullString(sb.SnapshotID), sb.Lifecycle, sb.State,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sb.ID, tenantOf(ctx), sb.TemplateName, nullString(sb.SnapshotID), sb.Lifecycle, sb.State,
 		nullIntPtr(sb.TTLSeconds), sb.IdleSeconds, sb.LastActiveAt.Unix(),
 		nullString(sb.TapName), nullIntPtr(cid), nullInt(sb.PID), sb.Metadata, sb.CreatedAt.Unix(),
 		boolInt(sb.SecretBearing),
@@ -505,10 +539,11 @@ func allocateCID(used map[int]bool, max int) (int, error) {
 }
 
 func (s *sqliteStore) GetSandbox(ctx context.Context, id string) (Sandbox, error) {
+	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT
 		id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
 		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing
-	FROM sandboxes WHERE id = ?`, id)
+	FROM sandboxes WHERE id = ?`+clause, append([]any{id}, args...)...)
 	sb, err := scanSandbox(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Sandbox{}, ErrNotFound
@@ -517,10 +552,11 @@ func (s *sqliteStore) GetSandbox(ctx context.Context, id string) (Sandbox, error
 }
 
 func (s *sqliteStore) ListSandboxes(ctx context.Context) ([]Sandbox, error) {
+	clause, args := scope(ctx, "tenant_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
 		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing
-	FROM sandboxes ORDER BY created_at, id`)
+	FROM sandboxes WHERE 1 = 1`+clause+` ORDER BY created_at, id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -537,7 +573,9 @@ func (s *sqliteStore) ListSandboxes(ctx context.Context) ([]Sandbox, error) {
 }
 
 func (s *sqliteStore) SetSandboxState(ctx context.Context, id, state string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE sandboxes SET state = ? WHERE id = ?`, state, id)
+	clause, args := scope(ctx, "tenant_id")
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE sandboxes SET state = ? WHERE id = ?`+clause, append([]any{state, id}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -552,9 +590,10 @@ func (s *sqliteStore) SetSandboxState(ctx context.Context, id, state string) err
 }
 
 func (s *sqliteStore) SetSandboxRuntime(ctx context.Context, id, tapName string, vsockCID *int, pid int) error {
+	clause, args := scope(ctx, "tenant_id")
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE sandboxes SET tap_name = ?, vsock_cid = ?, pid = ? WHERE id = ?`,
-		nullString(tapName), nullIntPtr(vsockCID), nullInt(pid), id)
+		`UPDATE sandboxes SET tap_name = ?, vsock_cid = ?, pid = ? WHERE id = ?`+clause,
+		append([]any{nullString(tapName), nullIntPtr(vsockCID), nullInt(pid), id}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -569,14 +608,17 @@ func (s *sqliteStore) SetSandboxRuntime(ctx context.Context, id, tapName string,
 }
 
 func (s *sqliteStore) TouchSandbox(ctx context.Context, id string, at time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE sandboxes SET last_active_at = ? WHERE id = ?`, at.Unix(), id)
+	clause, args := scope(ctx, "tenant_id")
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE sandboxes SET last_active_at = ? WHERE id = ?`+clause, append([]any{at.Unix(), id}, args...)...)
 	return err
 }
 
 func (s *sqliteStore) DestroySandbox(ctx context.Context, id string, at time.Time) error {
+	clause, args := scope(ctx, "tenant_id")
 	res, err := s.db.ExecContext(ctx, `UPDATE sandboxes SET
 		state = ?, destroyed_at = COALESCE(destroyed_at, ?), pid = NULL
-	WHERE id = ?`, SandboxDestroyed, at.Unix(), id)
+	WHERE id = ?`+clause, append([]any{SandboxDestroyed, at.Unix(), id}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -644,20 +686,21 @@ func boolInt(v bool) int {
 
 func (s *sqliteStore) CreateSnapshot(ctx context.Context, sn Snapshot) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO snapshots (
-		id, template_name, parent_id, size_bytes, created_at,
+		id, tenant_id, template_name, parent_id, size_bytes, created_at,
 		secret_bearing, listed, origin_sandbox_id
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		sn.ID, sn.TemplateName, nullString(sn.ParentID), sn.SizeBytes, sn.CreatedAt.Unix(),
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sn.ID, tenantOf(ctx), sn.TemplateName, nullString(sn.ParentID), sn.SizeBytes, sn.CreatedAt.Unix(),
 		boolInt(sn.SecretBearing), boolInt(sn.Listed), nullString(sn.OriginSandboxID),
 	)
 	return err
 }
 
 func (s *sqliteStore) GetSnapshot(ctx context.Context, id string) (Snapshot, error) {
+	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT
 		id, template_name, parent_id, size_bytes, created_at,
 		secret_bearing, listed, origin_sandbox_id
-	FROM snapshots WHERE id = ?`, id)
+	FROM snapshots WHERE id = ?`+clause, append([]any{id}, args...)...)
 	sn, err := scanSnapshot(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Snapshot{}, ErrNotFound
@@ -666,10 +709,11 @@ func (s *sqliteStore) GetSnapshot(ctx context.Context, id string) (Snapshot, err
 }
 
 func (s *sqliteStore) ListSnapshots(ctx context.Context) ([]Snapshot, error) {
+	clause, args := scope(ctx, "tenant_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, template_name, parent_id, size_bytes, created_at,
 		secret_bearing, listed, origin_sandbox_id
-	FROM snapshots WHERE listed = 1 ORDER BY created_at, id`)
+	FROM snapshots WHERE listed = 1`+clause+` ORDER BY created_at, id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -694,15 +738,20 @@ func (s *sqliteStore) DeleteSnapshot(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE sandboxes SET snapshot_id = NULL WHERE snapshot_id = ?`, id); err != nil {
+	clause, args := scope(ctx, "tenant_id")
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE sandboxes SET snapshot_id = NULL WHERE snapshot_id = ?`+clause,
+		append([]any{id}, args...)...); err != nil {
 		return err
 	}
 	// parent_id is lineage only: a child snapshot holds its own files, so it
 	// outlives its parent.
-	if _, err := tx.ExecContext(ctx, `UPDATE snapshots SET parent_id = NULL WHERE parent_id = ?`, id); err != nil {
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE snapshots SET parent_id = NULL WHERE parent_id = ?`+clause,
+		append([]any{id}, args...)...); err != nil {
 		return err
 	}
-	res, err := tx.ExecContext(ctx, `DELETE FROM snapshots WHERE id = ?`, id)
+	res, err := tx.ExecContext(ctx, `DELETE FROM snapshots WHERE id = ?`+clause, append([]any{id}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -717,8 +766,10 @@ func (s *sqliteStore) DeleteSnapshot(ctx context.Context, id string) error {
 }
 
 func (s *sqliteStore) CountRestoredChildren(ctx context.Context, snapshotID string) (int, error) {
+	clause, args := scope(ctx, "tenant_id")
 	return s.countWhere(ctx, "sandboxes",
-		`SELECT count(*) FROM sandboxes WHERE snapshot_id = ? AND destroyed_at IS NULL`, snapshotID)
+		`SELECT count(*) FROM sandboxes WHERE snapshot_id = ? AND destroyed_at IS NULL`+clause,
+		append([]any{snapshotID}, args...)...)
 }
 
 func (s *sqliteStore) PublishSandbox(ctx context.Context, p Published) error {
@@ -736,9 +787,9 @@ func (s *sqliteStore) PublishSandbox(ctx context.Context, p Published) error {
 		return ErrConflict
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO published (
-		sandbox_id, guest_port, subdomain, visibility, created_at
-	) VALUES (?, ?, ?, ?, ?)`,
-		p.SandboxID, p.GuestPort, p.Subdomain, p.Visibility, p.CreatedAt.Unix()); err != nil {
+		sandbox_id, tenant_id, guest_port, subdomain, visibility, created_at
+	) VALUES (?, ?, ?, ?, ?, ?)`,
+		p.SandboxID, tenantOf(ctx), p.GuestPort, p.Subdomain, p.Visibility, p.CreatedAt.Unix()); err != nil {
 		if isUniqueViolation(err) {
 			return ErrConflict
 		}
@@ -748,9 +799,10 @@ func (s *sqliteStore) PublishSandbox(ctx context.Context, p Published) error {
 }
 
 func (s *sqliteStore) GetPublished(ctx context.Context, sandboxID string, port int) (Published, error) {
+	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT
-		sandbox_id, guest_port, subdomain, visibility, created_at
-	FROM published WHERE sandbox_id = ? AND guest_port = ?`, sandboxID, port)
+		sandbox_id, tenant_id, guest_port, subdomain, visibility, created_at
+	FROM published WHERE sandbox_id = ? AND guest_port = ?`+clause, append([]any{sandboxID, port}, args...)...)
 	p, err := scanPublished(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Published{}, ErrNotFound
@@ -759,9 +811,11 @@ func (s *sqliteStore) GetPublished(ctx context.Context, sandboxID string, port i
 }
 
 func (s *sqliteStore) ListPublished(ctx context.Context, sandboxID string) ([]Published, error) {
+	clause, args := scope(ctx, "tenant_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT
-		sandbox_id, guest_port, subdomain, visibility, created_at
-	FROM published WHERE sandbox_id = ? ORDER BY created_at, guest_port`, sandboxID)
+		sandbox_id, tenant_id, guest_port, subdomain, visibility, created_at
+	FROM published WHERE sandbox_id = ?`+clause+` ORDER BY created_at, guest_port`,
+		append([]any{sandboxID}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -779,7 +833,7 @@ func (s *sqliteStore) ListPublished(ctx context.Context, sandboxID string) ([]Pu
 
 func (s *sqliteStore) PublishedBySubdomain(ctx context.Context, subdomain string) (Published, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT
-		sandbox_id, guest_port, subdomain, visibility, created_at
+		sandbox_id, tenant_id, guest_port, subdomain, visibility, created_at
 	FROM published WHERE subdomain = ?`, subdomain)
 	p, err := scanPublished(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -794,20 +848,23 @@ func (s *sqliteStore) RetirePublished(ctx context.Context, sandboxID string, por
 		return err
 	}
 	defer tx.Rollback()
+	clause, args := scope(ctx, "tenant_id")
 	var subdomain string
 	err = tx.QueryRowContext(ctx,
-		`SELECT subdomain FROM published WHERE sandbox_id = ? AND guest_port = ?`, sandboxID, port).Scan(&subdomain)
+		`SELECT subdomain FROM published WHERE sandbox_id = ? AND guest_port = ?`+clause,
+		append([]any{sandboxID, port}, args...)...).Scan(&subdomain)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if err := retireHostnames(ctx, tx, subdomain); err != nil {
+	if err := retireHostnames(ctx, tx, tenantOf(ctx), subdomain); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM published WHERE sandbox_id = ? AND guest_port = ?`, sandboxID, port); err != nil {
+		`DELETE FROM published WHERE sandbox_id = ? AND guest_port = ?`+clause,
+		append([]any{sandboxID, port}, args...)...); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -819,7 +876,9 @@ func (s *sqliteStore) DeletePublishedForSandbox(ctx context.Context, sandboxID s
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT subdomain FROM published WHERE sandbox_id = ?`, sandboxID)
+	clause, args := scope(ctx, "tenant_id")
+	rows, err := tx.QueryContext(ctx,
+		`SELECT subdomain FROM published WHERE sandbox_id = ?`+clause, append([]any{sandboxID}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -838,11 +897,12 @@ func (s *sqliteStore) DeletePublishedForSandbox(ctx context.Context, sandboxID s
 		return err
 	}
 	for _, subdomain := range subdomains {
-		if err := retireHostnames(ctx, tx, subdomain); err != nil {
+		if err := retireHostnames(ctx, tx, tenantOf(ctx), subdomain); err != nil {
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM published WHERE sandbox_id = ?`, sandboxID); err != nil {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM published WHERE sandbox_id = ?`+clause, append([]any{sandboxID}, args...)...); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -850,11 +910,11 @@ func (s *sqliteStore) DeletePublishedForSandbox(ctx context.Context, sandboxID s
 
 // retireHostnames writes the tombstones that make each hostname unreusable.
 // Retiring an already retired hostname is not an error.
-func retireHostnames(ctx context.Context, tx *sql.Tx, subdomains ...string) error {
+func retireHostnames(ctx context.Context, tx *sql.Tx, tenant string, subdomains ...string) error {
 	for _, subdomain := range subdomains {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO retired_hostnames (subdomain, retired_at) VALUES (?, ?)
-			 ON CONFLICT(subdomain) DO NOTHING`, subdomain, time.Now().Unix()); err != nil {
+			`INSERT INTO retired_hostnames (subdomain, tenant_id, retired_at) VALUES (?, ?, ?)
+			 ON CONFLICT(subdomain) DO NOTHING`, subdomain, tenant, time.Now().Unix()); err != nil {
 			return err
 		}
 	}
@@ -879,7 +939,7 @@ func scanPublished(row scanner) (Published, error) {
 		p       Published
 		created int64
 	)
-	if err := row.Scan(&p.SandboxID, &p.GuestPort, &p.Subdomain, &p.Visibility, &created); err != nil {
+	if err := row.Scan(&p.SandboxID, &p.TenantID, &p.GuestPort, &p.Subdomain, &p.Visibility, &created); err != nil {
 		return Published{}, err
 	}
 	p.CreatedAt = time.Unix(created, 0).UTC()
@@ -907,4 +967,116 @@ func scanSnapshot(row sandboxScanner) (Snapshot, error) {
 	sn.Listed = listed != 0
 	sn.OriginSandboxID = origin.String
 	return sn, nil
+}
+
+func (s *sqliteStore) CreateTenant(ctx context.Context, t Tenant) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO tenants (
+		id, name, max_sandboxes, max_templates, max_snapshot_bytes, created_at
+	) VALUES (?, ?, ?, ?, ?, ?)`,
+		t.ID, t.Name, t.Caps.MaxSandboxes, t.Caps.MaxTemplates, t.Caps.MaxSnapshotBytes, t.CreatedAt.Unix())
+	if err != nil && isUniqueViolation(err) {
+		return ErrConflict
+	}
+	return err
+}
+
+func (s *sqliteStore) GetTenant(ctx context.Context, id string) (Tenant, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT
+		id, name, max_sandboxes, max_templates, max_snapshot_bytes, created_at
+	FROM tenants WHERE id = ?`, id)
+	t, err := scanTenant(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Tenant{}, ErrNotFound
+	}
+	return t, err
+}
+
+func (s *sqliteStore) ListTenants(ctx context.Context) ([]Tenant, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT
+		id, name, max_sandboxes, max_templates, max_snapshot_bytes, created_at
+	FROM tenants ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Tenant
+	for rows.Next() {
+		t, err := scanTenant(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) SetTenantCaps(ctx context.Context, id string, caps Caps) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE tenants SET
+		max_sandboxes = ?, max_templates = ?, max_snapshot_bytes = ?
+	WHERE id = ?`, caps.MaxSandboxes, caps.MaxTemplates, caps.MaxSnapshotBytes, id)
+	if err != nil {
+		return err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteTenant refuses while the tenant still owns anything, because the rows
+// name host files that only a destroy removes.
+func (s *sqliteStore) DeleteTenant(ctx context.Context, id string) error {
+	usage, err := s.TenantUsage(ctx, id)
+	if err != nil {
+		return err
+	}
+	if usage.Sandboxes > 0 || usage.Templates > 0 {
+		return ErrConflict
+	}
+	res, err := s.db.ExecContext(ctx, `DELETE FROM tenants WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *sqliteStore) TenantUsage(ctx context.Context, id string) (Usage, error) {
+	var u Usage
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM sandboxes WHERE tenant_id = ? AND destroyed_at IS NULL`, id).Scan(&u.Sandboxes); err != nil {
+		return Usage{}, err
+	}
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM templates WHERE tenant_id = ?`, id).Scan(&u.Templates); err != nil {
+		return Usage{}, err
+	}
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(sum(size_bytes), 0) FROM snapshots WHERE tenant_id = ?`, id).Scan(&u.SnapshotBytes); err != nil {
+		return Usage{}, err
+	}
+	return u, nil
+}
+
+func scanTenant(row scanner) (Tenant, error) {
+	var (
+		t       Tenant
+		created int64
+	)
+	if err := row.Scan(&t.ID, &t.Name, &t.Caps.MaxSandboxes, &t.Caps.MaxTemplates,
+		&t.Caps.MaxSnapshotBytes, &created); err != nil {
+		return Tenant{}, err
+	}
+	t.CreatedAt = time.Unix(created, 0).UTC()
+	return t, nil
 }

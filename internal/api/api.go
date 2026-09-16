@@ -63,6 +63,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/sandboxes/{id}/publish/{port}", s.unpublishSandbox)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/files/{path...}", s.getSandboxFile)
 	mux.HandleFunc("PUT /v1/sandboxes/{id}/files/{path...}", s.putSandboxFile)
+	mux.HandleFunc("POST /v1/tenants", s.createTenant)
+	mux.HandleFunc("GET /v1/tenants", s.listTenants)
+	mux.HandleFunc("GET /v1/tenants/{id}", s.getTenant)
+	mux.HandleFunc("PUT /v1/tenants/{id}/caps", s.setTenantCaps)
+	mux.HandleFunc("DELETE /v1/tenants/{id}", s.deleteTenant)
 	mux.HandleFunc("GET /v1/snapshots", s.listSnapshots)
 	mux.HandleFunc("GET /v1/snapshots/{id}", s.getSnapshot)
 	mux.HandleFunc("DELETE /v1/snapshots/{id}", s.deleteSnapshot)
@@ -91,7 +96,14 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, CodeInvalid, "missing or invalid bearer token")
 			return
 		}
-		next.ServeHTTP(w, r)
+		// Every handler below reads the request context, so the scope is
+		// set once here and no query can forget it.
+		ctx, err := s.tenant(r)
+		if err != nil {
+			s.writeErr(w, err)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

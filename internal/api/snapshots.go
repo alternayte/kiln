@@ -73,6 +73,10 @@ func (s *Server) createSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalid, err.Error())
 		return
 	}
+	if err := s.admit(r.Context(), wantSnapshot); err != nil {
+		s.writeErr(w, err)
+		return
+	}
 	snap, err := s.Sandboxes.Snapshot(r.Context(), r.PathValue("id"), req.Stop)
 	if err != nil {
 		s.writeErr(w, err)
@@ -89,6 +93,10 @@ func (s *Server) forkSandbox(w http.ResponseWriter, r *http.Request) {
 	var req copyRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalid, err.Error())
+		return
+	}
+	if err := s.admitCount(r.Context(), req.Count); err != nil {
+		s.writeErr(w, err)
 		return
 	}
 	copies, err := s.Sandboxes.Fork(r.Context(), r.PathValue("id"), req.Count, req.AllowSecretFork)
@@ -137,6 +145,10 @@ func (s *Server) restoreSnapshot(w http.ResponseWriter, r *http.Request) {
 	var req copyRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalid, err.Error())
+		return
+	}
+	if err := s.admitCount(r.Context(), req.Count); err != nil {
+		s.writeErr(w, err)
 		return
 	}
 	copies, err := s.Sandboxes.RestoreSnapshot(r.Context(), r.PathValue("id"), req.Count, req.AllowSecretFork)

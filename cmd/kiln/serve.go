@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	authall "github.com/alternayte/auth-all"
 
 	"github.com/alternayte/kiln/internal/api"
+	"github.com/alternayte/kiln/internal/hostca"
 	"github.com/alternayte/kiln/internal/ingress"
 	"github.com/alternayte/kiln/internal/network"
 	"github.com/alternayte/kiln/internal/reconcile"
@@ -107,17 +109,45 @@ func cmdServe() error {
 	}
 	go reconciler.Run(ctx)
 
+	handler := (&api.Server{
+		Store:              st,
+		Templates:          mgr,
+		Sandboxes:          sbx,
+		Token:              cfg.BearerToken,
+		FirecrackerVersion: firecrackerVersion,
+		Root:               root,
+		Base:               ctx,
+	}).Handler()
+
+	// The gateway listener is the only way in from another machine, and it
+	// demands a client certificate this host signed.
+	if cfg.GatewayAddr != "" {
+		names := cfg.GatewayNames
+		if len(names) == 0 {
+			if host := hostnameOf(cfg.GatewayAddr); host != "" {
+				names = []string{host}
+			}
+		}
+		if len(names) == 0 {
+			return fmt.Errorf("serve: gateway_addr %s binds every address, so config.json needs gateway_names with the hostname or IP a gateway dials", cfg.GatewayAddr)
+		}
+		tlsConfig, err := hostca.New(root).ServerTLS(names...)
+		if err != nil {
+			return fmt.Errorf("serve: gateway listener: %w", err)
+		}
+		gateway := &http.Server{Addr: cfg.GatewayAddr, Handler: handler, TLSConfig: tlsConfig}
+		go func() {
+			fmt.Printf("kiln serve: gateway on %s (mTLS)\n", cfg.GatewayAddr)
+			if err := gateway.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("serve: gateway listener: %v", err)
+			}
+		}()
+		defer gateway.Close()
+	}
+
 	srv := &http.Server{
-		Addr: cfg.ControlAddr,
-		Handler: (&api.Server{
-			Store:              st,
-			Templates:          mgr,
-			Sandboxes:          sbx,
-			Token:              cfg.BearerToken,
-			FirecrackerVersion: firecrackerVersion,
-			Root:               root,
-			Base:               ctx,
-		}).Handler(),
+		Addr:              cfg.ControlAddr,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	ln, err := net.Listen("tcp", cfg.ControlAddr)
@@ -204,4 +234,18 @@ func readConfig(path string) (configFile, error) {
 		return configFile{}, fmt.Errorf("serve: %s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+// hostnameOf returns the host part of a listen address, so the certificate
+// names what a gateway dials. A bare port answers for every name the CA
+// signed, and the gateway verifies the CA, not the name.
+func hostnameOf(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		return ""
+	}
+	return host
 }

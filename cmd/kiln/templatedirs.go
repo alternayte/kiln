@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,39 +9,47 @@ import (
 	"github.com/alternayte/kiln/internal/store"
 )
 
-// moveTemplatesIntoTenants puts the files of a template built before tenants
-// under the tenant that owns it.
+// moveTemplatesIntoTenants puts the files of every template under the tenant
+// that owns it.
 //
 // The old layout was templates/<name>, so two tenants with one template name
 // shared a rootfs and a memory image. The layout is templates/<tenant>/<name>
-// now, and a host that upgrades moves what it already holds.
-func moveTemplatesIntoTenants(root string) error {
-	dir := filepath.Join(root, "templates")
-	entries, err := os.ReadDir(dir)
+// now. The move follows the rows, because a template of one tenant may sit in
+// the flat path, or in the default tenant's directory after an earlier move.
+func moveTemplatesIntoTenants(ctx context.Context, st store.Store, root string) error {
+	rows, err := st.ListTemplates(ctx)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
 		return err
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	dir := filepath.Join(root, "templates")
+	for _, row := range rows {
+		tenant := row.TenantID
+		if tenant == "" {
+			tenant = store.DefaultTenant
+		}
+		want := filepath.Join(dir, tenant, row.Name)
+		if _, err := os.Stat(filepath.Join(want, "manifest.json")); err == nil {
 			continue
 		}
-		old := filepath.Join(dir, entry.Name())
-		// A tenant directory holds directories; a template directory holds
-		// the manifest of one build.
-		if _, err := os.Stat(filepath.Join(old, "manifest.json")); err != nil {
-			continue
+		for _, old := range []string{
+			filepath.Join(dir, row.Name),
+			filepath.Join(dir, store.DefaultTenant, row.Name),
+		} {
+			if old == want {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(old, "manifest.json")); err != nil {
+				continue
+			}
+			if err := os.MkdirAll(filepath.Dir(want), 0o750); err != nil {
+				return err
+			}
+			if err := os.Rename(old, want); err != nil {
+				return fmt.Errorf("move %s: %w", old, err)
+			}
+			fmt.Printf("kiln serve: template %s moved to tenant %s\n", row.Name, tenant)
+			break
 		}
-		target := filepath.Join(dir, store.DefaultTenant, entry.Name())
-		if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
-			return err
-		}
-		if err := os.Rename(old, target); err != nil {
-			return fmt.Errorf("move %s: %w", old, err)
-		}
-		fmt.Printf("kiln serve: template %s moved to the %s tenant\n", entry.Name(), store.DefaultTenant)
 	}
 	return nil
 }

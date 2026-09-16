@@ -44,10 +44,6 @@ func cmdServe() error {
 	if cfg.ControlAddr == "" {
 		cfg.ControlAddr = "127.0.0.1:8080"
 	}
-	// A host built before tenants keeps its template files one level up.
-	if err := moveTemplatesIntoTenants(root); err != nil {
-		return fmt.Errorf("serve: %w", err)
-	}
 	kilninit := filepath.Join(root, "bin", "kilninit")
 	if _, err := os.Stat(kilninit); err != nil {
 		return fmt.Errorf("serve: %w; run kiln init", err)
@@ -56,6 +52,10 @@ func cmdServe() error {
 	st, err := store.Open(filepath.Join(root, "kiln.db"))
 	if err != nil {
 		return err
+	}
+	// A host built before tenants keeps its template files one level up.
+	if err := moveTemplatesIntoTenants(context.Background(), st, root); err != nil {
+		return fmt.Errorf("serve: %w", err)
 	}
 	defer st.Close()
 	rt, err := runtime.New(runtime.Config{Root: root})

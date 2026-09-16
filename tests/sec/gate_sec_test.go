@@ -251,7 +251,7 @@ func checkEgress(t *testing.T, ctx context.Context, st store.Store, sbx *sandbox
 // secret-bearing sandbox is not forked without the explicit flag.
 func checkSecrets(t *testing.T, ctx context.Context, root string, sbx *sandbox.Manager, source store.Sandbox) {
 	t.Helper()
-	dir := filepath.Join(root, "templates", templateName)
+	dir := filepath.Join(root, "templates", store.DefaultTenant, templateName)
 	for _, name := range []string{"manifest.json", "state", "mem", "rootfs.ext4"} {
 		path := filepath.Join(dir, name)
 		if _, err := os.Stat(path); err != nil {

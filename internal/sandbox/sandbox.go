@@ -278,7 +278,7 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 		Spec: runtime.Spec{
 			ID:          row.ID,
 			KernelPath:  m.cfg.KernelPath,
-			RootfsPath:  filepath.Join(m.cfg.Root, "templates", img.template.Name, "rootfs.ext4"),
+			RootfsPath:  filepath.Join(m.templateDir(img.template), "rootfs.ext4"),
 			OverlayPath: overlay,
 			VCPUs:       img.template.VCPUs,
 			MemoryMiB:   img.template.MemoryMB,

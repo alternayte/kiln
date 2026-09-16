@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 
 	authall "github.com/alternayte/auth-all"
@@ -50,6 +51,12 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request) {
 		"max_snapshot_bytes": req.MaxSnapshotBytes,
 	}
 	if _, err := s.hostCall(r.Context(), http.MethodPost, "/v1/tenants", "", body); err != nil {
+		// The tenant exists in two stores, so a refusal here undoes the row
+		// this call already made. A half-made tenant would take the name and
+		// reach nothing.
+		if undo := s.Tenants.Delete(r.Context(), p.User, row.ID); undo != nil {
+			log.Printf("gateway: the host refused tenant %s and it stays here: %v", row.ID, undo)
+		}
 		writeError(w, http.StatusBadGateway, "internal", fmt.Sprintf("the host refused the tenant: %v", err))
 		return
 	}

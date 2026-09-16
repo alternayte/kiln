@@ -1,0 +1,4 @@
+.git
+sdk/typescript/node_modules
+sdk/typescript/dist
+infra/Pulumi.*.yaml

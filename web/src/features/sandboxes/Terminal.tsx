@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal as Xterm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { Copy, Maximize2, Minimize2, RefreshCw, SquareTerminal } from "lucide-react";
+import { Copy, Maximize2, Minimize2, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { cn } from "@/lib/cn";
@@ -26,11 +26,9 @@ const BACKOFF_MS = [500, 1000, 2000, 4000];
  */
 export function SandboxTerminal({
   id,
-  template,
   full,
 }: {
   id: string;
-  template?: string;
   /** True on the standalone page, where the control returns to the tab. */
   full?: boolean;
 }) {
@@ -64,7 +62,9 @@ export function SandboxTerminal({
       // A build log outruns a smaller buffer in seconds.
       scrollback: 10_000,
       theme: {
-        background: "#17140f",
+        // Exactly the app ground, so the shell is one surface with the
+        // page and shows no rectangle where it ends.
+        background: "#100c0a",
         foreground: "#efeae2",
         cursor: "#f08a3c",
         selectionBackground: "#ffffff30",
@@ -172,13 +172,11 @@ export function SandboxTerminal({
   useEffect(refit, [phase, refit]);
 
   return (
-    <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-edge bg-[#17140f]">
-      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-edge px-3">
-        <SquareTerminal className="size-4 text-muted" aria-hidden />
-        <span className="text-xs font-medium tracking-wide text-muted uppercase">Terminal</span>
-        {template ? <span className="font-mono text-xs text-muted">{template}</span> : null}
+    <section className="relative flex h-full min-h-0 flex-col bg-ground">
+      {/* The controls float over the shell rather than sitting in a bar above
+          it: a bar costs a row of the screen and the shell is the point. */}
+      <div className="absolute top-2 right-3 z-10 flex items-center gap-1">
         <Status phase={phase} />
-        <div className="ml-auto flex items-center gap-1">
           <IconButton
             label="Copy the output"
             onClick={() => {
@@ -208,11 +206,10 @@ export function SandboxTerminal({
           >
             {full ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
           </Link>
-        </div>
-      </header>
+      </div>
 
       {phase === "disconnected" ? (
-        <div className="flex shrink-0 items-center gap-3 border-b border-edge bg-raised px-3 py-2">
+        <div className="absolute top-11 right-3 z-10 flex items-center gap-3 rounded-md border border-edge bg-raised px-3 py-2">
           <span className="text-xs text-muted">Disconnected: {reason}</span>
           <button
             onClick={() => {
@@ -226,7 +223,7 @@ export function SandboxTerminal({
         </div>
       ) : null}
 
-      <div ref={host} className="min-h-0 flex-1 overflow-hidden p-3" />
+      <div ref={host} className="min-h-0 flex-1 overflow-hidden px-3 pt-2" />
     </section>
   );
 }

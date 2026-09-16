@@ -1,7 +1,5 @@
 import { useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 
-import { getSandbox } from "@/api";
 import { SandboxTerminal } from "./Terminal";
 
 /**
@@ -11,17 +9,9 @@ import { SandboxTerminal } from "./Terminal";
  */
 export function TerminalPage() {
   const { id = "" } = useParams();
-  const sandbox = useQuery({
-    queryKey: ["sandbox", id],
-    queryFn: async () => (await getSandbox({ path: { id }, throwOnError: true })).data,
-  });
   return (
-    <div className="h-screen p-3">
-      <SandboxTerminal
-        id={id}
-        template={(sandbox.data as { template?: string } | undefined)?.template}
-        full
-      />
+    <div className="h-screen">
+      <SandboxTerminal id={id} full />
     </div>
   );
 }

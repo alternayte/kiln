@@ -120,7 +120,7 @@ function Tab({ to, end, children }: { to: string; end?: boolean; children: React
 
 /** The terminal tab. It fills the frame and scrolls nothing around it. */
 export function SandboxTerminalTab() {
-  const { id, sandbox, canWrite } = useOutletContext<TabContext>();
+  const { id, canWrite } = useOutletContext<TabContext>();
   const canExec = useCan("sandbox:exec");
   if (!canExec || !canWrite) {
     return (
@@ -129,7 +129,7 @@ export function SandboxTerminalTab() {
       </Panel>
     );
   }
-  return <SandboxTerminal id={id} template={sandbox?.template} />;
+  return <SandboxTerminal id={id} />;
 }
 
 /** The overview tab: the published ports and what has happened. */

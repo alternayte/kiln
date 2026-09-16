@@ -271,3 +271,36 @@ Found by running it, not by reading it:
 
 Not verified here, and not claimed: anything that needs a real pull request.
 The comment edited in place and the fork label flow are syntax-checked only.
+
+## 2026-09-17 — v0.5.0, the start command
+
+Done: a template names the command that runs its application and the port it
+listens on. A sandbox created from that template comes up serving, so a
+published hostname answers on the first request.
+
+Found by wiring the preview Action into a real repository, which is the only
+reason it was found at all: Kiln boots kilninit as PID 1 and ignores what the
+image says to run. A sandbox restored from a template held the application's
+files and ran nothing, so every preview environment of v0.4.0 published a
+dead port. The feature shipped and could not have worked.
+
+- The start command runs only for a template snapshot. A wake and a fork
+  restore memory that already holds the process, and a second copy would
+  fight for the port. Measured after a sleep and a wake: one server, still
+  serving.
+- exec kills its process group when the call ends, so the application would
+  have died with the request that started it. kilninit gained a start op that
+  detaches it into its own session.
+- Creating a sandbox answers only once the guest accepts a connection on the
+  port. It took 8 seconds against a Debian image, against 5 for a template
+  with no start command.
+- A start command that exits before it listens fails the sandbox and the
+  error carries the application's own output, not just an exit code.
+- The watch that reports a crash is a connection to the guest, so it died
+  with the VM at every sleep, and only a restore from a template took it up
+  again. A sandbox that slept once reported no crash for the rest of its
+  life. Every restore takes the watch up now.
+
+Not verified here, and not claimed: the Action against a real pull request.
+The repository to try it on is restitch-gateway, which serves an API, has a
+Dockerfile, and calls upstreams that exercise egress_allow.

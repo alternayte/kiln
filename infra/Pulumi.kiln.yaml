@@ -1,0 +1,6 @@
+encryptionsalt: v1:WyAiTbA2jdw=:v1:Hy3XD7rC3E7oxc6i:PyjTFyUu7YpdxHcrNCD138Sad36wmg==
+config:
+  kiln:gate: P1
+  kiln:host: 163.172.251.170
+  kiln:remoteDir: /home/kiln/kiln
+  kiln:sshUser: kiln

@@ -45,6 +45,9 @@ jobs:
           cache: false
       - uses: extractions/setup-just@v2
       - run: sudo env "PATH=$PATH" bash scripts/dev-env.sh
+      # kiln init writes the guest agent the binary carries, so the agent
+      # is built first.
+      - run: bash scripts/build-kilninit.sh
       - run: sudo env "PATH=$PATH" go run ./cmd/kiln init
       # Docker sets the FORWARD policy to DROP. Kiln's chains are in the inet
       # family at the same priority and are registered later, so Docker's

@@ -70,6 +70,9 @@ status:
 gate phase:
     #!/usr/bin/env bash
     set -euo pipefail
+    # A gate boots real microVMs, so it needs the guest agent the binary
+    # carries.
+    bash scripts/build-kilninit.sh > /dev/null
     phase="{{phase}}"
     case "$phase" in
         P[0-6]) pattern="^TestGate${phase}$" ;;

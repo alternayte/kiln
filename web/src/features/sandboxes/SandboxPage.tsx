@@ -1,27 +1,38 @@
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, NavLink, Outlet, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { deleteSandbox, getSandbox, publish, retire, snapshot } from "@/api";
 import { errorText } from "@/lib/auth";
 import { useEvents } from "@/lib/events";
 import { useCan } from "@/app/session";
+import { cn } from "@/lib/cn";
 import { Button, Empty, Mono, Notice, Panel, State, Table } from "@/components/ui";
 import { SandboxTerminal } from "./Terminal";
 
+interface Sandbox {
+  id?: string;
+  template?: string;
+  state?: string;
+  published?: { port?: number; url?: string; visibility?: string }[];
+}
+
+/**
+ * SandboxPage is the frame: the identity and the lifecycle actions stay put,
+ * and a tab fills the rest. The terminal is a tab with its own URL, so a link
+ * to a shell is a link a person can send.
+ */
 export function SandboxPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const queries = useQueryClient();
-  const events = useEvents(id);
   const canWrite = useCan("sandbox:write");
-  const canExec = useCan("sandbox:exec");
 
   const sandbox = useQuery({
     queryKey: ["sandbox", id],
     queryFn: async () => (await getSandbox({ path: { id }, throwOnError: true })).data,
   });
-  const row = sandbox.data;
+  const row = sandbox.data as Sandbox | undefined;
 
   const sleep = useMutation({
     mutationFn: async () =>
@@ -37,7 +48,7 @@ export function SandboxPage() {
   if (sandbox.isError) return <Notice>{errorText(sandbox.error)}</Notice>;
 
   return (
-    <>
+    <div className="flex h-full min-h-0 flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
         <Link to="/sandboxes" className="text-sm text-muted hover:text-ink">
           Sandboxes
@@ -45,41 +56,89 @@ export function SandboxPage() {
         <span className="text-muted">/</span>
         <Mono className="text-sm">{id}</Mono>
         <State value={row?.state} />
-        <div className="ml-auto flex gap-2">
-          {canWrite ? (
-            <>
-              <Button onClick={() => sleep.mutate()} disabled={sleep.isPending}>
-                Sleep
-              </Button>
-              <Button
-                variant="danger"
-                onClick={() => {
-                  if (window.confirm("Destroy this sandbox and retire its hostnames?")) {
-                    destroy.mutate();
-                  }
-                }}
-              >
-                Destroy
-              </Button>
-            </>
-          ) : null}
-        </div>
+        {canWrite ? (
+          <div className="ml-auto flex gap-2">
+            <Button onClick={() => sleep.mutate()} disabled={sleep.isPending}>
+              Sleep
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (window.confirm("Destroy this sandbox and retire its hostnames?")) {
+                  destroy.mutate();
+                }
+              }}
+            >
+              Destroy
+            </Button>
+          </div>
+        ) : null}
       </div>
 
-      <Notice>{sleep.error ? errorText(sleep.error) : destroy.error ? errorText(destroy.error) : ""}</Notice>
+      <nav className="flex shrink-0 gap-1 border-b border-edge">
+        <Tab to={`/sandboxes/${id}`} end>
+          Overview
+        </Tab>
+        <Tab to={`/sandboxes/${id}/terminal`}>Terminal</Tab>
+      </nav>
 
-      {canExec ? (
-        <Panel title="Terminal" className="p-3">
-          <SandboxTerminal id={id} />
-        </Panel>
-      ) : (
-        <Panel title="Terminal">
-          <Empty>A reader does not run code in a sandbox.</Empty>
-        </Panel>
-      )}
+      <Notice>
+        {sleep.error ? errorText(sleep.error) : destroy.error ? errorText(destroy.error) : ""}
+      </Notice>
 
-      <Ports id={id} ports={row?.published ?? []} canWrite={canWrite} />
+      <div className="min-h-0 flex-1">
+        <Outlet context={{ id, sandbox: row, canWrite }} />
+      </div>
+    </div>
+  );
+}
 
+interface TabContext {
+  id: string;
+  sandbox?: Sandbox;
+  canWrite: boolean;
+}
+
+function Tab({ to, end, children }: { to: string; end?: boolean; children: React.ReactNode }) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) =>
+        cn(
+          "-mb-px border-b-2 px-3 py-2 text-sm transition-colors",
+          isActive
+            ? "border-ember text-ink"
+            : "border-transparent text-muted hover:text-ink",
+        )
+      }
+    >
+      {children}
+    </NavLink>
+  );
+}
+
+/** The terminal tab. It fills the frame and scrolls nothing around it. */
+export function SandboxTerminalTab() {
+  const { id, sandbox, canWrite } = useOutletContext<TabContext>();
+  const canExec = useCan("sandbox:exec");
+  if (!canExec || !canWrite) {
+    return (
+      <Panel>
+        <Empty>A reader does not run code in a sandbox.</Empty>
+      </Panel>
+    );
+  }
+  return <SandboxTerminal id={id} template={sandbox?.template} />;
+}
+
+/** The overview tab: the published ports and what has happened. */
+export function SandboxOverviewTab() {
+  const { id, sandbox, canWrite } = useOutletContext<TabContext>();
+  const events = useEvents(id);
+  return (
+    <div className="space-y-4 overflow-y-auto pb-4">
+      <Ports id={id} ports={sandbox?.published ?? []} canWrite={canWrite} />
       <Panel title="Events">
         {events.length === 0 ? (
           <Empty>Nothing has happened since this page opened.</Empty>
@@ -101,7 +160,7 @@ export function SandboxPage() {
           </Table>
         )}
       </Panel>
-    </>
+    </div>
   );
 }
 
@@ -161,14 +220,22 @@ function Ports({
               <option value="public">public</option>
               <option value="team">team</option>
             </select>
-            <Button variant="primary" disabled={!port || open.isPending} onClick={() => open.mutate()}>
+            <Button
+              variant="primary"
+              disabled={!port || open.isPending}
+              onClick={() => open.mutate()}
+            >
               Publish
             </Button>
           </div>
         ) : null
       }
     >
-      {open.error ? <div className="p-3"><Notice>{errorText(open.error)}</Notice></div> : null}
+      {open.error ? (
+        <div className="p-3">
+          <Notice>{errorText(open.error)}</Notice>
+        </div>
+      ) : null}
       {ports.length === 0 ? (
         <Empty>No port is published.</Empty>
       ) : (

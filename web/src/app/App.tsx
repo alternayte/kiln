@@ -6,7 +6,12 @@ import { SignInPage } from "@/features/auth/SignInPage";
 import { ConsentPage } from "@/features/auth/ConsentPage";
 import { AcceptInvitationPage } from "@/features/auth/AcceptInvitationPage";
 import { SandboxesPage } from "@/features/sandboxes/SandboxesPage";
-import { SandboxPage } from "@/features/sandboxes/SandboxPage";
+import {
+  SandboxOverviewTab,
+  SandboxPage,
+  SandboxTerminalTab,
+} from "@/features/sandboxes/SandboxPage";
+import { TerminalPage } from "@/features/sandboxes/TerminalPage";
 import { TemplatesPage } from "@/features/templates/TemplatesPage";
 import { KeysPage } from "@/features/keys/KeysPage";
 import { MembersPage } from "@/features/members/MembersPage";
@@ -23,13 +28,18 @@ export function App() {
         <Route element={<Shell />}>
           <Route index element={<Navigate to="/sandboxes" replace />} />
           <Route path="/sandboxes" element={<SandboxesPage />} />
-          <Route path="/sandboxes/:id" element={<SandboxPage />} />
+          <Route path="/sandboxes/:id" element={<SandboxPage />}>
+            <Route index element={<SandboxOverviewTab />} />
+            <Route path="terminal" element={<SandboxTerminalTab />} />
+          </Route>
           <Route path="/templates" element={<TemplatesPage />} />
           <Route path="/keys" element={<KeysPage />} />
           <Route path="/members" element={<MembersPage />} />
           <Route path="/viewers" element={<ViewersPage />} />
           <Route path="/tenants" element={<TenantsPage />} />
         </Route>
+        {/* The shell alone, filling the window, outside the app shell. */}
+        <Route path="/terminal/:id" element={<TerminalPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/sandboxes" replace />} />
     </Routes>

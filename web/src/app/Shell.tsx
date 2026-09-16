@@ -26,11 +26,13 @@ const NAV = [
 
 export function Shell() {
   return (
-    <div className="min-h-screen">
+    // The column is the window, so a screen that wants the rest of the height
+    // can take it and nothing outside it scrolls.
+    <div className="flex h-screen flex-col">
       <TopBar />
-      <div className="mx-auto flex w-full max-w-7xl gap-8 px-4 py-6 sm:px-6">
+      <div className="mx-auto flex w-full min-h-0 max-w-7xl flex-1 gap-8 px-4 py-6 sm:px-6">
         <Sidebar />
-        <main className="min-w-0 flex-1 space-y-6">
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-y-auto">
           <Outlet />
         </main>
       </div>

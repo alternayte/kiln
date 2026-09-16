@@ -255,3 +255,98 @@ func TestAgentSurface(t *testing.T) {
 		t.Fatalf("status %d for an MCP call with no credential, want 401", resp.StatusCode)
 	}
 }
+
+// An MCP client finds the authorization server from a refused call, and the
+// documents it needs are served without a credential.
+func TestOAuthDiscovery(t *testing.T) {
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer host.Close()
+	srv, _, _ := newTestGateway(t, host.URL)
+	srv.BaseURL = "https://api.example.com"
+	public := httptest.NewServer(srv.Handler())
+	defer public.Close()
+
+	for _, path := range []string{"/v1/sandboxes", "/mcp"} {
+		resp, err := http.Post(public.URL+path, "application/json", strings.NewReader(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s status %d, want 401", path, resp.StatusCode)
+		}
+		challenge := resp.Header.Get("WWW-Authenticate")
+		if !strings.Contains(challenge, "resource_metadata=") {
+			t.Fatalf("%s challenge %q names no metadata document", path, challenge)
+		}
+	}
+
+	resp, err := http.Get(public.URL + "/.well-known/oauth-protected-resource")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var metadata struct {
+		Resource string   `json:"resource"`
+		Servers  []string `json:"authorization_servers"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	// The resource identifier is the issuer, because the authorization
+	// server accepts its own token only when the audience names it.
+	want := srv.BaseURL + "/auth"
+	if metadata.Resource != want || len(metadata.Servers) != 1 || metadata.Servers[0] != want {
+		t.Fatalf("metadata %+v, want resource and server %q", metadata, want)
+	}
+}
+
+// A credential that names a person and not a tenant resolves through the
+// memberships of that person. One membership is the answer.
+func TestTenantFromMembership(t *testing.T) {
+	seen := make(chan string, 2)
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.Header.Get(TenantHeader)
+		w.Write([]byte(`[]`))
+	}))
+	defer host.Close()
+	srv, _, tenantID := newTestGateway(t, host.URL)
+	public := httptest.NewServer(srv.Handler())
+	defer public.Close()
+
+	// Sign in as the person who owns the tenant. The session names no active
+	// tenant, so the gateway reads the membership.
+	body := strings.NewReader(`{"email":"operator@example.com","password":"correct horse battery staple"}`)
+	req, _ := http.NewRequest(http.MethodPost, public.URL+"/auth/sign-in/email", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://gateway.test")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("sign in status %d", resp.StatusCode)
+	}
+	var session *http.Cookie
+	for _, cookie := range resp.Cookies() {
+		session = cookie
+	}
+	if session == nil {
+		t.Fatal("sign in set no cookie")
+	}
+	call, _ := http.NewRequest(http.MethodGet, public.URL+"/v1/sandboxes", nil)
+	call.AddCookie(session)
+	call.Header.Set("Origin", "http://gateway.test")
+	resp, err = http.DefaultClient.Do(call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d for a session call, want 200", resp.StatusCode)
+	}
+	if got := <-seen; got != tenantID {
+		t.Fatalf("the host saw tenant %q, want %q", got, tenantID)
+	}
+}

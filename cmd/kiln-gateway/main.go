@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -14,6 +16,7 @@ import (
 
 	authall "github.com/alternayte/auth-all"
 	"github.com/alternayte/auth-all/plugins/apikeys"
+	"github.com/alternayte/auth-all/plugins/oauthprovider"
 	"github.com/alternayte/auth-all/plugins/organizations"
 	"github.com/alternayte/auth-all/plugins/roles"
 	"github.com/alternayte/auth-all/ratelimit"
@@ -36,7 +39,7 @@ func run() error {
 	addr := env("KILN_GATEWAY_ADDR", ":8080")
 	baseURL := env("KILN_GATEWAY_URL", "http://localhost"+addr)
 
-	auth, tenants, keys, db, err := newAuth(baseURL)
+	auth, tenants, keys, provider, db, err := newAuth(baseURL)
 	if err != nil {
 		return err
 	}
@@ -53,20 +56,39 @@ func run() error {
 		return err
 	}
 
+	server := &gateway.Server{
+		Auth:         auth,
+		Tenants:      tenants,
+		Keys:         keys,
+		Host:         host,
+		Audit:        audit,
+		AuthPrefix:   authPrefix + "/",
+		OAuth:        provider,
+		Issuer:       strings.TrimSuffix(baseURL, "/") + authPrefix,
+		BaseURL:      baseURL,
+		OperatorRole: env("KILN_OPERATOR_ROLE", "operator"),
+	}
 	srv := &http.Server{
-		Addr: addr,
-		Handler: (&gateway.Server{
-			Auth:         auth,
-			Tenants:      tenants,
-			Keys:         keys,
-			Host:         host,
-			Audit:        audit,
-			AuthPrefix:   "/auth/",
-			BaseURL:      baseURL,
-			OperatorRole: env("KILN_OPERATOR_ROLE", "operator"),
-		}).Handler(),
+		Addr:              addr,
+		Handler:           server.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	// The authorization server keeps spent codes and expired tokens until
+	// something removes them.
+	go func() {
+		tick := time.NewTicker(time.Hour)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				if err := server.Cleanup(ctx); err != nil {
+					fmt.Fprintf(os.Stderr, "kiln-gateway: cleanup: %v\n", err)
+				}
+			}
+		}
+	}()
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -82,7 +104,7 @@ func run() error {
 
 // migrate creates the auth-all tables. It runs once before the first start.
 func migrate() error {
-	auth, _, _, db, err := newAuth(env("KILN_GATEWAY_URL", "http://localhost:8080"))
+	auth, _, _, _, db, err := newAuth(env("KILN_GATEWAY_URL", "http://localhost:8080"))
 	if err != nil {
 		return err
 	}
@@ -97,10 +119,13 @@ func migrate() error {
 
 // newAuth builds the auth stack this gateway runs on. One auth-all tenant row
 // is one tenant, and a key of that row is a machine credential for it.
-func newAuth(baseURL string) (*authall.Auth, *organizations.Plugin, *apikeys.Plugin, *sqlDB, error) {
+// authPrefix is where the login and OAuth routes live.
+const authPrefix = "/auth"
+
+func newAuth(baseURL string) (*authall.Auth, *organizations.Plugin, *apikeys.Plugin, *oauthprovider.Plugin, *sqlDB, error) {
 	db, err := openStore()
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	tenants := organizations.New(
 		organizations.Roles(
@@ -112,15 +137,39 @@ func newAuth(baseURL string) (*authall.Auth, *organizations.Plugin, *apikeys.Plu
 		organizations.OwnerRole("operator"),
 	)
 	keys := apikeys.New(apikeys.Prefix("kiln_"), apikeys.Organizations(tenants))
+	// The authorization server an MCP client talks to. A client registers
+	// itself, so an agent needs no console and no static credential.
+	kek, err := oauthKey()
+	if err != nil {
+		db.Close()
+		return nil, nil, nil, nil, nil, err
+	}
+	provider := oauthprovider.New(
+		oauthprovider.KeyEncryptionKey(kek),
+		oauthprovider.LoginPath(env("KILN_LOGIN_PATH", authPrefix+"/sign-in")),
+		oauthprovider.ConsentPath(env("KILN_CONSENT_PATH", authPrefix+"/consent")),
+		oauthprovider.AllowDynamicRegistration(),
+		oauthprovider.Scopes("openid", "email", "sandbox"),
+		// The identifier is the issuer, because auth-all accepts its own
+		// token only when the audience names the issuer.
+		oauthprovider.Resources(oauthprovider.Resource{
+			Identifier:     strings.TrimSuffix(baseURL, "/") + authPrefix,
+			Scopes:         []string{"openid", "email", "sandbox"},
+			AccessTokenTTL: 30 * time.Minute,
+		}),
+	)
 	// The counters live in the gateway store, so every gateway shares one
 	// count and a restart forgets nothing.
 	limiter, err := storelimit.New(db.authStore(), ratelimit.DefaultSignInRules())
 	if err != nil {
 		db.Close()
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	auth, err := authall.New(
 		authall.WithStore(db.authStore()),
+		// The metadata names these paths, so the mount point and the base
+		// path have to agree or a client follows a dead endpoint.
+		authall.WithBasePath(authPrefix),
 		authall.WithRateLimiter(limiter),
 		authall.WithBaseURL(baseURL),
 		authall.WithEmailPassword(),
@@ -128,13 +177,32 @@ func newAuth(baseURL string) (*authall.Auth, *organizations.Plugin, *apikeys.Plu
 			roles.New(roles.Hierarchy("viewer", "editor", "operator")),
 			tenants,
 			keys,
+			provider,
 		),
 	)
 	if err != nil {
 		db.Close()
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
-	return auth, tenants, keys, db, nil
+	return auth, tenants, keys, provider, db, nil
+}
+
+// oauthKey reads the 32 bytes that wrap every signing key at rest. A gateway
+// with no key refuses to start, because a new key on every restart would
+// invalidate every token it issued.
+func oauthKey() ([]byte, error) {
+	value := strings.TrimSpace(os.Getenv("KILN_OAUTH_KEY"))
+	if value == "" {
+		return nil, errors.New("KILN_OAUTH_KEY is required: 32 bytes, base64, from your credential store")
+	}
+	raw, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		return nil, fmt.Errorf("KILN_OAUTH_KEY: %w", err)
+	}
+	if len(raw) != 32 {
+		return nil, fmt.Errorf("KILN_OAUTH_KEY holds %d bytes, want 32", len(raw))
+	}
+	return raw, nil
 }
 
 func hostCredentials() gateway.HostCredentials {

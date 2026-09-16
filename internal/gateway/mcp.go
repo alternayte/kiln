@@ -37,7 +37,7 @@ type rpcResponse struct {
 // the call travels the same path as a REST call: the caller's credential
 // names the tenant, and the host enforces it.
 func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
-	tenant, err := tenantOf(r.Context())
+	tenant, err := s.tenantOfCaller(r)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "invalid", err.Error())
 		return

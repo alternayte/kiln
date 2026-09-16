@@ -13,6 +13,7 @@ import (
 
 	authall "github.com/alternayte/auth-all"
 	"github.com/alternayte/auth-all/plugins/apikeys"
+	"github.com/alternayte/auth-all/plugins/oauthprovider"
 	"github.com/alternayte/auth-all/plugins/organizations"
 
 	"github.com/alternayte/kiln/internal/apispec"
@@ -38,6 +39,14 @@ type Server struct {
 	AuthPrefix string
 	// BaseURL is the public URL of this gateway. The agent files name it.
 	BaseURL string
+	// OAuth is the authorization server. Nil leaves API keys as the only
+	// credential.
+	OAuth *oauthprovider.Plugin
+	// Issuer is the identifier of the authorization server, and the audience
+	// of every token this gateway accepts. Auth-All takes its own token only
+	// when the audience names the issuer, so the resource indicator a client
+	// sends is this value.
+	Issuer string
 	// OperatorRole may create tenants and read every tenant's usage.
 	OperatorRole string
 }
@@ -59,15 +68,16 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /operator/tenants", s.Auth.RequireAuth(http.HandlerFunc(s.listTenants)))
 	mux.Handle("PUT /operator/tenants/{id}/caps", s.Auth.RequireAuth(http.HandlerFunc(s.setTenantCaps)))
 	// Everything under /v1 is the host API, with the same paths and bodies.
-	mux.Handle("/v1/", s.Auth.RequireAuth(http.HandlerFunc(s.forward)))
+	mux.Handle("/v1/", s.requireCaller(http.HandlerFunc(s.forward)))
 	// One agent drives the same operations as tools.
-	mux.Handle("POST /mcp", s.Auth.RequireAuth(http.HandlerFunc(s.mcp)))
+	mux.Handle("POST /mcp", s.requireCaller(http.HandlerFunc(s.mcp)))
 	// The contract and the agent documentation need no credential: they
 	// describe the API and carry no data of any tenant.
 	mux.HandleFunc("GET /openapi.json", s.openAPI)
 	mux.HandleFunc("GET /llms.txt", s.llms)
 	mux.HandleFunc("GET /llms-full.txt", s.llmsFull)
 	mux.HandleFunc("GET /.well-known/ai-catalog.json", s.catalog)
+	s.oauthRoutes(mux)
 	return mux
 }
 
@@ -102,7 +112,7 @@ func (s *Server) isOperator(p *authall.Principal) bool {
 // forward sends one call to the host. It adds the host token and the tenant,
 // and it removes the caller's own credential, which the host must never see.
 func (s *Server) forward(w http.ResponseWriter, r *http.Request) {
-	tenant, err := tenantOf(r.Context())
+	tenant, err := s.tenantOfCaller(r)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "invalid", err.Error())
 		return

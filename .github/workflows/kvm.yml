@@ -22,6 +22,11 @@ jobs:
           go-version-file: go.mod
           cache: false
       - uses: extractions/setup-just@v2
+      # The gateway embeds the web UI, so the check builds it. Without bun
+      # checks/web.sh fails, which is the point: a broken UI must not merge.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - run: just check
 
   gate:

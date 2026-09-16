@@ -159,3 +159,38 @@ A `systemctl restart kiln` adopted a running sandbox and kept its files.
 
 AGENTS.md: the operator asked for the Run and What-this-is lines to match the
 code.
+
+## 2026-09-16 — v0.2.0 built, and the gateway is live
+
+The spec `docs/specs/v02-public-control-api.md` is built in four chunks:
+tenants on the host, the gateway, the contract with the agent surface, and
+OAuth. The gateway runs on Coolify at https://api.statapad.com against the
+Dedibox host over mTLS. A tenant created through the gateway lands on the
+host, an API key of that tenant reads its own rows, and an access token from
+the authorization code flow does the same.
+
+Found by running it, not by reading it:
+- A template build outlives its request, so it ran on the daemon context and
+  wrote every template to the default tenant. The cap could never fire.
+- A viewer created before tenants held none, so an upgraded host refused the
+  viewer the operator already had. Serve adopts those viewers now.
+- The plugin's SetRole speaks for an actor who already holds rights, which a
+  new viewer does not.
+- auth-all accepts its own access token only when the audience names the
+  issuer, so the resource identifier is the issuer.
+- The consent page bounced back to sign-in forever: needsSignIn describes
+  the browser when the application asked, not now.
+
+The deployment taught three things about a distroless image: Coolify runs a
+pre-deployment command and a health check through a shell inside it, and it
+stores one line per environment variable, which a PEM block cannot survive.
+The gateway migrates at start, the health check is off, and the certificates
+are read as base64.
+
+The host: a firewall that opens 22, 443 and 8443 and nothing else, SSH keys
+only after 755 password attempts in two hours, and the Dedibox image's open
+DNS resolver stopped.
+
+AGENTS.md carries two exceptions now. The auth-all API names a type
+Organization and a plugin admin, so those two words are legal in code that
+calls it.

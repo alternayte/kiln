@@ -101,7 +101,15 @@ jobs:
             ghcr.io/${{ github.repository }}-gateway:${{ github.ref_name }}
             ghcr.io/${{ github.repository }}-gateway:latest
 
-      - name: Attach the binary to the release
+      # A tag alone is not a release, so the first publish for a tag makes
+      # one. The notes file carries the install command, which is what
+      # someone needs on the day; a person edits the rest afterwards.
+      - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${GITHUB_REF_NAME}" kiln SHA256SUMS --clobber
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          gh release view "$tag" > /dev/null 2>&1 \
+            || gh release create "$tag" --verify-tag --title "$tag" --notes-file .github/release-notes.md
+          gh release upload "$tag" kiln SHA256SUMS --clobber

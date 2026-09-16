@@ -350,3 +350,39 @@ func TestTenantFromMembership(t *testing.T) {
 		t.Fatalf("the host saw tenant %q, want %q", got, tenantID)
 	}
 }
+
+// The flow needs two screens. They render, they carry the request through,
+// and they never run code from another origin.
+func TestOAuthPages(t *testing.T) {
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer host.Close()
+	srv, _, _ := newTestGateway(t, host.URL)
+	srv.AuthPrefix = "/auth/"
+	public := httptest.NewServer(srv.Handler())
+	defer public.Close()
+
+	for _, page := range []struct{ path, wants string }{
+		{"/auth/sign-in?request_id=abc123", "Sign in to Kiln"},
+		{"/auth/consent?request_id=abc123", "oauth2/decide"},
+	} {
+		resp, err := http.Get(public.URL + page.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s status %d", page.path, resp.StatusCode)
+		}
+		text := string(body)
+		if !strings.Contains(text, page.wants) {
+			t.Fatalf("%s does not hold %q", page.path, page.wants)
+		}
+		if !strings.Contains(text, `"abc123"`) {
+			t.Fatalf("%s loses the request identifier", page.path)
+		}
+		if policy := resp.Header.Get("Content-Security-Policy"); !strings.Contains(policy, "default-src 'none'") {
+			t.Fatalf("%s policy %q", page.path, policy)
+		}
+	}
+}

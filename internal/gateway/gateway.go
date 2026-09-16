@@ -58,6 +58,10 @@ func (s *Server) Handler() http.Handler {
 	if prefix == "" {
 		prefix = "/auth/"
 	}
+	// The two screens the OAuth flow needs. They are registered before the
+	// auth handler, so the more specific pattern wins.
+	mux.HandleFunc("GET "+strings.TrimSuffix(prefix, "/")+"/sign-in", s.signIn)
+	mux.HandleFunc("GET "+strings.TrimSuffix(prefix, "/")+"/consent", s.consent)
 	mux.Handle(prefix, http.StripPrefix(strings.TrimSuffix(prefix, "/"), s.Auth.Handler()))
 	mux.Handle("GET /healthz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})

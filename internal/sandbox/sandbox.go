@@ -835,6 +835,28 @@ func (m *Manager) Exec(ctx context.Context, id string, req runtime.ExecRequest, 
 	return res, err
 }
 
+// Terminal opens an interactive terminal in a running sandbox. A
+// sleeping sandbox wakes first. The read lock is held until the session is
+// closed, so the sandbox cannot sleep under an open shell.
+func (m *Manager) Terminal(ctx context.Context, id string, size guestproto.Winsize) (*lockedTerminal, error) {
+	row, unlock, err := m.acquireRunning(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	vm, err := m.vmFor(row)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	term, err := vm.Terminal(ctx, size, "/", nil)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	m.touch(ctx, row)
+	return &lockedTerminal{Terminal: term, unlock: unlock}, nil
+}
+
 // OpenFile opens one guest file for reading. A sleeping sandbox wakes first.
 // The read lock is held until the reader is closed, so the sandbox cannot
 // sleep mid-read.

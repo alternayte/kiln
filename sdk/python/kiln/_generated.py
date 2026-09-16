@@ -174,6 +174,10 @@ class GeneratedClient:
         """Read one template."""
         return self._json("GET", f"/v1/templates/{name}")
 
+    def list_viewers(self) -> Any:
+        """List the viewers of this tenant."""
+        return self._json("GET", "/v1/viewers")
+
     def create_viewer(self, email: str, password: str) -> Any:
         """Add a viewer of this tenant. A viewer opens team previews and nothing else."""
         body = {k: v for k, v in {
@@ -181,3 +185,7 @@ class GeneratedClient:
             "password": password,
         }.items() if v is not None}
         return self._json("POST", "/v1/viewers", body)
+
+    def delete_viewer(self, id: str) -> Any:
+        """Revoke one viewer. The viewer is disabled and its sessions end."""
+        return self._json("DELETE", f"/v1/viewers/{id}")

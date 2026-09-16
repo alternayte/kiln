@@ -167,8 +167,18 @@ export class GeneratedClient {
     return this.json("GET", `/v1/templates/${encodeURIComponent(String(name))}`);
   }
 
+  /** List the viewers of this tenant. */
+  listViewers(): Promise<unknown> {
+    return this.json("GET", "/v1/viewers");
+  }
+
   /** Add a viewer of this tenant. A viewer opens team previews and nothing else. */
   createViewer(body: { email: string; password: string }): Promise<unknown> {
     return this.json("POST", "/v1/viewers", body);
+  }
+
+  /** Revoke one viewer. The viewer is disabled and its sessions end. */
+  deleteViewer(id: string): Promise<void> {
+    return this.json("DELETE", `/v1/viewers/${encodeURIComponent(String(id))}`);
   }
 }

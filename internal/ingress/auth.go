@@ -12,7 +12,9 @@ import (
 
 	authall "github.com/alternayte/auth-all"
 	"github.com/alternayte/auth-all/apierr"
+	"github.com/alternayte/auth-all/plugins/admin"
 	"github.com/alternayte/auth-all/plugins/organizations"
+	"github.com/alternayte/auth-all/plugins/roles"
 	"github.com/alternayte/auth-all/ratelimit"
 	authstore "github.com/alternayte/auth-all/store"
 	authsqlite "github.com/alternayte/auth-all/store/sqlite"
@@ -22,13 +24,18 @@ import (
 // previews of one tenant and reaches nothing else.
 const ViewerRole = "viewer"
 
+// viewerAdminRole exists so the admin plugin registers. No viewer holds it,
+// and no route grants it.
+const viewerAdminRole = "viewer-admin"
+
 // Viewers is the viewer store of this host. A viewer belongs to one tenant,
 // and the ingress refuses a session of another tenant. The tenant id of the
 // host store is the slug here, because the plugin makes its own ids.
 type Viewers struct {
-	Auth    *authall.Auth
-	tenants *organizations.Plugin
-	store   authstore.OrganizationStore
+	Auth     *authall.Auth
+	accounts *admin.Plugin
+	tenants  *organizations.Plugin
+	store    authstore.OrganizationStore
 }
 
 // NewAuth opens the viewer login on the same SQLite file as the rest of the
@@ -47,9 +54,17 @@ func NewAuth(ctx context.Context, database, zone string) (*Viewers, *sql.DB, err
 		organizations.DefaultRole(ViewerRole),
 		organizations.OwnerRole(ViewerRole),
 	)
+	// The admin plugin disables a viewer the tenant revokes. Auth-All has no
+	// public delete, and the last-owner guard refuses a membership removal
+	// here, because every viewer owns its own tenant row.
+	// The viewer store has no administrator who signs in; the plugin is here
+	// only so the host can disable a revoked viewer. The role exists in the
+	// hierarchy and nobody holds it.
+	accounts := admin.New(admin.AdminRole(viewerAdminRole))
 	opts := []authall.Option{
 		authall.WithStore(authsqlite.New(db)),
-		authall.WithPlugins(tenants),
+		// The admin plugin needs the roles plugin registered before it.
+		authall.WithPlugins(roles.New(roles.Hierarchy(ViewerRole, viewerAdminRole)), tenants, accounts),
 		authall.WithBasePath(AuthPrefix),
 		authall.WithEmailPassword(),
 		// No email flow exists in v1, so an address is proven by the operator
@@ -76,7 +91,7 @@ func NewAuth(ctx context.Context, database, zone string) (*Viewers, *sql.DB, err
 		db.Close()
 		return nil, nil, errors.New("ingress: the viewer store holds no tenant")
 	}
-	viewers := &Viewers{Auth: auth, tenants: tenants, store: orgStore}
+	viewers := &Viewers{Auth: auth, accounts: accounts, tenants: tenants, store: orgStore}
 	if err := viewers.adoptOldViewers(ctx); err != nil {
 		db.Close()
 		return nil, nil, err
@@ -115,6 +130,48 @@ func (v *Viewers) Belongs(ctx context.Context, tenant, userID string) bool {
 	}
 	_, _, _, err = v.tenants.KeyCredential(ctx, row.ID, userID, "")
 	return err == nil
+}
+
+// List returns the viewers of one tenant.
+func (v *Viewers) List(ctx context.Context, tenant string) ([]store.Viewer, error) {
+	row, err := v.row(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+	page, err := v.tenants.ListMembers(ctx, row.ID, authstore.MemberFilter{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]store.Viewer, 0, len(page.Members))
+	for _, member := range page.Members {
+		user, err := v.Auth.GetUser(ctx, member.UserID)
+		if err != nil {
+			continue
+		}
+		out = append(out, store.Viewer{ID: user.ID, Email: user.Email, CreatedAt: user.CreatedAt})
+	}
+	return out, nil
+}
+
+// Delete removes one viewer of one tenant. A viewer belongs to one tenant,
+// so the login goes with the membership.
+func (v *Viewers) Delete(ctx context.Context, tenant, userID string) error {
+	row, err := v.row(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	// The tenant is checked first, or one tenant would delete another's
+	// viewer by guessing an id.
+	if !v.Belongs(ctx, tenant, userID) {
+		return apierr.ErrNotFound
+	}
+	_ = row
+	if _, err := v.accounts.Disable(ctx, userID); err != nil {
+		return err
+	}
+	// A disabled viewer keeps an open session until it is revoked.
+	_, err = v.Auth.RevokeUserSessions(ctx, userID)
+	return err
 }
 
 // slugOf turns a tenant id into the slug the plugin accepts.

@@ -1,7 +1,10 @@
 package gateway
 
 import (
+	"bufio"
 	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"strings"
 
@@ -52,6 +55,17 @@ func (w *challengeWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack passes the raw connection through. A terminal is a WebSocket
+// upgrade, and every wrapper between the server and the host has to hand
+// the connection on or the upgrade fails.
+func (w *challengeWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("gateway: the response writer cannot be hijacked")
+	}
+	return h.Hijack()
 }
 
 // tenantOfCaller returns the tenant of one authenticated call.
@@ -136,5 +150,5 @@ func (s *Server) issuer() string {
 	if s.Issuer != "" {
 		return strings.TrimSuffix(s.Issuer, "/")
 	}
-	return s.baseURL() + "/auth"
+	return s.baseURL() + "/api/auth"
 }

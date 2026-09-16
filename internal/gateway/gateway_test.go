@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	authall "github.com/alternayte/auth-all"
 	"github.com/alternayte/auth-all/plugins/apikeys"
@@ -83,11 +84,20 @@ func TestProxyNamesTheTenantAndHidesTheCallerCredential(t *testing.T) {
 	default:
 	}
 
-	// The audit log holds the call that did reach the host.
+	// The audit log holds the call that did reach the host. The row is
+	// written after the answer reaches the client, so the test waits for it
+	// instead of assuming the handler has already finished.
 	var count int
-	row := srv.Audit.DB.QueryRow(`SELECT count(*) FROM kiln_audit WHERE tenant_id = ? AND path = '/v1/sandboxes' AND status = 200`, tenantID)
-	if err := row.Scan(&count); err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		row := srv.Audit.DB.QueryRow(`SELECT count(*) FROM kiln_audit WHERE tenant_id = ? AND path = '/v1/sandboxes' AND status = 200`, tenantID)
+		if err := row.Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count == 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	if count != 1 {
 		t.Fatalf("audit rows %d, want 1", count)
@@ -117,7 +127,7 @@ func newTestGateway(t *testing.T, hostURL string) (*Server, string, string) {
 		authall.WithStore(sqlite.New(db)),
 		authall.WithBaseURL("http://gateway.test"),
 		authall.WithEmailPassword(),
-		authall.WithPlugins(roles.New(roles.Hierarchy("viewer", "editor", "operator")), tenants, keys),
+		authall.WithPlugins(roles.New(roles.Hierarchy("reader", "editor", "operator")), tenants, keys),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -295,7 +305,7 @@ func TestOAuthDiscovery(t *testing.T) {
 	}
 	// The resource identifier is the issuer, because the authorization
 	// server accepts its own token only when the audience names it.
-	want := srv.BaseURL + "/auth"
+	want := srv.BaseURL + "/api/auth"
 	if metadata.Resource != want || len(metadata.Servers) != 1 || metadata.Servers[0] != want {
 		t.Fatalf("metadata %+v, want resource and server %q", metadata, want)
 	}
@@ -317,7 +327,7 @@ func TestTenantFromMembership(t *testing.T) {
 	// Sign in as the person who owns the tenant. The session names no active
 	// tenant, so the gateway reads the membership.
 	body := strings.NewReader(`{"email":"operator@example.com","password":"correct horse battery staple"}`)
-	req, _ := http.NewRequest(http.MethodPost, public.URL+"/auth/sign-in/email", body)
+	req, _ := http.NewRequest(http.MethodPost, public.URL+"/api/auth/sign-in/email", body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "http://gateway.test")
 	resp, err := http.DefaultClient.Do(req)
@@ -351,38 +361,40 @@ func TestTenantFromMembership(t *testing.T) {
 	}
 }
 
-// The flow needs two screens. They render, they carry the request through,
-// and they never run code from another origin.
-func TestOAuthPages(t *testing.T) {
+// The web UI answers the origin, and it must never shadow the API. A
+// client-side route that swallowed /v1 would turn every API error into an
+// HTML page.
+func TestUIDoesNotShadowTheAPI(t *testing.T) {
 	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer host.Close()
 	srv, _, _ := newTestGateway(t, host.URL)
-	srv.AuthPrefix = "/auth/"
+	srv.AuthPrefix = "/api/auth/"
 	public := httptest.NewServer(srv.Handler())
 	defer public.Close()
 
-	for _, page := range []struct{ path, wants string }{
-		{"/auth/sign-in?request_id=abc123", "Sign in to Kiln"},
-		{"/auth/consent?request_id=abc123", "oauth2/decide"},
-	} {
-		resp, err := http.Get(public.URL + page.path)
+	// An API path with no handler is the API's 404, not the UI's index.
+	for _, path := range []string{"/v1/nothing", "/api/auth/nothing", "/.well-known/nothing"} {
+		resp, err := http.Get(public.URL + path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("%s status %d", page.path, resp.StatusCode)
+		if strings.Contains(string(body), "<!doctype html") {
+			t.Fatalf("%s answered with the UI index", path)
 		}
-		text := string(body)
-		if !strings.Contains(text, page.wants) {
-			t.Fatalf("%s does not hold %q", page.path, page.wants)
+	}
+	// The sign-in and consent screens belong to the UI now, so the UI
+	// handler answers them. This binary carries no built bundle, so it says
+	// so rather than serving a blank page.
+	for _, path := range []string{"/sign-in", "/consent", "/sandboxes/abc"} {
+		resp, err := http.Get(public.URL + path)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !strings.Contains(text, `"abc123"`) {
-			t.Fatalf("%s loses the request identifier", page.path)
-		}
-		if policy := resp.Header.Get("Content-Security-Policy"); !strings.Contains(policy, "default-src 'none'") {
-			t.Fatalf("%s policy %q", page.path, policy)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound {
+			t.Fatalf("%s reached no handler", path)
 		}
 	}
 }

@@ -74,7 +74,7 @@ export class GeneratedClient {
   }
 `)
 	for _, op := range Operations() {
-		if op.Operator {
+		if op.Operator || op.Terminal {
 			continue
 		}
 		b.WriteString("\n  /** " + op.Summary + " */\n")
@@ -141,7 +141,7 @@ class GeneratedClient:
         return response.json()
 `)
 	for _, op := range Operations() {
-		if op.Operator {
+		if op.Operator || op.Terminal {
 			continue
 		}
 		fmt.Fprintf(&b, "\n    def %s(self%s) -> Any:\n", snake(op.ID), pyArgs(op))

@@ -40,6 +40,8 @@ func serve(conn net.Conn) {
 		writeResult(conn, guestproto.Result{OK: true})
 	case guestproto.OpExec:
 		runExec(conn, &req)
+	case guestproto.OpTerminal:
+		runTerminal(conn, &req)
 	case guestproto.OpReadFile:
 		serveReadFile(conn, &req)
 	case guestproto.OpWriteFile:

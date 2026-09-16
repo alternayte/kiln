@@ -1,0 +1,39 @@
+@import "tailwindcss";
+@import "@xterm/xterm/css/xterm.css";
+
+/* Kiln runs Linux microVMs. The interface borrows from a terminal: a warm
+   near-black ground, one ember accent for the thing that is running, and a
+   monospace face for every identifier the person will copy. */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+
+  --color-ground: oklch(0.16 0.008 60);
+  --color-raised: oklch(0.2 0.009 60);
+  --color-edge: oklch(0.27 0.01 60);
+  --color-ink: oklch(0.95 0.005 80);
+  --color-muted: oklch(0.68 0.012 70);
+  --color-ember: oklch(0.72 0.17 52);
+  --color-ember-ink: oklch(0.19 0.03 52);
+  --color-live: oklch(0.78 0.15 150);
+  --color-warn: oklch(0.8 0.14 85);
+  --color-danger: oklch(0.65 0.19 22);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-ground);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* A focus ring the keyboard can see on every ground in the palette. */
+:focus-visible {
+  outline: 2px solid var(--color-ember);
+  outline-offset: 2px;
+}

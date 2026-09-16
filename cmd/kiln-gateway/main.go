@@ -139,7 +139,7 @@ func migrate() error {
 // newAuth builds the auth stack this gateway runs on. One auth-all tenant row
 // is one tenant, and a key of that row is a machine credential for it.
 // authPrefix is where the login and OAuth routes live.
-const authPrefix = "/auth"
+const authPrefix = "/api/auth"
 
 // operatorRole names the role that administers tenants.
 func operatorRole() string { return env("KILN_OPERATOR_ROLE", "operator") }
@@ -153,7 +153,7 @@ func newAuth(baseURL string) (*authall.Auth, *organizations.Plugin, *apikeys.Plu
 		organizations.Roles(
 			organizations.Role("operator", "*"),
 			organizations.Role("editor", "sandbox:*", "template:*", "snapshot:*", "organization:read"),
-			organizations.Role("viewer", "sandbox:read", "template:read", "snapshot:read", "organization:read"),
+			organizations.Role("reader", "sandbox:read", "template:read", "snapshot:read", "organization:read"),
 		),
 		organizations.DefaultRole("editor"),
 		organizations.OwnerRole("operator"),
@@ -171,8 +171,11 @@ func newAuth(baseURL string) (*authall.Auth, *organizations.Plugin, *apikeys.Plu
 	}
 	provider := oauthprovider.New(
 		oauthprovider.KeyEncryptionKey(kek),
-		oauthprovider.LoginPath(env("KILN_LOGIN_PATH", authPrefix+"/sign-in")),
-		oauthprovider.ConsentPath(env("KILN_CONSENT_PATH", authPrefix+"/consent")),
+		// The web UI owns these two screens. They sit outside the auth
+		// prefix, because that prefix is the API's and the SPA answers the
+		// rest of the origin.
+		oauthprovider.LoginPath(env("KILN_LOGIN_PATH", "/sign-in")),
+		oauthprovider.ConsentPath(env("KILN_CONSENT_PATH", "/consent")),
 		oauthprovider.AllowDynamicRegistration(),
 		// offline_access is what an agent asks for when it wants a refresh
 		// token, so a long task survives one access token.
@@ -200,8 +203,15 @@ func newAuth(baseURL string) (*authall.Auth, *organizations.Plugin, *apikeys.Plu
 		authall.WithRateLimiter(limiter),
 		authall.WithBaseURL(baseURL),
 		authall.WithEmailPassword(),
+		// The web UI authenticates every write with this cookie, so a
+		// cross-site request must not carry it, and an unsafe request from
+		// another origin must fail. The UI is served from the gateway
+		// itself, so no third origin is trusted.
+		authall.WithCookieSameSite(http.SameSiteStrictMode),
+		authall.WithStrictOriginCheck(),
+		authall.WithTrustedOrigins(strings.TrimSuffix(baseURL, "/")),
 		authall.WithPlugins(
-			roles.New(roles.Hierarchy("viewer", "editor", "operator")),
+			roles.New(roles.Hierarchy("reader", "editor", "operator")),
 			tenants,
 			keys,
 			provider,

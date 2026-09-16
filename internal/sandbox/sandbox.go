@@ -308,14 +308,21 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 	if err := vm.ResumeHooks(ctx, entropy, time.Now().UnixNano(), row.ID, env); err != nil {
 		return store.Sandbox{}, err
 	}
-	// The application starts after the resume hooks, which place the
-	// hostname and the secrets it reads.
-	if img.fromTemplate && len(img.template.Start) > 0 {
-		if err := vm.Start(ctx, img.template.Start, img.template.StartPort,
-			guestproto.StartDeadlineSeconds, env); err != nil {
-			return store.Sandbox{}, fmt.Errorf("start %v on port %d: %w",
-				img.template.Start, img.template.StartPort, err)
+	if len(img.template.Start) > 0 && img.template.StartPort > 0 {
+		// The application starts after the resume hooks, which place the
+		// hostname and the secrets it reads. Only a template snapshot needs
+		// starting: a sleep image and a fork image restore memory that
+		// already holds the process.
+		if img.fromTemplate {
+			if err := vm.Start(ctx, img.template.Start, img.template.StartPort,
+				guestproto.StartDeadlineSeconds, env); err != nil {
+				return store.Sandbox{}, fmt.Errorf("start %v on port %d: %w",
+					img.template.Start, img.template.StartPort, err)
+			}
 		}
+		// The watch dies with the VM it watches, so every restore takes it
+		// up again. Without this a sandbox that slept once reports no crash
+		// for the rest of its life.
 		m.watchStart(row.ID, vm, img.template.StartPort)
 	}
 	if err := m.cfg.Store.SetSandboxRuntime(ctx, row.ID, att.TAPName, row.VsockCID, vm.PID); err != nil {

@@ -211,3 +211,7 @@ model name:
     jq --arg p "{{name}}" --arg m "$id" '.defaultProvider = $p | .defaultModel = $m' "$settings" > "$tmp"
     mv "$tmp" "$settings"
     echo "pi default: {{name}}/$id"
+
+# Write the generated clients, the OpenAPI document and the agent files.
+sdk:
+    go run ./cmd/kiln-sdk

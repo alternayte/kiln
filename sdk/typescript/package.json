@@ -1,0 +1,13 @@
+{
+  "name": "@alternayte/kiln",
+  "version": "0.2.0",
+  "description": "Isolated Linux microVMs: create, exec, fork, sleep and publish sandboxes.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "license": "MIT"
+}

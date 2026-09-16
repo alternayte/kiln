@@ -1,0 +1,307 @@
+# Kiln
+
+> Isolated Linux microVMs on one host. A sandbox boots from a template snapshot in under a second, forks into copies, sleeps, and serves a port on a public hostname.
+
+Authenticate every call with `Authorization: Bearer <api key>`. A key names one tenant, and a call only ever reaches that tenant's rows.
+
+## Machine readable
+
+- [OpenAPI](https://api.example.com/openapi.json): every route, body and error code.
+- [MCP](https://api.example.com/mcp): the same operations as tools, over Streamable HTTP.
+- [Catalog](https://api.example.com/.well-known/ai-catalog.json): this index, in one file.
+- [Full documentation](https://api.example.com/llms-full.txt): every operation with its fields.
+
+## The shortest path to a running sandbox
+
+1. `POST /v1/templates` builds a template from an OCI image. It answers 202 and builds after the answer.
+2. `GET /v1/templates/{name}` until `state` is `ready`.
+3. `POST /v1/sandboxes` restores that template into a sandbox.
+4. `POST /v1/sandboxes/{id}/exec` runs a command. Send `Accept: text/event-stream` to read output as it runs.
+5. `POST /v1/sandboxes/{id}/publish` serves a guest port on a public hostname.
+6. `DELETE /v1/sandboxes/{id}` destroys it. Nothing is left behind.
+
+## Errors
+
+Every error is `{"error":{"code":"...","message":"..."}}`. The code is stable: `invalid`, `not_found`, `conflict`, `exhausted`, `internal`. `exhausted` means a cap of this tenant is reached; the message names the cap. `not_found` also covers a row of another tenant.
+
+## Operations
+
+### events
+
+`GET /v1/events`
+
+Read the event stream of this tenant.
+
+This call can stream. Read the body as it arrives.
+
+Answers 200 with `EventList`.
+
+### health
+
+`GET /v1/health`
+
+Report whether the host can run sandboxes.
+
+Answers 200 with `Health`.
+
+### listSandboxes
+
+`GET /v1/sandboxes`
+
+List the sandboxes of this tenant.
+
+Answers 200 with `SandboxList`.
+
+### createSandbox
+
+`POST /v1/sandboxes`
+
+Create a sandbox by restoring a template snapshot.
+
+Body:
+
+- `template` (string, required): Template the sandbox restores from.
+- `lifecycle` (string): ephemeral or persistent.
+- `ttl_seconds` (integer): Seconds until the sandbox is destroyed.
+- `idle_seconds` (integer): Seconds of inactivity until the sandbox sleeps.
+- `metadata` (object): Free-form labels the caller reads back.
+- `secrets` (array of string): Names of host secrets to inject.
+
+Answers 201 with `Sandbox`.
+
+### deleteSandbox
+
+`DELETE /v1/sandboxes/{id}`
+
+Destroy a sandbox and retire its hostnames.
+
+Path:
+
+- `id` (string): Sandbox id.
+
+Answers 204 with no body.
+
+### getSandbox
+
+`GET /v1/sandboxes/{id}`
+
+Read one sandbox with its published ports.
+
+Path:
+
+- `id` (string): Sandbox id.
+
+Answers 200 with `Sandbox`.
+
+### exec
+
+`POST /v1/sandboxes/{id}/exec`
+
+Run a command inside a sandbox. Accept text/event-stream to read the output as it runs.
+
+This call can stream. Read the body as it arrives.
+
+Path:
+
+- `id` (string): Sandbox id.
+
+Body:
+
+- `cmd` (array of string, required): Command and its arguments.
+- `cwd` (string): Directory the command runs in.
+- `env` (object): Extra environment variables.
+- `timeout_seconds` (integer): Seconds until the command is killed.
+
+Answers 200 with `ExecResult`.
+
+### readFile
+
+`GET /v1/sandboxes/{id}/files/{path...}`
+
+Read one file out of a sandbox.
+
+This call can stream. Read the body as it arrives.
+
+Path:
+
+- `id` (string): Sandbox id.
+- `path` (string): Path inside the sandbox.
+
+Answers 200 with `FileBody`.
+
+### writeFile
+
+`PUT /v1/sandboxes/{id}/files/{path...}`
+
+Write one file into a sandbox.
+
+This call can stream. Read the body as it arrives.
+
+Path:
+
+- `id` (string): Sandbox id.
+- `path` (string): Path inside the sandbox.
+
+Answers 204 with no body.
+
+### fork
+
+`POST /v1/sandboxes/{id}/fork`
+
+Snapshot a running sandbox and restore several copies of it.
+
+Path:
+
+- `id` (string): Sandbox id.
+
+Body:
+
+- `count` (integer, required): Number of copies.
+- `allow_secret_fork` (boolean): Allow a fork of a sandbox that holds secrets.
+
+Answers 201 with `SandboxList`.
+
+### publish
+
+`POST /v1/sandboxes/{id}/publish`
+
+Serve a guest port on a public hostname.
+
+Path:
+
+- `id` (string): Sandbox id.
+
+Body:
+
+- `port` (integer, required): Port inside the sandbox.
+- `visibility` (string, required): public or team.
+
+Answers 201 with `Published`.
+
+### retire
+
+`DELETE /v1/sandboxes/{id}/publish/{port}`
+
+Retire a published hostname. It answers 404 from then on.
+
+Path:
+
+- `id` (string): Sandbox id.
+- `port` (integer): Published guest port.
+
+Answers 204 with no body.
+
+### snapshot
+
+`POST /v1/sandboxes/{id}/snapshot`
+
+Snapshot a sandbox. With stop the sandbox sleeps and keeps its hostnames.
+
+Path:
+
+- `id` (string): Sandbox id.
+
+Body:
+
+- `stop` (boolean): Stop the sandbox after the snapshot.
+
+Answers 201 with `SnapshotCreated`.
+
+### listSnapshots
+
+`GET /v1/snapshots`
+
+List the snapshots of this tenant.
+
+Answers 200 with `SnapshotList`.
+
+### deleteSnapshot
+
+`DELETE /v1/snapshots/{id}`
+
+Delete a snapshot that has no live sandbox.
+
+Path:
+
+- `id` (string): Snapshot id.
+
+Answers 204 with no body.
+
+### getSnapshot
+
+`GET /v1/snapshots/{id}`
+
+Read one snapshot.
+
+Path:
+
+- `id` (string): Snapshot id.
+
+Answers 200 with `Snapshot`.
+
+### restore
+
+`POST /v1/snapshots/{id}/restore`
+
+Restore a snapshot into one or more new sandboxes.
+
+Path:
+
+- `id` (string): Snapshot id.
+
+Body:
+
+- `count` (integer, required): Number of sandboxes.
+- `allow_secret_fork` (boolean): Allow a restore of a snapshot that holds secrets.
+
+Answers 201 with `SandboxList`.
+
+### listTemplates
+
+`GET /v1/templates`
+
+List the templates of this tenant.
+
+Answers 200 with `TemplateList`.
+
+### createTemplate
+
+`POST /v1/templates`
+
+Build a template from an OCI image. The build runs after the answer.
+
+Body:
+
+- `name` (string, required): Name of the template inside this tenant.
+- `image` (string, required): OCI image reference, for example docker.io/library/python:3.12-slim.
+- `vcpus` (integer): Virtual CPUs of every sandbox from this template.
+- `memory_mb` (integer): Memory of every sandbox from this template.
+- `disk_mb` (integer): Disk of every sandbox from this template.
+- `setup` (array of string): Commands that run once while the template builds.
+- `egress_allow` (array of string, required): Hostnames a sandbox may reach. An empty list allows no egress.
+
+Answers 202 with `TemplateState`.
+
+### deleteTemplate
+
+`DELETE /v1/templates/{name}`
+
+Delete a template that has no live sandbox and no snapshot.
+
+Path:
+
+- `name` (string): Name of the template.
+
+Answers 204 with no body.
+
+### getTemplate
+
+`GET /v1/templates/{name}`
+
+Read one template.
+
+Path:
+
+- `name` (string): Name of the template.
+
+Answers 200 with `Template`.

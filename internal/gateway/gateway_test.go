@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -171,4 +172,86 @@ func newTestGateway(t *testing.T, hostURL string) (*Server, string, string) {
 		Host:    &Host{URL: parsed, Token: "host-token", Transport: http.DefaultTransport},
 		Audit:   audit,
 	}, plaintext, row.ID
+}
+
+// An agent reads the contract without a credential, and drives the same
+// operations as tools with one.
+func TestAgentSurface(t *testing.T) {
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(TenantHeader) == "" {
+			t.Errorf("the host call names no tenant")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"sbx-1","state":"running"}`))
+	}))
+	defer host.Close()
+	srv, key, _ := newTestGateway(t, host.URL)
+	srv.BaseURL = "https://api.example.com"
+	public := httptest.NewServer(srv.Handler())
+	defer public.Close()
+
+	for _, path := range []string{"/openapi.json", "/llms.txt", "/llms-full.txt", "/.well-known/ai-catalog.json"} {
+		resp, err := http.Get(public.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s status %d", path, resp.StatusCode)
+		}
+		if len(body) == 0 {
+			t.Fatalf("%s is empty", path)
+		}
+	}
+
+	rpc := func(t *testing.T, payload string) map[string]any {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodPost, public.URL+"/mcp", strings.NewReader(payload))
+		req.Header.Set("Authorization", "Bearer "+key)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	initialized := rpc(t, `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	result, _ := initialized["result"].(map[string]any)
+	if result["protocolVersion"] != ProtocolVersion {
+		t.Fatalf("initialize %+v", initialized)
+	}
+	listed := rpc(t, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	result, _ = listed["result"].(map[string]any)
+	toolList, _ := result["tools"].([]any)
+	if len(toolList) < 10 {
+		t.Fatalf("the tool list holds %d tools", len(toolList))
+	}
+	for _, tool := range toolList {
+		if tool.(map[string]any)["name"] == "createTenant" {
+			t.Fatal("an operator route reached the tool list")
+		}
+	}
+	called := rpc(t, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"getSandbox","arguments":{"id":"sbx-1"}}}`)
+	result, _ = called["result"].(map[string]any)
+	structured, _ := result["structuredContent"].(map[string]any)
+	if structured["id"] != "sbx-1" {
+		t.Fatalf("tools/call %+v", called)
+	}
+
+	// A tool call with no credential never reaches the host.
+	resp, err := http.Post(public.URL+"/mcp", "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":4,"method":"tools/list"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status %d for an MCP call with no credential, want 401", resp.StatusCode)
+	}
 }

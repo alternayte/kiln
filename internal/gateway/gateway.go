@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -13,6 +14,8 @@ import (
 	authall "github.com/alternayte/auth-all"
 	"github.com/alternayte/auth-all/plugins/apikeys"
 	"github.com/alternayte/auth-all/plugins/organizations"
+
+	"github.com/alternayte/kiln/internal/apispec"
 )
 
 // TenantHeader names the tenant of one call to the host. It repeats the
@@ -33,6 +36,8 @@ type Server struct {
 	Audit *Audit
 	// AuthPrefix is where the login routes are mounted.
 	AuthPrefix string
+	// BaseURL is the public URL of this gateway. The agent files name it.
+	BaseURL string
 	// OperatorRole may create tenants and read every tenant's usage.
 	OperatorRole string
 }
@@ -55,6 +60,14 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /operator/tenants/{id}/caps", s.Auth.RequireAuth(http.HandlerFunc(s.setTenantCaps)))
 	// Everything under /v1 is the host API, with the same paths and bodies.
 	mux.Handle("/v1/", s.Auth.RequireAuth(http.HandlerFunc(s.forward)))
+	// One agent drives the same operations as tools.
+	mux.Handle("POST /mcp", s.Auth.RequireAuth(http.HandlerFunc(s.mcp)))
+	// The contract and the agent documentation need no credential: they
+	// describe the API and carry no data of any tenant.
+	mux.HandleFunc("GET /openapi.json", s.openAPI)
+	mux.HandleFunc("GET /llms.txt", s.llms)
+	mux.HandleFunc("GET /llms-full.txt", s.llmsFull)
+	mux.HandleFunc("GET /.well-known/ai-catalog.json", s.catalog)
 	return mux
 }
 
@@ -172,4 +185,36 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // writeError uses the error shape of the host API, so one client handles both.
 func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
+}
+
+// baseURL is the public URL an agent reads the files from.
+func (s *Server) baseURL() string {
+	if s.BaseURL != "" {
+		return strings.TrimSuffix(s.BaseURL, "/")
+	}
+	return ""
+}
+
+func (s *Server) openAPI(w http.ResponseWriter, r *http.Request) {
+	body, err := apispec.OpenAPIJSON(s.baseURL())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
+func (s *Server) llms(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	io.WriteString(w, apispec.LLMsTXT(s.baseURL()))
+}
+
+func (s *Server) llmsFull(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	io.WriteString(w, apispec.LLMsFullTXT(s.baseURL()))
+}
+
+func (s *Server) catalog(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, apispec.Catalog(s.baseURL()))
 }

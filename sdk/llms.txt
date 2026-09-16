@@ -1,0 +1,25 @@
+# Kiln
+
+> Isolated Linux microVMs on one host. A sandbox boots from a template snapshot in under a second, forks into copies, sleeps, and serves a port on a public hostname.
+
+Authenticate every call with `Authorization: Bearer <api key>`. A key names one tenant, and a call only ever reaches that tenant's rows.
+
+## Machine readable
+
+- [OpenAPI](https://api.example.com/openapi.json): every route, body and error code.
+- [MCP](https://api.example.com/mcp): the same operations as tools, over Streamable HTTP.
+- [Catalog](https://api.example.com/.well-known/ai-catalog.json): this index, in one file.
+- [Full documentation](https://api.example.com/llms-full.txt): every operation with its fields.
+
+## The shortest path to a running sandbox
+
+1. `POST /v1/templates` builds a template from an OCI image. It answers 202 and builds after the answer.
+2. `GET /v1/templates/{name}` until `state` is `ready`.
+3. `POST /v1/sandboxes` restores that template into a sandbox.
+4. `POST /v1/sandboxes/{id}/exec` runs a command. Send `Accept: text/event-stream` to read output as it runs.
+5. `POST /v1/sandboxes/{id}/publish` serves a guest port on a public hostname.
+6. `DELETE /v1/sandboxes/{id}` destroys it. Nothing is left behind.
+
+## Errors
+
+Every error is `{"error":{"code":"...","message":"..."}}`. The code is stable: `invalid`, `not_found`, `conflict`, `exhausted`, `internal`. `exhausted` means a cap of this tenant is reached; the message names the cap. `not_found` also covers a row of another tenant.

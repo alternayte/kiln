@@ -62,6 +62,7 @@ func run() error {
 			Host:         host,
 			Audit:        audit,
 			AuthPrefix:   "/auth/",
+			BaseURL:      baseURL,
 			OperatorRole: env("KILN_OPERATOR_ROLE", "operator"),
 		}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,

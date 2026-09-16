@@ -13,6 +13,12 @@ type Phase = "connecting" | "connected" | "disconnected";
 // itself and only says so once retrying has stopped helping.
 const RETRIES = 4;
 const BACKOFF_MS = [500, 1000, 2000, 4000];
+// A socket that never opens and never closes is the shape of a server in
+// front of the gateway that speaks HTTP/2 or HTTP/3 to the browser: a
+// WebSocket upgrade needs Extended CONNECT there, which the host does not
+// serve. Without this bound the pane says "connecting" for ever and blames
+// nothing.
+const OPEN_TIMEOUT_MS = 10_000;
 
 /**
  * SandboxTerminal is the interactive shell of one sandbox. The socket carries
@@ -110,12 +116,26 @@ export function SandboxTerminal({
     socket.binaryType = "arraybuffer";
     const encoder = new TextEncoder();
 
+    const openTimer = setTimeout(() => {
+      if (socket.readyState === WebSocket.CONNECTING) {
+        xterm.write(
+          "\r\n\x1b[2m[the connection never opened. Something in front of the gateway may be " +
+            "serving HTTP/2 or HTTP/3, where a WebSocket needs Extended CONNECT.]\x1b[0m\r\n",
+        );
+        setPhase("disconnected");
+        setReason("the connection never opened");
+        socket.close();
+      }
+    }, OPEN_TIMEOUT_MS);
+
     socket.onopen = () => {
+      clearTimeout(openTimer);
       retries.current = 0;
       setPhase("connected");
     };
     socket.onmessage = (message) => xterm.write(new Uint8Array(message.data as ArrayBuffer));
     socket.onclose = (event) => {
+      clearTimeout(openTimer);
       const why = event.reason || "the connection closed";
       xterm.write(`\r\n\x1b[2m[${why}]\x1b[0m\r\n`);
       // The shell exiting is the person's own doing, so it never retries.
@@ -150,6 +170,7 @@ export function SandboxTerminal({
     observer.observe(element);
 
     return () => {
+      clearTimeout(openTimer);
       if (retryTimer.current) clearTimeout(retryTimer.current);
       observer.disconnect();
       typed.dispose();

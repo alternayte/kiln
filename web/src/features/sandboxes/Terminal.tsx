@@ -20,6 +20,8 @@ const BACKOFF_MS = [500, 1000, 2000, 4000];
 // serve. Without this bound the pane says "connecting" for ever and blames
 // nothing.
 const OPEN_TIMEOUT_MS = 30_000;
+// How long a shell must hold before the retry budget is forgiven.
+const STEADY_MS = 5_000;
 
 /**
  * SandboxTerminal is the interactive shell of one sandbox. The socket carries
@@ -47,6 +49,7 @@ export function SandboxTerminal({
   const [attempt, setAttempt] = useState(0);
   const retries = useRef(0);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const steady = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refit = useCallback(() => {
     try {
@@ -138,12 +141,18 @@ export function SandboxTerminal({
 
     socket.onopen = () => {
       clearTimeout(openTimer);
-      retries.current = 0;
       setPhase("connected");
+      // The retry budget is forgiven only once the shell has held for a
+      // while. A socket that opens and dies at once is a failure that
+      // repeats, and resetting on open alone retries it for ever.
+      steady.current = setTimeout(() => {
+        retries.current = 0;
+      }, STEADY_MS);
     };
     socket.onmessage = (message) => xterm.write(new Uint8Array(message.data as ArrayBuffer));
     socket.onclose = (event) => {
       clearTimeout(openTimer);
+      if (steady.current) clearTimeout(steady.current);
       if (ours) return;
       const why = event.reason || "the connection closed";
       xterm.write(`\r\n\x1b[2m[${why}]\x1b[0m\r\n`);
@@ -181,6 +190,7 @@ export function SandboxTerminal({
     return () => {
       ours = true;
       clearTimeout(openTimer);
+      if (steady.current) clearTimeout(steady.current);
       if (retryTimer.current) clearTimeout(retryTimer.current);
       observer.disconnect();
       typed.dispose();

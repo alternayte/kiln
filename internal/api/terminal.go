@@ -7,10 +7,12 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/coder/websocket"
 
 	"github.com/alternayte/kiln/internal/guestproto"
+	"github.com/alternayte/kiln/internal/runtime"
 )
 
 // terminalReadLimit bounds one client frame. Keystrokes and a paste fit; a
@@ -58,12 +60,16 @@ func (s *Server) terminalSandbox(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if err != nil {
-				if !errors.Is(err, io.EOF) {
+				if errors.Is(err, io.EOF) {
+					// The shell exited. Tell the client why, rather than
+					// dropping the socket and leaving it to guess.
+					_ = conn.Close(websocket.StatusNormalClosure, "the shell exited")
 					return
 				}
-				// The shell exited. Tell the client why, rather than
-				// dropping the socket and leaving it to guess.
-				_ = conn.Close(websocket.StatusNormalClosure, "the shell exited")
+				// Any other failure closes with its reason too. A socket
+				// that dies with no close frame leaves the client retrying
+				// a thing that will never work.
+				_ = conn.Close(websocket.StatusInternalError, closeReason(err))
 				return
 			}
 		}
@@ -86,6 +92,21 @@ func (s *Server) terminalSandbox(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// closeReason fits a failure into the 123 bytes a close frame allows, and
+// names the one failure a person can act on: a sandbox whose guest agent
+// predates the terminal, which no amount of retrying will fix.
+func closeReason(err error) string {
+	if runtime.IsExecError(err, guestproto.CodeInvalid) &&
+		strings.Contains(err.Error(), guestproto.OpTerminal) {
+		return "this sandbox runs a guest agent with no terminal; rebuild its template"
+	}
+	reason := err.Error()
+	if len(reason) > 123 {
+		reason = reason[:123]
+	}
+	return reason
 }
 
 func atoiDefault(s string, fallback int) int {

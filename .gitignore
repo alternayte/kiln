@@ -2,3 +2,7 @@
 .agents/handoff
 tests/p1/testdata
 infra/infra
+
+# Python leaves these behind when the package is imported.
+__pycache__/
+*.pyc

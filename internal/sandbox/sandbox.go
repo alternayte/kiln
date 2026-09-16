@@ -221,7 +221,7 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (store.Sandbox,
 	m.event(ctx, id, "", store.SandboxCreating, "create", now)
 
 	img := image{
-		dir:      filepath.Join(m.cfg.Root, "templates", tpl.Name),
+		dir:      m.templateDir(tpl),
 		template: tpl,
 	}
 	running, err := m.restore(ctx, img, row, env, restoreOptions{from: store.SandboxCreating, reason: "restored"})
@@ -873,4 +873,14 @@ func (m *Manager) WriteFile(ctx context.Context, id, path string, body io.Reader
 	}
 	m.touch(ctx, row)
 	return nil
+}
+
+// templateDir is the directory of one template's files. The tenant names the
+// parent, so one template name serves every tenant without collision.
+func (m *Manager) templateDir(tpl store.Template) string {
+	tenant := tpl.TenantID
+	if tenant == "" {
+		tenant = store.DefaultTenant
+	}
+	return filepath.Join(m.cfg.Root, "templates", tenant, tpl.Name)
 }

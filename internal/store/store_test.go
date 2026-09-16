@@ -42,6 +42,8 @@ func TestTemplateRoundTrip(t *testing.T) {
 	if err := s.CreateTemplate(ctx, want); err != nil {
 		t.Fatal(err)
 	}
+	// A call with no tenant writes the default tenant, and the row names it.
+	want.TenantID = DefaultTenant
 	got, err := s.GetTemplate(ctx, "py312")
 	if err != nil {
 		t.Fatal(err)

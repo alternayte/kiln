@@ -79,7 +79,7 @@ func TestGateP2(t *testing.T) {
 	// no reconciler yet, so the gate clears its own names first.
 	for _, name := range []string{"py312", "badbuild"} {
 		if _, err := st.GetTemplate(ctx, name); err == nil {
-			if rerr := os.RemoveAll(mgr.TemplateDir(name)); rerr != nil {
+			if rerr := os.RemoveAll(mgr.TemplateDir(store.DefaultTenant, name)); rerr != nil {
 				t.Fatal(rerr)
 			}
 			if derr := st.DeleteTemplate(ctx, name); derr != nil {
@@ -157,7 +157,7 @@ func testBuildAndExec(t *testing.T, ctx context.Context, cli *client, mgr *templ
 		t.Fatalf("egress_allow %v", v.EgressAllow)
 	}
 
-	dir := mgr.TemplateDir(name)
+	dir := mgr.TemplateDir(store.DefaultTenant, name)
 	for _, f := range []string{"rootfs.ext4", "mem", "state", "manifest.json"} {
 		fi, err := os.Stat(filepath.Join(dir, f))
 		if err != nil {
@@ -307,7 +307,7 @@ func testFailedBuild(t *testing.T, cli *client, mgr *template.Manager) {
 	if !strings.Contains(v.Error, "boom") {
 		t.Fatalf("error %q does not carry the setup output", v.Error)
 	}
-	if _, err := os.Stat(mgr.TemplateDir(name)); !os.IsNotExist(err) {
+	if _, err := os.Stat(mgr.TemplateDir(store.DefaultTenant, name)); !os.IsNotExist(err) {
 		t.Fatalf("failed build left its directory behind: %v", err)
 	}
 

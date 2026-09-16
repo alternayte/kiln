@@ -113,9 +113,30 @@ type Manager struct {
 	building map[string]bool
 }
 
-// TemplateDir is the on-disk directory of one template.
-func (m *Manager) TemplateDir(name string) string {
-	return filepath.Join(m.Root, "templates", name)
+// TemplateDir is the on-disk directory of one template. The tenant names the
+// parent, so two tenants with one template name never share a rootfs or a
+// memory image.
+func (m *Manager) TemplateDir(tenant, name string) string {
+	if tenant == "" {
+		tenant = store.DefaultTenant
+	}
+	return filepath.Join(m.Root, "templates", tenant, name)
+}
+
+// dirOf is the directory of the template this context reaches.
+func (m *Manager) dirOf(ctx context.Context, name string) string {
+	tenant, _ := store.TenantFrom(ctx)
+	return m.TemplateDir(tenant, name)
+}
+
+// buildKey names one build of one tenant, because two tenants may build one
+// template name at the same time.
+func buildKey(ctx context.Context, name string) string {
+	tenant, ok := store.TenantFrom(ctx)
+	if !ok {
+		tenant = store.DefaultTenant
+	}
+	return tenant + "/" + name
 }
 
 // Start records the build and returns before it runs. A name that is building
@@ -135,14 +156,14 @@ func (m *Manager) Start(ctx context.Context, req BuildRequest) error {
 		State:       store.TemplateBuilding,
 		CreatedAt:   now,
 	}
-	if m.IsBuilding(req.Name) {
+	if m.IsBuilding(buildKey(ctx, req.Name)) {
 		return store.ErrConflict
 	}
 	// Protect the build before the row lands, so a sweep that runs in between
 	// never reads a building row as stale.
-	m.setBuilding(req.Name, true)
+	m.setBuilding(buildKey(ctx, req.Name), true)
 	if err := m.Store.StartTemplateBuild(ctx, row); err != nil {
-		m.setBuilding(req.Name, false)
+		m.setBuilding(buildKey(ctx, req.Name), false)
 		return err
 	}
 	if err := m.Store.AppendEvent(ctx, store.Event{
@@ -159,10 +180,11 @@ func (m *Manager) Start(ctx context.Context, req BuildRequest) error {
 }
 
 // IsBuilding reports whether this process is building one template now.
-func (m *Manager) IsBuilding(name string) bool {
+// The key is the tenant and the name, from buildKey.
+func (m *Manager) IsBuilding(key string) bool {
 	m.buildMu.Lock()
 	defer m.buildMu.Unlock()
-	return m.building[name]
+	return m.building[key]
 }
 
 // Protected returns the internal ids of the build VMs this process runs. The
@@ -171,24 +193,24 @@ func (m *Manager) Protected() map[string]bool {
 	m.buildMu.Lock()
 	defer m.buildMu.Unlock()
 	out := make(map[string]bool, 2*len(m.building))
-	for name := range m.building {
-		out[m.buildID(name, "s")] = true
-		out[m.buildID(name, "n")] = true
+	for key := range m.building {
+		out[m.buildID(key, "s")] = true
+		out[m.buildID(key, "n")] = true
 	}
 	return out
 }
 
-func (m *Manager) setBuilding(name string, on bool) {
+func (m *Manager) setBuilding(key string, on bool) {
 	m.buildMu.Lock()
 	defer m.buildMu.Unlock()
 	if m.building == nil {
 		m.building = map[string]bool{}
 	}
 	if on {
-		m.building[name] = true
+		m.building[key] = true
 		return
 	}
-	delete(m.building, name)
+	delete(m.building, key)
 }
 
 // TemplateInfo returns the row with its snapshot size and child count.
@@ -199,7 +221,7 @@ func (m *Manager) TemplateInfo(ctx context.Context, name string) (Info, error) {
 	}
 	info := Info{Template: row}
 	for _, file := range []string{"mem", "state"} {
-		if fi, err := os.Stat(filepath.Join(m.TemplateDir(name), file)); err == nil {
+		if fi, err := os.Stat(filepath.Join(m.dirOf(ctx, name), file)); err == nil {
 			info.SnapshotBytes += fi.Size()
 		}
 	}
@@ -228,7 +250,7 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 	if live > 0 || snapshots > 0 {
 		return store.ErrConflict
 	}
-	if err := os.RemoveAll(m.TemplateDir(name)); err != nil {
+	if err := os.RemoveAll(m.dirOf(ctx, name)); err != nil {
 		return err
 	}
 	return m.Store.DeleteTemplate(ctx, name)
@@ -236,7 +258,7 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 
 // build runs one build and records its terminal state.
 func (m *Manager) build(ctx context.Context, req BuildRequest) {
-	defer m.setBuilding(req.Name, false)
+	defer m.setBuilding(buildKey(ctx, req.Name), false)
 	err := m.runBuild(ctx, req)
 	now := m.now()
 	message := ""
@@ -246,7 +268,7 @@ func (m *Manager) build(ctx context.Context, req BuildRequest) {
 		state = store.TemplateFailed
 		message = err.Error()
 		reason = "build failed"
-		if rerr := os.RemoveAll(m.TemplateDir(req.Name)); rerr != nil {
+		if rerr := os.RemoveAll(m.dirOf(ctx, req.Name)); rerr != nil {
 			message = fmt.Sprintf("%s; remove template dir: %v", message, rerr)
 		}
 	}
@@ -266,7 +288,7 @@ func (m *Manager) build(ctx context.Context, req BuildRequest) {
 }
 
 func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
-	dir := m.TemplateDir(req.Name)
+	dir := m.dirOf(ctx, req.Name)
 	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}

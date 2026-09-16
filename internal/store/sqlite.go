@@ -215,7 +215,7 @@ func (s *sqliteStore) SetTemplateState(ctx context.Context, name, state, message
 func (s *sqliteStore) GetTemplate(ctx context.Context, name string) (Template, error) {
 	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT
-		name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
+		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
 		egress_allow, state, error, created_at
 	FROM templates WHERE name = ?`+clause, append([]any{name}, args...)...)
 	t, err := scanTemplate(row)
@@ -228,7 +228,7 @@ func (s *sqliteStore) GetTemplate(ctx context.Context, name string) (Template, e
 func (s *sqliteStore) ListTemplates(ctx context.Context) ([]Template, error) {
 	clause, args := scope(ctx, "tenant_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT
-		name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
+		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
 		egress_allow, state, error, created_at
 	FROM templates WHERE 1 = 1`+clause+` ORDER BY name`, args...)
 	if err != nil {
@@ -434,7 +434,7 @@ func scanTemplate(row scanner) (Template, error) {
 		created int64
 	)
 	if err := row.Scan(
-		&t.Name, &t.ImageRef, &t.ImageDigest, &t.VCPUs, &t.MemoryMB, &t.DiskMB,
+		&t.TenantID, &t.Name, &t.ImageRef, &t.ImageDigest, &t.VCPUs, &t.MemoryMB, &t.DiskMB,
 		&egress, &t.State, &message, &created,
 	); err != nil {
 		return Template{}, err

@@ -51,6 +51,9 @@ var ErrExhausted = errors.New("store: exhausted")
 
 // Template is one row of the templates table. EgressAllow is never nil.
 type Template struct {
+	// TenantID owns the template. It names the directory of its files, so
+	// two tenants with one template name never share a rootfs.
+	TenantID    string
 	Name        string
 	ImageRef    string
 	ImageDigest string

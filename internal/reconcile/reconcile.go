@@ -200,7 +200,7 @@ func (r *Reconciler) failStuckTemplates(ctx context.Context, report *Report) {
 		if row.State != store.TemplateBuilding {
 			continue
 		}
-		if r.Templates != nil && r.Templates.IsBuilding(row.Name) {
+		if r.Templates != nil && r.Templates.IsBuilding(row.TenantID+"/"+row.Name) {
 			continue
 		}
 		if err := r.Store.SetTemplateState(ctx, row.Name, store.TemplateFailed, "interrupted by restart"); err != nil {
@@ -215,7 +215,7 @@ func (r *Reconciler) failStuckTemplates(ctx context.Context, report *Report) {
 			log.Printf("reconcile: template %s: failure event: %v", row.Name, err)
 		}
 		if r.Templates != nil {
-			_ = os.RemoveAll(r.Templates.TemplateDir(row.Name))
+			_ = os.RemoveAll(r.Templates.TemplateDir(row.TenantID, row.Name))
 		}
 		report.Stuck = append(report.Stuck, row.Name)
 	}

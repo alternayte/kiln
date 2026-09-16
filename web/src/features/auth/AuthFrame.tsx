@@ -8,7 +8,7 @@ export function AuthFrame({
 }: {
   title: string;
   subtitle?: string;
-  children: ReactNode;
+  children?: ReactNode;
 }) {
   return (
     <div className="grid min-h-screen place-items-center px-4">

@@ -1,10 +1,11 @@
 import { Navigate, Outlet, Route, Routes } from "react-router-dom";
 
-import { useSession } from "./session";
+import { useMe, useSession } from "./session";
 import { Shell } from "./Shell";
 import { SignInPage } from "@/features/auth/SignInPage";
 import { ConsentPage } from "@/features/auth/ConsentPage";
 import { AcceptInvitationPage } from "@/features/auth/AcceptInvitationPage";
+import { ChooseTenantPage } from "@/features/auth/ChooseTenantPage";
 import { SandboxesPage } from "@/features/sandboxes/SandboxesPage";
 import {
   SandboxOverviewTab,
@@ -56,6 +57,19 @@ function RequireSession() {
   if (!user) {
     const next = window.location.pathname + window.location.search;
     return <Navigate to={`/sign-in?next=${encodeURIComponent(next)}`} replace />;
+  }
+  return <RequireTenant />;
+}
+
+// A session with no active tenant reaches nothing: every /v1 call answers
+// 403. The person picks one here rather than meeting empty screens.
+function RequireTenant() {
+  const me = useMe();
+  if (me.isPending) {
+    return <p className="p-8 text-sm text-muted">Reading the session.</p>;
+  }
+  if (!me.data?.tenant_id) {
+    return <ChooseTenantPage />;
   }
   return <Outlet />;
 }

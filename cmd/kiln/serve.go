@@ -111,9 +111,11 @@ func cmdServe() error {
 	}
 	if report, err := reconciler.Sweep(ctx); err != nil {
 		return fmt.Errorf("serve: reconcile: %w", err)
-	} else if n := len(report.Adopted) + len(report.Failed) + len(report.Swept) + len(report.Stuck); n > 0 {
-		fmt.Printf("kiln serve: swept: %d adopted, %d failed, %d destroyed, %d templates\n",
-			len(report.Adopted), len(report.Failed), len(report.Swept), len(report.Stuck))
+	} else if n := len(report.Adopted) + len(report.Failed) + len(report.Swept) +
+		len(report.Stuck) + len(report.Expired); n > 0 {
+		fmt.Printf("kiln serve: swept: %d adopted, %d failed, %d destroyed, %d stuck templates, %d expired templates\n",
+			len(report.Adopted), len(report.Failed), len(report.Swept),
+			len(report.Stuck), len(report.Expired))
 	}
 	go reconciler.Run(ctx)
 

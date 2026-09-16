@@ -230,7 +230,8 @@ func hostCredentials() gateway.HostCredentials {
 }
 
 // pem reads one PEM value from the environment, or from the file the
-// <NAME>_FILE variable names. A credential store holds either form.
+// <NAME>_FILE variable names. A credential store holds either form, and some
+// of them keep one line per variable, so base64 and \n escapes both work.
 func pem(name string) []byte {
 	if path := os.Getenv(name + "_FILE"); path != "" {
 		body, err := os.ReadFile(path)
@@ -238,11 +239,15 @@ func pem(name string) []byte {
 			return body
 		}
 	}
-	value := os.Getenv(name)
+	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
 		return nil
 	}
-	// A one-line environment value carries the newlines as an escape.
+	if !strings.Contains(value, "-----BEGIN") {
+		if raw, err := base64.StdEncoding.DecodeString(value); err == nil {
+			return raw
+		}
+	}
 	return []byte(strings.ReplaceAll(value, `\n`, "\n"))
 }
 

@@ -1,11 +1,14 @@
 package template
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/alternayte/kiln/internal/store"
 )
 
 func TestBuildRequestValidate(t *testing.T) {
@@ -193,5 +196,34 @@ func TestEnsureMountpoints(t *testing.T) {
 	}
 	if fi.Mode().Perm() != 0o777 {
 		t.Fatalf("tmp mode %o, want 777", fi.Mode().Perm())
+	}
+}
+
+// The reconciler keeps the host resources of a build that is running, and it
+// finds them by id. The ids it protects have to be the ids the build gave its
+// VMs, or a sweep kills a healthy build: the process takes SIGKILL and the
+// TAP is purged under it.
+func TestProtectedNamesTheBuildVMs(t *testing.T) {
+	m := &Manager{}
+	ctx := store.WithTenant(context.Background(), "acme")
+	m.setBuilding(buildKey(ctx, "python"), true)
+
+	protected := m.Protected()
+	for _, phase := range []string{"s", "n"} {
+		id := m.buildVMID(ctx, "python", phase)
+		if !protected[id] {
+			t.Errorf("the build runs VM %q and the reconciler does not protect it; protected=%v", id, protected)
+		}
+	}
+}
+
+// One template name in two tenants is two different builds, so they must not
+// share a VM id.
+func TestBuildVMIDsDifferPerTenant(t *testing.T) {
+	m := &Manager{}
+	acme := m.buildVMID(store.WithTenant(context.Background(), "acme"), "python", "s")
+	globex := m.buildVMID(store.WithTenant(context.Background(), "globex"), "python", "s")
+	if acme == globex {
+		t.Fatalf("two tenants building python share the VM id %q", acme)
 	}
 }

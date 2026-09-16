@@ -320,7 +320,7 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 
 	// The setup boot writes the rootfs.
 	setupVM, err := m.Runtime.Start(ctx, runtime.Spec{
-		ID:             m.buildID(req.Name, "s"),
+		ID:             m.buildVMID(ctx, req.Name, "s"),
 		KernelPath:     m.KernelPath,
 		RootfsPath:     rootfs,
 		RootfsReadOnly: false,
@@ -372,7 +372,7 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 		return err
 	}
 	snapVM, err := m.Runtime.Start(ctx, runtime.Spec{
-		ID:             m.buildID(req.Name, "n"),
+		ID:             m.buildVMID(ctx, req.Name, "n"),
 		KernelPath:     m.KernelPath,
 		RootfsPath:     rootfs,
 		RootfsReadOnly: true,
@@ -418,6 +418,15 @@ func (m *Manager) stopVM(ctx context.Context, vm *runtime.VM) error {
 // TAP, chains and directory carry the id so a sweep can find them. The id is
 // short: the jailer puts it twice in the API socket path, and a unix socket
 // path is capped at 108 bytes.
+// buildVMID is the id one build gives its VM. The reconciler protects the
+// same id while the build runs.
+func (m *Manager) buildVMID(ctx context.Context, name, phase string) string {
+	// The key names the tenant as well as the template, so two tenants
+	// building one name run two VMs, and so the id matches what Protected
+	// derives from the same key.
+	return m.buildID(buildKey(ctx, name), phase)
+}
+
 func (m *Manager) buildID(name, phase string) string {
 	sum := sha256.Sum256([]byte(name))
 	return "b" + hex.EncodeToString(sum[:5]) + phase

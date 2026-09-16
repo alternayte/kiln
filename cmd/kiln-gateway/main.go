@@ -174,12 +174,14 @@ func newAuth(baseURL string) (*authall.Auth, *organizations.Plugin, *apikeys.Plu
 		oauthprovider.LoginPath(env("KILN_LOGIN_PATH", authPrefix+"/sign-in")),
 		oauthprovider.ConsentPath(env("KILN_CONSENT_PATH", authPrefix+"/consent")),
 		oauthprovider.AllowDynamicRegistration(),
-		oauthprovider.Scopes("openid", "email", "sandbox"),
+		// offline_access is what an agent asks for when it wants a refresh
+		// token, so a long task survives one access token.
+		oauthprovider.Scopes("openid", "email", "sandbox", "offline_access"),
 		// The identifier is the issuer, because auth-all accepts its own
 		// token only when the audience names the issuer.
 		oauthprovider.Resources(oauthprovider.Resource{
 			Identifier:     strings.TrimSuffix(baseURL, "/") + authPrefix,
-			Scopes:         []string{"openid", "email", "sandbox"},
+			Scopes:         []string{"openid", "email", "sandbox", "offline_access"},
 			AccessTokenTTL: 30 * time.Minute,
 		}),
 	)

@@ -18,7 +18,7 @@ func (s *Server) protectedResource(w http.ResponseWriter, r *http.Request) {
 		"resource":                 issuer,
 		"authorization_servers":    []any{issuer},
 		"bearer_methods_supported": []any{"header"},
-		"scopes_supported":         []any{"openid", "email", "sandbox"},
+		"scopes_supported":         []any{"openid", "email", "sandbox", "offline_access"},
 		"resource_documentation":   base + "/llms.txt",
 	})
 }

@@ -80,7 +80,13 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 		Setup:       req.Setup,
 		EgressAllow: *req.EgressAllow,
 	}
-	if err := s.Templates.Start(s.base(), build); err != nil {
+	// The build outlives the request, so it runs on the daemon context. The
+	// tenant travels with it, or the rows land on the wrong tenant.
+	ctx := s.base()
+	if tenant, ok := store.TenantFrom(r.Context()); ok {
+		ctx = store.WithTenant(ctx, tenant)
+	}
+	if err := s.Templates.Start(ctx, build); err != nil {
 		s.writeErr(w, err)
 		return
 	}

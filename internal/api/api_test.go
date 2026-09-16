@@ -17,6 +17,9 @@ import (
 	"github.com/alternayte/kiln/internal/template"
 )
 
+// serverToken is the operator token every test here sends.
+const serverToken = "operator-token"
+
 func testServer(t *testing.T) (*httptest.Server, store.Store) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "kiln.db"))
@@ -35,7 +38,7 @@ func testServer(t *testing.T) (*httptest.Server, store.Store) {
 		Secrets: map[string]string{"S": "v"},
 		Zone:    "example.com",
 	})
-	ts := httptest.NewServer((&Server{Store: st, Templates: mgr, Sandboxes: sbx, Token: "secret", Base: context.Background()}).Handler())
+	ts := httptest.NewServer((&Server{Store: st, Templates: mgr, Sandboxes: sbx, Token: serverToken, Base: context.Background()}).Handler())
 	t.Cleanup(ts.Close)
 	return ts, st
 }
@@ -89,7 +92,7 @@ func TestAuth(t *testing.T) {
 			t.Fatalf("%s token: code %q, want %q", name, code, CodeInvalid)
 		}
 	}
-	resp, _ := call(t, http.MethodGet, ts.URL+"/v1/templates", "secret", "")
+	resp, _ := call(t, http.MethodGet, ts.URL+"/v1/templates", serverToken, "")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("valid token: status %d, want 200", resp.StatusCode)
 	}
@@ -98,7 +101,7 @@ func TestAuth(t *testing.T) {
 func TestCreateTemplateRequiresEgressAllow(t *testing.T) {
 	ts, _ := testServer(t)
 	body := `{"name":"py312","image":"python:3.12-slim","vcpus":2,"memory_mb":512,"disk_mb":4096}`
-	resp, out := call(t, http.MethodPost, ts.URL+"/v1/templates", "secret", body)
+	resp, out := call(t, http.MethodPost, ts.URL+"/v1/templates", serverToken, body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status %d, want 400: %s", resp.StatusCode, out)
 	}
@@ -110,7 +113,7 @@ func TestCreateTemplateRequiresEgressAllow(t *testing.T) {
 func TestCreateTemplateRejectsUnknownFields(t *testing.T) {
 	ts, _ := testServer(t)
 	body := `{"name":"py312","image":"i","vcpus":1,"memory_mb":1,"disk_mb":1,"egress_allow":[],"extra":true}`
-	resp, _ := call(t, http.MethodPost, ts.URL+"/v1/templates", "secret", body)
+	resp, _ := call(t, http.MethodPost, ts.URL+"/v1/templates", serverToken, body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status %d, want 400", resp.StatusCode)
 	}
@@ -127,7 +130,7 @@ func TestCreateTemplateConflictOnReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := `{"name":"py312","image":"i","vcpus":1,"memory_mb":1,"disk_mb":1,"egress_allow":[]}`
-	resp, out := call(t, http.MethodPost, ts.URL+"/v1/templates", "secret", body)
+	resp, out := call(t, http.MethodPost, ts.URL+"/v1/templates", serverToken, body)
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("status %d, want 409: %s", resp.StatusCode, out)
 	}
@@ -138,7 +141,7 @@ func TestCreateTemplateConflictOnReady(t *testing.T) {
 
 func TestGetTemplateNotFound(t *testing.T) {
 	ts, _ := testServer(t)
-	resp, out := call(t, http.MethodGet, ts.URL+"/v1/templates/absent", "secret", "")
+	resp, out := call(t, http.MethodGet, ts.URL+"/v1/templates/absent", serverToken, "")
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status %d, want 404", resp.StatusCode)
 	}
@@ -160,15 +163,15 @@ func TestDeleteTemplate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	resp, out := call(t, http.MethodDelete, ts.URL+"/v1/templates/"+store.TemplateBuilding, "secret", "")
+	resp, out := call(t, http.MethodDelete, ts.URL+"/v1/templates/"+store.TemplateBuilding, serverToken, "")
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("delete building: status %d, want 409: %s", resp.StatusCode, out)
 	}
-	resp, _ = call(t, http.MethodDelete, ts.URL+"/v1/templates/"+store.TemplateReady, "secret", "")
+	resp, _ = call(t, http.MethodDelete, ts.URL+"/v1/templates/"+store.TemplateReady, serverToken, "")
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete ready: status %d, want 204", resp.StatusCode)
 	}
-	resp, _ = call(t, http.MethodGet, ts.URL+"/v1/templates/"+store.TemplateReady, "secret", "")
+	resp, _ = call(t, http.MethodGet, ts.URL+"/v1/templates/"+store.TemplateReady, serverToken, "")
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("get after delete: status %d, want 404", resp.StatusCode)
 	}
@@ -176,7 +179,7 @@ func TestDeleteTemplate(t *testing.T) {
 
 func TestListTemplates(t *testing.T) {
 	ts, _ := testServer(t)
-	resp, out := call(t, http.MethodGet, ts.URL+"/v1/templates", "secret", "")
+	resp, out := call(t, http.MethodGet, ts.URL+"/v1/templates", serverToken, "")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status %d, want 200", resp.StatusCode)
 	}
@@ -228,7 +231,7 @@ func TestCreateSandboxValidation(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes", "secret", c.body)
+			resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes", serverToken, c.body)
 			if code := errorCode(t, out); code != c.code {
 				t.Fatalf("status %d code %q, want %q: %s", resp.StatusCode, code, c.code, out)
 			}
@@ -238,11 +241,11 @@ func TestCreateSandboxValidation(t *testing.T) {
 
 func TestSandboxNotFound(t *testing.T) {
 	ts, _ := testServer(t)
-	resp, out := call(t, http.MethodGet, ts.URL+"/v1/sandboxes/absent", "secret", "")
+	resp, out := call(t, http.MethodGet, ts.URL+"/v1/sandboxes/absent", serverToken, "")
 	if resp.StatusCode != http.StatusNotFound || errorCode(t, out) != CodeNotFound {
 		t.Fatalf("get: status %d body %s", resp.StatusCode, out)
 	}
-	resp, _ = call(t, http.MethodDelete, ts.URL+"/v1/sandboxes/absent", "secret", "")
+	resp, _ = call(t, http.MethodDelete, ts.URL+"/v1/sandboxes/absent", serverToken, "")
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("delete: status %d, want 404", resp.StatusCode)
 	}
@@ -267,7 +270,7 @@ func TestSnapshotListing(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	resp, out := call(t, http.MethodGet, ts.URL+"/v1/snapshots", "secret", "")
+	resp, out := call(t, http.MethodGet, ts.URL+"/v1/snapshots", serverToken, "")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list: status %d: %s", resp.StatusCode, out)
 	}
@@ -278,26 +281,26 @@ func TestSnapshotListing(t *testing.T) {
 	if len(list) != 1 || list[0].ID != "listed" {
 		t.Fatalf("list %+v, want only the listed image", list)
 	}
-	if resp, _ := call(t, http.MethodGet, ts.URL+"/v1/snapshots/hidden", "secret", ""); resp.StatusCode != http.StatusNotFound {
+	if resp, _ := call(t, http.MethodGet, ts.URL+"/v1/snapshots/hidden", serverToken, ""); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("get hidden: status %d, want 404", resp.StatusCode)
 	}
-	if resp, _ := call(t, http.MethodDelete, ts.URL+"/v1/snapshots/hidden", "secret", ""); resp.StatusCode != http.StatusNotFound {
+	if resp, _ := call(t, http.MethodDelete, ts.URL+"/v1/snapshots/hidden", serverToken, ""); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("delete hidden: status %d, want 404", resp.StatusCode)
 	}
 }
 
 func TestForkAndRestoreValidation(t *testing.T) {
 	ts, _ := testServer(t)
-	if resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/absent/fork", "secret", `{"count":1}`); resp.StatusCode != http.StatusNotFound {
+	if resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/absent/fork", serverToken, `{"count":1}`); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("fork absent: status %d, want 404: %s", resp.StatusCode, out)
 	}
-	if resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/absent/fork", "secret", `{"count":0}`); resp.StatusCode != http.StatusBadRequest || errorCode(t, out) != CodeInvalid {
+	if resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/absent/fork", serverToken, `{"count":0}`); resp.StatusCode != http.StatusBadRequest || errorCode(t, out) != CodeInvalid {
 		t.Fatalf("fork with count 0: status %d body %s", resp.StatusCode, out)
 	}
-	if resp, _ := call(t, http.MethodPost, ts.URL+"/v1/snapshots/absent/restore", "secret", `{"count":1}`); resp.StatusCode != http.StatusNotFound {
+	if resp, _ := call(t, http.MethodPost, ts.URL+"/v1/snapshots/absent/restore", serverToken, `{"count":1}`); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("restore absent: status %d, want 404", resp.StatusCode)
 	}
-	if resp, out := call(t, http.MethodPost, ts.URL+"/v1/snapshots/absent/restore", "secret", `{"count":1,"extra":true}`); resp.StatusCode != http.StatusBadRequest {
+	if resp, out := call(t, http.MethodPost, ts.URL+"/v1/snapshots/absent/restore", serverToken, `{"count":1,"extra":true}`); resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("restore unknown field: status %d, want 400: %s", resp.StatusCode, out)
 	}
 }
@@ -307,12 +310,12 @@ func TestSnapshotBodyForms(t *testing.T) {
 	// An empty body and an empty object both parse; the absent sandbox is the
 	// not-found answer, which proves the request was read.
 	for _, body := range []string{"", "{}", `{"stop":true}`} {
-		if resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/absent/snapshot", "secret", body); resp.StatusCode != http.StatusNotFound {
+		if resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/absent/snapshot", serverToken, body); resp.StatusCode != http.StatusNotFound {
 			t.Fatalf("snapshot with body %q: status %d, want 404: %s", body, resp.StatusCode, out)
 		}
 	}
 	for _, body := range []string{`{"stop":"sometimes"}`, `{"extra":1}`} {
-		if resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/absent/snapshot", "secret", body); resp.StatusCode != http.StatusBadRequest {
+		if resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/absent/snapshot", serverToken, body); resp.StatusCode != http.StatusBadRequest {
 			t.Fatalf("snapshot with body %q: status %d, want 400: %s", body, resp.StatusCode, out)
 		}
 	}
@@ -353,16 +356,71 @@ func TestStatusPageIsLocalAndReadOnly(t *testing.T) {
 // and an unknown sandbox is not found.
 func TestPublishValidation(t *testing.T) {
 	ts, _ := testServer(t)
-	resp, body := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/missing/publish", "secret", `{"port":8000}`)
+	resp, body := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/missing/publish", serverToken, `{"port":8000}`)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("missing visibility: status %d: %s", resp.StatusCode, body)
 	}
-	resp, body = call(t, http.MethodPost, ts.URL+"/v1/sandboxes/missing/publish", "secret", `{"port":8000,"visibility":"public"}`)
+	resp, body = call(t, http.MethodPost, ts.URL+"/v1/sandboxes/missing/publish", serverToken, `{"port":8000,"visibility":"public"}`)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown sandbox: status %d: %s", resp.StatusCode, body)
 	}
-	resp, body = call(t, http.MethodDelete, ts.URL+"/v1/sandboxes/missing/publish/8000", "secret", "")
+	resp, body = call(t, http.MethodDelete, ts.URL+"/v1/sandboxes/missing/publish/8000", serverToken, "")
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("retire unknown: status %d: %s", resp.StatusCode, body)
+	}
+}
+
+// A build outlives its request, so the tenant has to travel with it. The
+// first version ran the build on the daemon context and wrote every template
+// to the default tenant, which also made the cap unreachable.
+func TestTemplateBuildKeepsTheTenantAndItsCap(t *testing.T) {
+	ts, st := testServer(t)
+	ctx := context.Background()
+	if err := st.CreateTenant(ctx, store.Tenant{
+		ID: "acme", Name: "Acme",
+		Caps:      store.Caps{MaxTemplates: 1},
+		CreatedAt: time.Unix(1700000000, 0).UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	create := func(name string) int {
+		body := `{"name":"` + name + `","image":"docker.io/library/python:3.12-slim",` +
+			`"vcpus":1,"memory_mb":256,"disk_mb":2048,"setup":[],"egress_allow":[]}`
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/templates", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+serverToken)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(TenantHeader, "acme")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		return resp.StatusCode
+	}
+	if status := create("one"); status != http.StatusAccepted {
+		t.Fatalf("first build status %d, want 202", status)
+	}
+	// The build runs in the background, so wait for the row it writes.
+	var rows []store.Template
+	for i := 0; i < 100; i++ {
+		var err error
+		rows, err = st.ListTemplates(store.WithTenant(ctx, "acme"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(rows) != 1 || rows[0].Name != "one" {
+		t.Fatalf("the tenant holds %+v, want the template it created", rows)
+	}
+	if status := create("two"); status != http.StatusInsufficientStorage {
+		t.Fatalf("second build status %d, want 507 over the cap", status)
 	}
 }

@@ -26,7 +26,7 @@ The server and the systemd unit: `infra/README.md`.
 - fork: one snapshot restored into several new sandboxes. Avoid: clone.
 - sleep: snapshot a sandbox and stop it while keeping its id and published hostnames. Avoid: suspend, hibernate.
 - publish: serve a guest port on a public hostname. Avoid: expose, port-forward.
-- tenant: one customer of a Kiln install; it owns templates, sandboxes, snapshots, published hostnames and viewers. Avoid: org, organization, account, workspace, customer.
+- tenant: one customer of a Kiln install; it owns templates, sandboxes, snapshots, published hostnames and viewers. Avoid: org, account, workspace, customer. The auth-all API names the type Organization, so that word alone stays legal.
 - gateway: the public binary that holds tenants, keys, OAuth, rate limits, the audit log and MCP, and proxies /v1 to the host. Avoid: proxy, control plane, edge.
 - host: the machine and daemon that run microVMs and own the sandbox data. Avoid: node, worker, backend.
 - API key: a long-lived machine credential that names one tenant and its scopes. Avoid: secret, bearer token.

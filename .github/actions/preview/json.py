@@ -6,6 +6,7 @@ space in a hostname breaks a body a shell assembles by hand.
 """
 import json
 import os
+import shlex
 import sys
 
 
@@ -33,6 +34,10 @@ def main(argv):
             "ttl_seconds": int(env["TTL_SECONDS"]),
             "egress_allow": words(env.get("EGRESS", "")),
             "setup": lines(env.get("SETUP", "")),
+            # Kiln ignores what the image says to run. Without these the
+            # sandbox holds the application's files and serves nothing.
+            "start": shlex.split(env["START"]),
+            "port": int(env["PORT"]),
         }))
         return 0
 

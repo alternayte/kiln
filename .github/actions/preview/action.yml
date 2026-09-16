@@ -19,6 +19,12 @@ inputs:
   port:
     description: The port the application listens on inside the sandbox.
     required: true
+  start:
+    description: >
+      The command that runs the application, as one line. Kiln ignores what
+      the image says to run, so a preview that serves anything needs this.
+      Creating the sandbox waits until it listens on `port`.
+    required: true
   egress-allow:
     description: >
       Hostnames the preview may reach, space separated. Empty allows no
@@ -88,6 +94,7 @@ runs:
         KILN_API_KEY: ${{ inputs.api-key }}
         IMAGE: ${{ inputs.image }}
         PORT: ${{ inputs.port }}
+        START: ${{ inputs.start }}
         EGRESS: ${{ inputs.egress-allow }}
         SETUP: ${{ inputs.setup }}
         VCPUS: ${{ inputs.vcpus }}

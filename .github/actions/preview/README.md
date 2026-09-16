@@ -52,10 +52,16 @@ jobs:
           api-key: ${{ secrets.KILN_API_KEY }}
           image: ghcr.io/${{ github.repository }}:${{ github.event.pull_request.head.sha }}
           port: "8000"
+          start: /app/server --port 8000
           egress-allow: api.example.com
 ```
 
 `KILN_API_KEY` names one tenant and reaches nothing else.
+
+`start` is not optional. Kiln boots its own init and ignores what the image
+says to run, so without it the sandbox holds your application's files and
+serves nothing. Creating the sandbox waits until that command listens on
+`port`, so the URL in the comment is live when it appears.
 
 ## Forks
 

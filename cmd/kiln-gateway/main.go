@@ -15,6 +15,7 @@ import (
 	"time"
 
 	authall "github.com/alternayte/auth-all"
+	"github.com/alternayte/auth-all/plugins/admin"
 	"github.com/alternayte/auth-all/plugins/apikeys"
 	"github.com/alternayte/auth-all/plugins/oauthprovider"
 	"github.com/alternayte/auth-all/plugins/organizations"
@@ -39,7 +40,7 @@ func run() error {
 	addr := env("KILN_GATEWAY_ADDR", ":8080")
 	baseURL := env("KILN_GATEWAY_URL", "http://localhost"+addr)
 
-	auth, tenants, keys, provider, db, err := newAuth(baseURL)
+	auth, tenants, keys, provider, operators, db, err := newAuth(baseURL)
 	if err != nil {
 		return err
 	}
@@ -57,6 +58,10 @@ func run() error {
 		if len(applied) > 0 {
 			fmt.Printf("kiln-gateway: applied %d statements\n", len(applied))
 		}
+	}
+
+	if err := ensureOperator(ctx0, operators, auth.Store(), operatorRole()); err != nil {
+		return err
 	}
 
 	host, err := gateway.NewHost(hostCredentials())
@@ -80,7 +85,7 @@ func run() error {
 		OAuth:        provider,
 		Issuer:       strings.TrimSuffix(baseURL, "/") + authPrefix,
 		BaseURL:      baseURL,
-		OperatorRole: env("KILN_OPERATOR_ROLE", "operator"),
+		OperatorRole: operatorRole(),
 	}
 	srv := &http.Server{
 		Addr:              addr,
@@ -118,7 +123,7 @@ func run() error {
 
 // migrate creates the auth-all tables. It runs once before the first start.
 func migrate() error {
-	auth, _, _, _, db, err := newAuth(env("KILN_GATEWAY_URL", "http://localhost:8080"))
+	auth, _, _, _, _, db, err := newAuth(env("KILN_GATEWAY_URL", "http://localhost:8080"))
 	if err != nil {
 		return err
 	}
@@ -136,10 +141,13 @@ func migrate() error {
 // authPrefix is where the login and OAuth routes live.
 const authPrefix = "/auth"
 
-func newAuth(baseURL string) (*authall.Auth, *organizations.Plugin, *apikeys.Plugin, *oauthprovider.Plugin, *sqlDB, error) {
+// operatorRole names the role that administers tenants.
+func operatorRole() string { return env("KILN_OPERATOR_ROLE", "operator") }
+
+func newAuth(baseURL string) (*authall.Auth, *organizations.Plugin, *apikeys.Plugin, *oauthprovider.Plugin, *admin.Plugin, *sqlDB, error) {
 	db, err := openStore()
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	tenants := organizations.New(
 		organizations.Roles(
@@ -151,12 +159,15 @@ func newAuth(baseURL string) (*authall.Auth, *organizations.Plugin, *apikeys.Plu
 		organizations.OwnerRole("operator"),
 	)
 	keys := apikeys.New(apikeys.Prefix("kiln_"), apikeys.Organizations(tenants))
+	// The operator role administers tenants, and the plugin makes the first
+	// operator of a fresh deployment.
+	operators := admin.New(admin.AdminRole(operatorRole()))
 	// The authorization server an MCP client talks to. A client registers
 	// itself, so an agent needs no console and no static credential.
 	kek, err := oauthKey()
 	if err != nil {
 		db.Close()
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	provider := oauthprovider.New(
 		oauthprovider.KeyEncryptionKey(kek),
@@ -177,7 +188,7 @@ func newAuth(baseURL string) (*authall.Auth, *organizations.Plugin, *apikeys.Plu
 	limiter, err := storelimit.New(db.authStore(), ratelimit.DefaultSignInRules())
 	if err != nil {
 		db.Close()
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	auth, err := authall.New(
 		authall.WithStore(db.authStore()),
@@ -192,13 +203,14 @@ func newAuth(baseURL string) (*authall.Auth, *organizations.Plugin, *apikeys.Plu
 			tenants,
 			keys,
 			provider,
+			operators,
 		),
 	)
 	if err != nil {
 		db.Close()
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
-	return auth, tenants, keys, provider, db, nil
+	return auth, tenants, keys, provider, operators, db, nil
 }
 
 // oauthKey reads the 32 bytes that wrap every signing key at rest. A gateway

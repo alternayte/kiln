@@ -31,4 +31,4 @@ The server and the systemd unit: `infra/README.md`.
 - host: the machine and daemon that run microVMs and own the sandbox data. Avoid: node, worker, backend.
 - API key: a long-lived machine credential that names one tenant and its scopes. Avoid: secret, bearer token.
 - viewer: an account that opens team previews for one tenant and nothing else. Avoid: member.
-- operator: the person who runs the host, holds the operator token and repairs the box. Avoid: admin, owner.
+- operator: the person who runs the host, holds the operator token and repairs the box. Avoid: owner. The auth-all API names a plugin admin, so that word alone stays legal.

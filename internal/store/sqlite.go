@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path"
 	"sort"
 	"strings"
@@ -46,7 +47,32 @@ func Open(file string) (Store, error) {
 		db.Close()
 		return nil, err
 	}
+	// The file holds every tenant's rows and their sealed registry tokens, so
+	// it belongs to the operator alone. SQLite creates it 0644.
+	if err := restrict(file); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &sqliteStore{db: db}, nil
+}
+
+// restrict takes the group and other bits off the database and the files WAL
+// mode writes beside it. A path that is not a file, such as a memory URI a
+// test opens, has nothing to restrict.
+func restrict(file string) error {
+	name := strings.TrimPrefix(file, "file:")
+	if i := strings.IndexByte(name, '?'); i >= 0 {
+		name = name[:i]
+	}
+	if name == "" || strings.HasPrefix(name, ":memory:") {
+		return nil
+	}
+	for _, path := range []string{name, name + "-wal", name + "-shm"} {
+		if err := os.Chmod(path, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("store: %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 // migrate applies each numbered SQL file in order and records it. An applied
@@ -152,10 +178,10 @@ func (s *sqliteStore) StartTemplateBuild(ctx context.Context, t Template) error 
 	case errors.Is(err, sql.ErrNoRows):
 		if _, err := tx.ExecContext(ctx, `INSERT INTO templates (
 			tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-			egress_allow, state, error, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			egress_allow, state, error, created_at, ttl_seconds
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			tenantOf(ctx), t.Name, t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
-			encoded, t.State, nullString(t.Error), t.CreatedAt.Unix(),
+			encoded, t.State, nullString(t.Error), t.CreatedAt.Unix(), nullIntPtr(t.TTLSeconds),
 		); err != nil {
 			return err
 		}
@@ -166,10 +192,10 @@ func (s *sqliteStore) StartTemplateBuild(ctx context.Context, t Template) error 
 	default:
 		if _, err := tx.ExecContext(ctx, `UPDATE templates SET
 			image_ref = ?, image_digest = ?, vcpus = ?, memory_mb = ?, disk_mb = ?,
-			egress_allow = ?, state = ?, error = NULL, created_at = ?
+			egress_allow = ?, state = ?, error = NULL, created_at = ?, ttl_seconds = ?
 		WHERE tenant_id = ? AND name = ?`,
 			t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
-			encoded, t.State, t.CreatedAt.Unix(), tenantOf(ctx), t.Name,
+			encoded, t.State, t.CreatedAt.Unix(), nullIntPtr(t.TTLSeconds), tenantOf(ctx), t.Name,
 		); err != nil {
 			return err
 		}
@@ -216,7 +242,7 @@ func (s *sqliteStore) GetTemplate(ctx context.Context, name string) (Template, e
 	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at
+		egress_allow, state, error, created_at, ttl_seconds
 	FROM templates WHERE name = ?`+clause, append([]any{name}, args...)...)
 	t, err := scanTemplate(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -229,7 +255,7 @@ func (s *sqliteStore) ListTemplates(ctx context.Context) ([]Template, error) {
 	clause, args := scope(ctx, "tenant_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at
+		egress_allow, state, error, created_at, ttl_seconds
 	FROM templates WHERE 1 = 1`+clause+` ORDER BY name`, args...)
 	if err != nil {
 		return nil, err
@@ -432,10 +458,11 @@ func scanTemplate(row scanner) (Template, error) {
 		egress  string
 		message sql.NullString
 		created int64
+		ttl     sql.NullInt64
 	)
 	if err := row.Scan(
 		&t.TenantID, &t.Name, &t.ImageRef, &t.ImageDigest, &t.VCPUs, &t.MemoryMB, &t.DiskMB,
-		&egress, &t.State, &message, &created,
+		&egress, &t.State, &message, &created, &ttl,
 	); err != nil {
 		return Template{}, err
 	}
@@ -447,6 +474,10 @@ func scanTemplate(row scanner) (Template, error) {
 	}
 	t.Error = message.String
 	t.CreatedAt = time.Unix(created, 0).UTC()
+	if ttl.Valid {
+		seconds := int(ttl.Int64)
+		t.TTLSeconds = &seconds
+	}
 	return t, nil
 }
 
@@ -1079,4 +1110,98 @@ func scanTenant(row scanner) (Tenant, error) {
 	}
 	t.CreatedAt = time.Unix(created, 0).UTC()
 	return t, nil
+}
+
+// ListTemplatesPastTTL crosses every tenant on purpose: the reconciler runs
+// for the host, not for a caller, and a preview that outlived its deadline
+// belongs to nobody.
+func (s *sqliteStore) ListTemplatesPastTTL(ctx context.Context, now time.Time) ([]Template, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT
+		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
+		egress_allow, state, error, created_at, ttl_seconds
+	FROM templates
+	WHERE ttl_seconds IS NOT NULL AND created_at + ttl_seconds <= ?
+	ORDER BY tenant_id, name`, now.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Template
+	for rows.Next() {
+		t, err := scanTemplate(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) PutRegistry(ctx context.Context, r Registry) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO registries (
+		tenant_id, host, username, token, created_at
+	) VALUES (?, ?, ?, ?, ?)
+	ON CONFLICT (tenant_id, host) DO UPDATE SET
+		username = excluded.username, token = excluded.token`,
+		tenantOf(ctx), r.Host, r.Username, r.Token, r.CreatedAt.Unix())
+	return err
+}
+
+func (s *sqliteStore) ListRegistries(ctx context.Context) ([]Registry, error) {
+	clause, args := scope(ctx, "tenant_id")
+	rows, err := s.db.QueryContext(ctx, `SELECT tenant_id, host, username, token, created_at
+	FROM registries WHERE 1 = 1`+clause+` ORDER BY host`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Registry
+	for rows.Next() {
+		r, err := scanRegistry(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) GetRegistry(ctx context.Context, host string) (Registry, error) {
+	clause, args := scope(ctx, "tenant_id")
+	row := s.db.QueryRowContext(ctx, `SELECT tenant_id, host, username, token, created_at
+	FROM registries WHERE host = ?`+clause, append([]any{host}, args...)...)
+	r, err := scanRegistry(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Registry{}, ErrNotFound
+	}
+	return r, err
+}
+
+func (s *sqliteStore) DeleteRegistry(ctx context.Context, host string) error {
+	clause, args := scope(ctx, "tenant_id")
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM registries WHERE host = ?`+clause, append([]any{host}, args...)...)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func scanRegistry(row scanner) (Registry, error) {
+	var (
+		r       Registry
+		created int64
+	)
+	if err := row.Scan(&r.TenantID, &r.Host, &r.Username, &r.Token, &created); err != nil {
+		return Registry{}, err
+	}
+	r.CreatedAt = time.Unix(created, 0).UTC()
+	return r, nil
 }

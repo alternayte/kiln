@@ -44,6 +44,40 @@ Report whether the host can run sandboxes.
 
 Answers 200 with `Health`.
 
+### listRegistries
+
+`GET /v1/registries`
+
+List the registry credentials of this tenant. The tokens are never returned.
+
+Answers 200 with `RegistryList`.
+
+### putRegistry
+
+`POST /v1/registries`
+
+Store the credential a template build uses to pull a private image for this tenant.
+
+Body:
+
+- `host` (string, required): Registry hostname, such as ghcr.io.
+- `username` (string, required): Username the registry accepts.
+- `token` (string, required): Token or password. It is never returned.
+
+Answers 201 with `Registry`.
+
+### deleteRegistry
+
+`DELETE /v1/registries/{host}`
+
+Remove one registry credential.
+
+Path:
+
+- `host` (string): Registry hostname.
+
+Answers 204 with no body.
+
 ### listSandboxes
 
 `GET /v1/sandboxes`
@@ -295,6 +329,7 @@ Body:
 - `disk_mb` (integer): Disk of every sandbox from this template.
 - `setup` (array of string): Commands that run once while the template builds.
 - `egress_allow` (array of string, required): Hostnames a sandbox may reach. An empty list allows no egress.
+- `ttl_seconds` (integer): Seconds until the host deletes this template with its snapshot and its sandboxes. A preview environment sets one, because nothing comes back to delete it.
 
 Answers 202 with `TemplateState`.
 

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -607,5 +608,51 @@ func TestTenantIsolation(t *testing.T) {
 	}
 	if usage.Sandboxes != 1 || usage.Templates != 1 {
 		t.Fatalf("usage %+v, want one sandbox and one template", usage)
+	}
+}
+
+// A registry token reaches the database sealed, and the key that opens it
+// lives in a file the database reader does not have.
+func TestSealRoundTrip(t *testing.T) {
+	key, err := NewKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := Seal(key, "ghp_secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sealed == "ghp_secret" || !strings.HasPrefix(sealed, SealedPrefix) {
+		t.Fatalf("the token is not sealed: %q", sealed)
+	}
+	back, err := Unseal(key, sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back != "ghp_secret" {
+		t.Fatalf("opened %q, want the token back", back)
+	}
+	other, err := NewKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Unseal(other, sealed); err == nil {
+		t.Fatal("another key opened the token")
+	}
+}
+
+// A value written before this host had a key is returned as it is, so an
+// upgrade reads what it wrote.
+func TestUnsealPassesThroughPlainValues(t *testing.T) {
+	key, err := NewKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Unseal(key, "written-before-the-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "written-before-the-key" {
+		t.Fatalf("got %q", got)
 	}
 }

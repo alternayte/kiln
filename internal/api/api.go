@@ -43,6 +43,8 @@ type Server struct {
 	// Viewers holds the people who open team previews. Nil on a host that
 	// serves no preview.
 	Viewers ViewerStore
+	// SealKey seals a registry token before it reaches the database.
+	SealKey []byte
 }
 
 // ViewerStore is the part of the viewer login the API touches. The ingress
@@ -80,6 +82,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/sandboxes/{id}/publish/{port}", s.unpublishSandbox)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/files/{path...}", s.getSandboxFile)
 	mux.HandleFunc("PUT /v1/sandboxes/{id}/files/{path...}", s.putSandboxFile)
+	mux.HandleFunc("GET /v1/registries", s.listRegistries)
+	mux.HandleFunc("POST /v1/registries", s.putRegistry)
+	mux.HandleFunc("DELETE /v1/registries/{host}", s.deleteRegistry)
 	mux.HandleFunc("GET /v1/viewers", s.listViewers)
 	mux.HandleFunc("POST /v1/viewers", s.createViewer)
 	mux.HandleFunc("DELETE /v1/viewers/{id}", s.deleteViewer)

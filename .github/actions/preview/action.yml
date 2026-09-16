@@ -1,0 +1,121 @@
+name: Kiln preview environment
+description: >
+  Build a pull request into a Kiln template, run one sandbox from it, publish
+  the application port, and comment the hostname on the pull request.
+
+inputs:
+  url:
+    description: The Kiln gateway, for example https://api.example.com.
+    required: true
+  api-key:
+    description: A tenant API key. It names one tenant and reaches nothing else.
+    required: true
+  image:
+    description: >
+      The image this commit produced, already pushed. Its registry credential
+      is stored once with POST /v1/registries; the host pulls, the sandbox
+      never does.
+    required: true
+  port:
+    description: The port the application listens on inside the sandbox.
+    required: true
+  egress-allow:
+    description: >
+      Hostnames the preview may reach, space separated. Empty allows no
+      egress, which is the default for every template.
+    required: false
+    default: ""
+  setup:
+    description: Commands that run once while the template builds, one per line.
+    required: false
+    default: ""
+  vcpus:
+    description: Virtual CPUs of the preview.
+    required: false
+    default: "1"
+  memory-mb:
+    description: Memory of the preview.
+    required: false
+    default: "1024"
+  disk-mb:
+    description: Disk of the preview.
+    required: false
+    default: "4096"
+  ttl-seconds:
+    description: >
+      Seconds until the host deletes the template with its sandbox. The
+      Action deletes on close; this is the floor under an abandoned preview.
+    required: false
+    default: "604800"
+  idle-seconds:
+    description: Seconds of inactivity until the preview sleeps. It wakes on the next request.
+    required: false
+    default: "900"
+  github-token:
+    description: The token that writes the comment.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  url:
+    description: The preview URL, empty when the pull request closed.
+    value: ${{ steps.up.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    # A fork's commit is a stranger's code beside this tenant's API key, so a
+    # maintainer decides when it runs, one commit at a time. A label that
+    # survived a push would authorise code nobody read.
+    - name: Check the fork label
+      if: github.event.action != 'closed'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+        ACTION: ${{ github.event.action }}
+        FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+        LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+      run: ${{ github.action_path }}/fork.sh
+
+    - name: Create or replace the preview
+      id: up
+      if: github.event.action != 'closed'
+      shell: bash
+      env:
+        KILN_URL: ${{ inputs.url }}
+        KILN_API_KEY: ${{ inputs.api-key }}
+        IMAGE: ${{ inputs.image }}
+        PORT: ${{ inputs.port }}
+        EGRESS: ${{ inputs.egress-allow }}
+        SETUP: ${{ inputs.setup }}
+        VCPUS: ${{ inputs.vcpus }}
+        MEMORY_MB: ${{ inputs.memory-mb }}
+        DISK_MB: ${{ inputs.disk-mb }}
+        TTL_SECONDS: ${{ inputs.ttl-seconds }}
+        IDLE_SECONDS: ${{ inputs.idle-seconds }}
+        PR: ${{ github.event.pull_request.number }}
+        SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        REPO: ${{ github.repository }}
+      run: ${{ github.action_path }}/up.sh
+
+    - name: Comment the preview URL
+      if: github.event.action != 'closed'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+        URL: ${{ steps.up.outputs.url }}
+      run: ${{ github.action_path }}/comment.sh
+
+    - name: Destroy the preview
+      if: github.event.action == 'closed'
+      shell: bash
+      env:
+        KILN_URL: ${{ inputs.url }}
+        KILN_API_KEY: ${{ inputs.api-key }}
+        PR: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+      run: ${{ github.action_path }}/down.sh

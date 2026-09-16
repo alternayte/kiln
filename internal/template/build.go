@@ -37,6 +37,9 @@ type BuildRequest struct {
 	DiskMB      int
 	Setup       []string
 	EgressAllow []string
+	// TTLSeconds ends the template with no client involved. Nil is no
+	// deadline.
+	TTLSeconds *int
 }
 
 // InvalidError reports a request that cannot be accepted.
@@ -99,6 +102,8 @@ type Manager struct {
 	Runtime *runtime.Firecracker
 	Network *network.Manager
 	Builder Builder
+	// SealKey opens the registry tokens this tenant stored.
+	SealKey []byte
 
 	// KernelPath is the pinned vmlinux the build VM boots.
 	KernelPath string
@@ -155,6 +160,7 @@ func (m *Manager) Start(ctx context.Context, req BuildRequest) error {
 		EgressAllow: req.EgressAllow,
 		State:       store.TemplateBuilding,
 		CreatedAt:   now,
+		TTLSeconds:  req.TTLSeconds,
 	}
 	if m.IsBuilding(buildKey(ctx, req.Name)) {
 		return store.ErrConflict
@@ -296,7 +302,15 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 		return err
 	}
 	rootfs := filepath.Join(dir, "rootfs.ext4")
-	imported, err := m.Builder.Import(ctx, ImportSpec{Ref: req.Image, RootfsPath: rootfs, SizeMB: req.DiskMB})
+	// The builder is shared, and credentials are not: each build takes a copy
+	// carrying only the credentials of the tenant it belongs to.
+	builder := m.Builder
+	creds, err := m.credentialsFor(ctx)
+	if err != nil {
+		return err
+	}
+	builder.Credentials = creds
+	imported, err := builder.Import(ctx, ImportSpec{Ref: req.Image, RootfsPath: rootfs, SizeMB: req.DiskMB})
 	if err != nil {
 		return err
 	}
@@ -418,6 +432,24 @@ func (m *Manager) stopVM(ctx context.Context, vm *runtime.VM) error {
 // TAP, chains and directory carry the id so a sweep can find them. The id is
 // short: the jailer puts it twice in the API socket path, and a unix socket
 // path is capped at 108 bytes.
+// credentialsFor returns the registry credentials of the tenant this build
+// belongs to, with their tokens opened. A tenant with none pulls anonymously.
+func (m *Manager) credentialsFor(ctx context.Context) ([]RegistryCredential, error) {
+	rows, err := m.Store.ListRegistries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RegistryCredential, 0, len(rows))
+	for _, row := range rows {
+		token, err := store.Unseal(m.SealKey, row.Token)
+		if err != nil {
+			return nil, fmt.Errorf("template: registry %s: %w", row.Host, err)
+		}
+		out = append(out, RegistryCredential{Host: row.Host, Username: row.Username, Token: token})
+	}
+	return out, nil
+}
+
 // buildVMID is the id one build gives its VM. The reconciler protects the
 // same id while the build runs.
 func (m *Manager) buildVMID(ctx context.Context, name, phase string) string {

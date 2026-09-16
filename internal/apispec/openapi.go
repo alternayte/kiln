@@ -159,6 +159,7 @@ func schemas() map[string]any {
 	sandbox := object(map[string]any{
 		"id": str, "template": str, "state": str, "lifecycle": str,
 		"created_at": str, "published": list("Published"),
+		"metadata": map[string]any{"type": "object"},
 	})
 	return map[string]any{
 		"Error": object(map[string]any{
@@ -167,7 +168,7 @@ func schemas() map[string]any {
 		"Health": object(map[string]any{"ok": map[string]any{"type": "boolean"}, "kvm": map[string]any{"type": "boolean"}, "firecracker": str, "sandboxes": num}),
 		"Template": object(map[string]any{
 			"name": str, "image": str, "image_digest": str, "state": str, "error": str,
-			"vcpus": num, "memory_mb": num, "disk_mb": num,
+			"vcpus": num, "memory_mb": num, "disk_mb": num, "ttl_seconds": num,
 			"egress_allow":   map[string]any{"type": "array", "items": str},
 			"snapshot_bytes": num, "sandboxes": num, "created_at": str,
 		}),
@@ -190,8 +191,10 @@ func schemas() map[string]any {
 			"id": str, "name": str, "max_sandboxes": num, "max_templates": num,
 			"max_snapshot_bytes": num, "sandboxes": num, "templates": num, "snapshot_bytes": num,
 		}),
-		"Viewer":     object(map[string]any{"id": str, "email": str, "tenant": str, "created_at": str}),
-		"ViewerList": list("Viewer"),
-		"TenantList": list("Tenant"),
+		"Viewer":       object(map[string]any{"id": str, "email": str, "tenant": str, "created_at": str}),
+		"Registry":     object(map[string]any{"host": str, "username": str, "created_at": str}),
+		"RegistryList": list("Registry"),
+		"ViewerList":   list("Viewer"),
+		"TenantList":   list("Tenant"),
 	}
 }

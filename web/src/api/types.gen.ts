@@ -45,10 +45,21 @@ export type Published = {
     visibility?: string;
 };
 
+export type Registry = {
+    created_at?: string;
+    host?: string;
+    username?: string;
+};
+
+export type RegistryList = Array<Registry>;
+
 export type Sandbox = {
     created_at?: string;
     id?: string;
     lifecycle?: string;
+    metadata?: {
+        [key: string]: unknown;
+    };
     published?: Array<Published>;
     state?: string;
     template?: string;
@@ -81,6 +92,7 @@ export type Template = {
     sandboxes?: number;
     snapshot_bytes?: number;
     state?: string;
+    ttl_seconds?: number;
     vcpus?: number;
 };
 
@@ -194,6 +206,138 @@ export type HealthResponses = {
 };
 
 export type HealthResponse = HealthResponses[keyof HealthResponses];
+
+export type ListRegistriesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/v1/registries';
+};
+
+export type ListRegistriesErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap.
+     */
+    507: Error;
+};
+
+export type ListRegistriesError = ListRegistriesErrors[keyof ListRegistriesErrors];
+
+export type ListRegistriesResponses = {
+    /**
+     * The call succeeded.
+     */
+    200: RegistryList;
+};
+
+export type ListRegistriesResponse = ListRegistriesResponses[keyof ListRegistriesResponses];
+
+export type PutRegistryData = {
+    body: {
+        host: string;
+        token: string;
+        username: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/registries';
+};
+
+export type PutRegistryErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap.
+     */
+    507: Error;
+};
+
+export type PutRegistryError = PutRegistryErrors[keyof PutRegistryErrors];
+
+export type PutRegistryResponses = {
+    /**
+     * The call succeeded.
+     */
+    201: Registry;
+};
+
+export type PutRegistryResponse = PutRegistryResponses[keyof PutRegistryResponses];
+
+export type DeleteRegistryData = {
+    body?: never;
+    path: {
+        /**
+         * Registry hostname.
+         */
+        host: string;
+    };
+    query?: never;
+    url: '/v1/registries/{host}';
+};
+
+export type DeleteRegistryErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap.
+     */
+    507: Error;
+};
+
+export type DeleteRegistryError = DeleteRegistryErrors[keyof DeleteRegistryErrors];
+
+export type DeleteRegistryResponses = {
+    /**
+     * The call succeeded.
+     */
+    204: void;
+};
+
+export type DeleteRegistryResponse = DeleteRegistryResponses[keyof DeleteRegistryResponses];
 
 export type ListSandboxesData = {
     body?: never;
@@ -958,6 +1102,7 @@ export type CreateTemplateData = {
         memory_mb?: number;
         name: string;
         setup?: Array<string>;
+        ttl_seconds?: number;
         vcpus?: number;
     };
     path?: never;

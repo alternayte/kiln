@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, CreateTemplateData, CreateTemplateErrors, CreateTemplateResponses, CreateViewerData, CreateViewerErrors, CreateViewerResponses, DeleteSandboxData, DeleteSandboxErrors, DeleteSandboxResponses, DeleteSnapshotData, DeleteSnapshotErrors, DeleteSnapshotResponses, DeleteTemplateData, DeleteTemplateErrors, DeleteTemplateResponses, DeleteViewerData, DeleteViewerErrors, DeleteViewerResponses, EventsData, EventsErrors, EventsResponses, ExecData, ExecErrors, ExecResponses, ForkData, ForkErrors, ForkResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, GetSnapshotData, GetSnapshotErrors, GetSnapshotResponses, GetTemplateData, GetTemplateErrors, GetTemplateResponses, HealthData, HealthErrors, HealthResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, ListSnapshotsData, ListSnapshotsErrors, ListSnapshotsResponses, ListTemplatesData, ListTemplatesErrors, ListTemplatesResponses, ListViewersData, ListViewersErrors, ListViewersResponses, PublishData, PublishErrors, PublishResponses, ReadFileData, ReadFileErrors, ReadFileResponses, RestoreData, RestoreErrors, RestoreResponses, RetireData, RetireErrors, RetireResponses, SnapshotData, SnapshotErrors, SnapshotResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
+import type { CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, CreateTemplateData, CreateTemplateErrors, CreateTemplateResponses, CreateViewerData, CreateViewerErrors, CreateViewerResponses, DeleteRegistryData, DeleteRegistryErrors, DeleteRegistryResponses, DeleteSandboxData, DeleteSandboxErrors, DeleteSandboxResponses, DeleteSnapshotData, DeleteSnapshotErrors, DeleteSnapshotResponses, DeleteTemplateData, DeleteTemplateErrors, DeleteTemplateResponses, DeleteViewerData, DeleteViewerErrors, DeleteViewerResponses, EventsData, EventsErrors, EventsResponses, ExecData, ExecErrors, ExecResponses, ForkData, ForkErrors, ForkResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, GetSnapshotData, GetSnapshotErrors, GetSnapshotResponses, GetTemplateData, GetTemplateErrors, GetTemplateResponses, HealthData, HealthErrors, HealthResponses, ListRegistriesData, ListRegistriesErrors, ListRegistriesResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, ListSnapshotsData, ListSnapshotsErrors, ListSnapshotsResponses, ListTemplatesData, ListTemplatesErrors, ListTemplatesResponses, ListViewersData, ListViewersErrors, ListViewersResponses, PublishData, PublishErrors, PublishResponses, PutRegistryData, PutRegistryErrors, PutRegistryResponses, ReadFileData, ReadFileErrors, ReadFileResponses, RestoreData, RestoreErrors, RestoreResponses, RetireData, RetireErrors, RetireResponses, SnapshotData, SnapshotErrors, SnapshotResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -33,6 +33,37 @@ export const events = <ThrowOnError extends boolean = false>(options?: Options<E
 export const health = <ThrowOnError extends boolean = false>(options?: Options<HealthData, ThrowOnError>) => (options?.client ?? client).get<HealthResponses, HealthErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
     url: '/v1/health',
+    ...options
+});
+
+/**
+ * List the registry credentials of this tenant. The tokens are never returned.
+ */
+export const listRegistries = <ThrowOnError extends boolean = false>(options?: Options<ListRegistriesData, ThrowOnError>) => (options?.client ?? client).get<ListRegistriesResponses, ListRegistriesErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
+    url: '/v1/registries',
+    ...options
+});
+
+/**
+ * Store the credential a template build uses to pull a private image for this tenant.
+ */
+export const putRegistry = <ThrowOnError extends boolean = false>(options: Options<PutRegistryData, ThrowOnError>) => (options.client ?? client).post<PutRegistryResponses, PutRegistryErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
+    url: '/v1/registries',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Remove one registry credential.
+ */
+export const deleteRegistry = <ThrowOnError extends boolean = false>(options: Options<DeleteRegistryData, ThrowOnError>) => (options.client ?? client).delete<DeleteRegistryResponses, DeleteRegistryErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
+    url: '/v1/registries/{host}',
     ...options
 });
 

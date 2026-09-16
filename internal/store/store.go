@@ -64,6 +64,20 @@ type Template struct {
 	State       string
 	Error       string
 	CreatedAt   time.Time
+	// TTLSeconds ends the template without a client. Nil is no deadline; a
+	// preview environment sets one, because nothing will come back to
+	// delete it.
+	TTLSeconds *int
+}
+
+// Registry is one tenant's credential for one image registry. The token is
+// sealed with the host key on the way in and never leaves the host.
+type Registry struct {
+	TenantID  string
+	Host      string
+	Username  string
+	Token     string
+	CreatedAt time.Time
 }
 
 // Event is one row of the events table.
@@ -145,6 +159,18 @@ type Store interface {
 	// reference the template. Tables that a later phase adds count as zero.
 	TemplateDependents(ctx context.Context, name string) (liveSandboxes, snapshots int, err error)
 	DeleteTemplate(ctx context.Context, name string) error
+	// ListTemplatesPastTTL returns every template of every tenant whose TTL
+	// has run out. The reconciler asks, so a preview nobody deleted ends.
+	ListTemplatesPastTTL(ctx context.Context, now time.Time) ([]Template, error)
+
+	// PutRegistry stores one credential, replacing any for the same host.
+	PutRegistry(ctx context.Context, r Registry) error
+	// ListRegistries returns the credentials of this tenant, tokens included.
+	ListRegistries(ctx context.Context) ([]Registry, error)
+	// GetRegistry returns the credential for one registry host, or
+	// ErrNotFound.
+	GetRegistry(ctx context.Context, host string) (Registry, error)
+	DeleteRegistry(ctx context.Context, host string) error
 	AppendEvent(ctx context.Context, e Event) error
 	ListEvents(ctx context.Context, sandboxID string) ([]Event, error)
 	// ListEventsSince returns every event with an id greater than afterID,

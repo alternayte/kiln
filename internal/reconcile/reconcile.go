@@ -49,6 +49,8 @@ type Report struct {
 	Failed  []string
 	Swept   []string
 	Stuck   []string
+	// Expired names the templates whose TTL ran out this sweep.
+	Expired []string
 }
 
 // Run sweeps every Interval until the context ends. The caller runs one
@@ -90,6 +92,10 @@ func (r *Reconciler) Sweep(ctx context.Context) (Report, error) {
 	}
 
 	var report Report
+	// A template with a deadline ends here. A preview environment is made by
+	// a machine and forgotten by a human, so nothing else will come for it.
+	r.expireTemplates(ctx, &report)
+
 	keep := map[string]store.Sandbox{}
 	for _, row := range rows {
 		if row.DestroyedAt != nil {
@@ -583,4 +589,59 @@ func (r *Reconciler) now() time.Time {
 		return r.Now()
 	}
 	return time.Now().UTC()
+}
+
+// expireTemplates deletes every template whose TTL has run out, with the
+// sandboxes restored from it and its snapshots. It crosses tenants, because
+// the reconciler runs for the host and a spent deadline belongs to nobody.
+func (r *Reconciler) expireTemplates(ctx context.Context, report *Report) {
+	if r.Templates == nil {
+		return
+	}
+	rows, err := r.Store.ListTemplatesPastTTL(ctx, r.now())
+	if err != nil {
+		log.Printf("reconcile: templates past their ttl: %v", err)
+		return
+	}
+	for _, row := range rows {
+		// Every call below reads and writes one tenant's rows, so the tenant
+		// travels with the context.
+		tctx := store.WithTenant(ctx, row.TenantID)
+		if err := r.expireTemplate(tctx, row); err != nil {
+			log.Printf("reconcile: expire template %s/%s: %v", row.TenantID, row.Name, err)
+			continue
+		}
+		report.Expired = append(report.Expired, row.TenantID+"/"+row.Name)
+	}
+}
+
+// expireTemplate destroys what the template holds, then the template. The
+// order matters: Delete refuses a template that still has a live sandbox or
+// a snapshot.
+func (r *Reconciler) expireTemplate(ctx context.Context, row store.Template) error {
+	sandboxes, err := r.Store.ListSandboxes(ctx)
+	if err != nil {
+		return err
+	}
+	for _, sb := range sandboxes {
+		if sb.TemplateName != row.Name || sb.DestroyedAt != nil {
+			continue
+		}
+		if err := r.Sandboxes.Destroy(ctx, sb.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("destroy %s: %w", sb.ID, err)
+		}
+	}
+	snapshots, err := r.Store.ListSnapshots(ctx)
+	if err != nil {
+		return err
+	}
+	for _, snap := range snapshots {
+		if snap.TemplateName != row.Name {
+			continue
+		}
+		if err := r.Store.DeleteSnapshot(ctx, snap.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("delete snapshot %s: %w", snap.ID, err)
+		}
+	}
+	return r.Templates.Delete(ctx, row.Name)
 }

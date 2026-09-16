@@ -72,6 +72,21 @@ export class GeneratedClient {
     return this.json("GET", "/v1/health");
   }
 
+  /** List the registry credentials of this tenant. The tokens are never returned. */
+  listRegistries(): Promise<unknown> {
+    return this.json("GET", "/v1/registries");
+  }
+
+  /** Store the credential a template build uses to pull a private image for this tenant. */
+  putRegistry(body: { host: string; username: string; token: string }): Promise<unknown> {
+    return this.json("POST", "/v1/registries", body);
+  }
+
+  /** Remove one registry credential. */
+  deleteRegistry(host: string): Promise<void> {
+    return this.json("DELETE", `/v1/registries/${encodeURIComponent(String(host))}`);
+  }
+
   /** List the sandboxes of this tenant. */
   listSandboxes(): Promise<unknown> {
     return this.json("GET", "/v1/sandboxes");
@@ -153,7 +168,7 @@ export class GeneratedClient {
   }
 
   /** Build a template from an OCI image. The build runs after the answer. */
-  createTemplate(body: { name: string; image: string; egress_allow: string[]; vcpus?: number; memory_mb?: number; disk_mb?: number; setup?: string[] }): Promise<unknown> {
+  createTemplate(body: { name: string; image: string; egress_allow: string[]; vcpus?: number; memory_mb?: number; disk_mb?: number; setup?: string[]; ttl_seconds?: number }): Promise<unknown> {
     return this.json("POST", "/v1/templates", body);
   }
 

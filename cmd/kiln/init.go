@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -38,10 +39,14 @@ type configFile struct {
 	// GatewayNames are the hostnames and addresses a gateway dials. They go
 	// into the listener's certificate, so a gateway can verify the host it
 	// reaches. An empty list takes the host part of GatewayAddr.
-	GatewayNames []string          `json:"gateway_names,omitempty"`
-	Zone         string            `json:"zone,omitempty"`
-	ACME         acmeSettings      `json:"acme"`
-	Secrets      map[string]string `json:"secrets,omitempty"`
+	GatewayNames []string `json:"gateway_names,omitempty"`
+	// SealKey seals a tenant's registry token before it reaches kiln.db.
+	// The database is read by more than the operator; this file is not. A
+	// lost key loses every token sealed with it.
+	SealKey string            `json:"seal_key,omitempty"`
+	Zone    string            `json:"zone,omitempty"`
+	ACME    acmeSettings      `json:"acme"`
+	Secrets map[string]string `json:"secrets,omitempty"`
 }
 
 // acmeSettings is the certificate part of the config. v1 imports the
@@ -391,6 +396,13 @@ func writeConfig(path, zone, email string) (configFile, error) {
 		}
 		cfg.BearerToken = token
 	}
+	if cfg.SealKey == "" {
+		key, err := store.NewKey()
+		if err != nil {
+			return configFile{}, err
+		}
+		cfg.SealKey = base64.StdEncoding.EncodeToString(key)
+	}
 	if cfg.ControlAddr == "" {
 		cfg.ControlAddr = "127.0.0.1:8080"
 	}
@@ -410,20 +422,7 @@ func writeConfig(path, zone, email string) (configFile, error) {
 		cfg.ACME.Credentials[ingress.CloudflareTokenKey] = token
 		cfg.ACME.DNSProvider = ingress.CloudflareProvider
 	}
-	b, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return configFile{}, err
-	}
-	b = append(b, '\n')
-	tmp := path + ".part"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return configFile{}, err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return configFile{}, err
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	if err := saveConfig(path, cfg); err != nil {
 		return configFile{}, err
 	}
 	return cfg, nil
@@ -435,4 +434,23 @@ func newToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// saveConfig writes config.json atomically, mode 0600. It holds the bearer
+// token and the sealing key, so it is the operator's file and nobody else's.
+func saveConfig(path string, cfg configFile) error {
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	tmp := path + ".part"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }

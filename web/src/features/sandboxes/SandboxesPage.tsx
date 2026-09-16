@@ -39,7 +39,10 @@ export function SandboxesPage() {
                     <Mono>{sandbox.id}</Mono>
                   </Link>
                 </td>
-                <td className="px-4 py-2.5 text-muted">{sandbox.template}</td>
+                <td className="px-4 py-2.5 text-muted">
+                  {sandbox.template}
+                  <Preview metadata={sandbox.metadata} />
+                </td>
                 <td className="px-4 py-2.5">
                   <State value={sandbox.state} />
                 </td>
@@ -57,6 +60,24 @@ export function SandboxesPage() {
         )}
       </Panel>
     </>
+  );
+}
+
+/**
+ * Preview names the pull request a sandbox belongs to. A preview environment
+ * is a sandbox like any other, so it shows in this list rather than on a
+ * screen of its own; only its origin is worth a second line.
+ */
+function Preview({ metadata }: { metadata?: Record<string, unknown> }) {
+  const repository = metadata?.repository;
+  const pull = metadata?.pull_request;
+  if (typeof repository !== "string" || (typeof pull !== "string" && typeof pull !== "number")) {
+    return null;
+  }
+  return (
+    <span className="mt-0.5 block font-mono text-xs text-muted">
+      {repository} #{pull}
+    </span>
   );
 }
 

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/regclient/regclient"
+	"github.com/regclient/regclient/config"
 	"github.com/regclient/regclient/types/manifest"
 	"github.com/regclient/regclient/types/platform"
 	"github.com/regclient/regclient/types/ref"
@@ -23,10 +24,22 @@ import (
 type Builder struct {
 	// KilninitPath is the linux/amd64 guest init placed at /kilninit.
 	KilninitPath string
+	// Credentials are the registries this build may authenticate to. They
+	// belong to the tenant whose template is building, and to no other, so
+	// one tenant's token can never pull for another. An empty list pulls
+	// anonymously, which a public image still allows.
+	Credentials []RegistryCredential
 	// Arch selects the image platform. Defaults to amd64.
 	Arch string
 	// OS selects the image platform. Defaults to linux.
 	OS string
+}
+
+// RegistryCredential is one registry this build may authenticate to.
+type RegistryCredential struct {
+	Host     string
+	Username string
+	Token    string
 }
 
 // ImportSpec is one image import.
@@ -84,13 +97,28 @@ func (b *Builder) Import(ctx context.Context, spec ImportSpec) (Imported, error)
 	return Imported{Digest: digest}, nil
 }
 
+// hosts turns this build's credentials into regclient host settings.
+func (b *Builder) hosts() []config.Host {
+	out := make([]config.Host, 0, len(b.Credentials))
+	for _, cred := range b.Credentials {
+		host := config.HostNewName(cred.Host)
+		host.User = cred.Username
+		host.Pass = cred.Token
+		out = append(out, *host)
+	}
+	return out
+}
+
 // pull resolves the platform image and applies its layers to root.
 func (b *Builder) pull(ctx context.Context, imageRef, root string) (string, error) {
 	r, err := ref.New(imageRef)
 	if err != nil {
 		return "", fmt.Errorf("template: %s: %w", imageRef, err)
 	}
-	rc := regclient.New(regclient.WithDockerCreds(), regclient.WithDockerCerts())
+	// The operator's own Docker credentials are deliberately not loaded: a
+	// tenant must not borrow them to reach a registry the operator can
+	// reach.
+	rc := regclient.New(regclient.WithConfigHosts(b.hosts()))
 	defer rc.Close(ctx, r)
 
 	m, err := rc.ManifestGet(ctx, r)

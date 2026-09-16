@@ -60,6 +60,23 @@ class GeneratedClient:
         """Report whether the host can run sandboxes."""
         return self._json("GET", "/v1/health")
 
+    def list_registries(self) -> Any:
+        """List the registry credentials of this tenant. The tokens are never returned."""
+        return self._json("GET", "/v1/registries")
+
+    def put_registry(self, host: str, username: str, token: str) -> Any:
+        """Store the credential a template build uses to pull a private image for this tenant."""
+        body = {k: v for k, v in {
+            "host": host,
+            "username": username,
+            "token": token,
+        }.items() if v is not None}
+        return self._json("POST", "/v1/registries", body)
+
+    def delete_registry(self, host: str) -> Any:
+        """Remove one registry credential."""
+        return self._json("DELETE", f"/v1/registries/{host}")
+
     def list_sandboxes(self) -> Any:
         """List the sandboxes of this tenant."""
         return self._json("GET", "/v1/sandboxes")
@@ -153,7 +170,7 @@ class GeneratedClient:
         """List the templates of this tenant."""
         return self._json("GET", "/v1/templates")
 
-    def create_template(self, name: str, image: str, egress_allow: list[str], vcpus: Optional[int] = None, memory_mb: Optional[int] = None, disk_mb: Optional[int] = None, setup: Optional[list[str]] = None) -> Any:
+    def create_template(self, name: str, image: str, egress_allow: list[str], vcpus: Optional[int] = None, memory_mb: Optional[int] = None, disk_mb: Optional[int] = None, setup: Optional[list[str]] = None, ttl_seconds: Optional[int] = None) -> Any:
         """Build a template from an OCI image. The build runs after the answer."""
         body = {k: v for k, v in {
             "name": name,
@@ -163,6 +180,7 @@ class GeneratedClient:
             "disk_mb": disk_mb,
             "setup": setup,
             "egress_allow": egress_allow,
+            "ttl_seconds": ttl_seconds,
         }.items() if v is not None}
         return self._json("POST", "/v1/templates", body)
 

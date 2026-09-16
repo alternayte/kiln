@@ -76,6 +76,8 @@ func Operations() []Operation {
 				{Name: "setup", Type: "array", Items: "string", Doc: "Commands that run once while the template builds."},
 				{Name: "egress_allow", Type: "array", Items: "string", Required: true,
 					Doc: "Hostnames a sandbox may reach. An empty list allows no egress."},
+				{Name: "ttl_seconds", Type: "integer",
+					Doc: "Seconds until the host deletes this template with its snapshot and its sandboxes. A preview environment sets one, because nothing comes back to delete it."},
 			},
 			Returns: "TemplateState",
 		},
@@ -217,6 +219,26 @@ func Operations() []Operation {
 				{Name: "allow_secret_fork", Type: "boolean", Doc: "Allow a restore of a snapshot that holds secrets."},
 			},
 			Returns: "SandboxList",
+		},
+		{
+			ID: "listRegistries", Method: "GET", Path: "/v1/registries", Status: 200,
+			Summary: "List the registry credentials of this tenant. The tokens are never returned.",
+			Returns: "RegistryList",
+		},
+		{
+			ID: "putRegistry", Method: "POST", Path: "/v1/registries", Status: 201,
+			Summary: "Store the credential a template build uses to pull a private image for this tenant.",
+			Body: []Field{
+				{Name: "host", Type: "string", Required: true, Doc: "Registry hostname, such as ghcr.io."},
+				{Name: "username", Type: "string", Required: true, Doc: "Username the registry accepts."},
+				{Name: "token", Type: "string", Required: true, Doc: "Token or password. It is never returned."},
+			},
+			Returns: "Registry",
+		},
+		{
+			ID: "deleteRegistry", Method: "DELETE", Path: "/v1/registries/{host}", Status: 204,
+			Summary: "Remove one registry credential.",
+			Params:  []Field{{Name: "host", Type: "string", Required: true, Doc: "Registry hostname."}},
 		},
 		{
 			ID: "listViewers", Method: "GET", Path: "/v1/viewers", Status: 200,

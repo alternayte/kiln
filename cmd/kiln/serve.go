@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +42,10 @@ func cmdServe() error {
 	if cfg.BearerToken == "" {
 		return fmt.Errorf("serve: %s has no bearer_token; run kiln init", cfgPath)
 	}
+	sealKey, err := cfg.sealKey()
+	if err != nil {
+		return err
+	}
 	if cfg.ControlAddr == "" {
 		cfg.ControlAddr = "127.0.0.1:8080"
 	}
@@ -75,6 +80,7 @@ func cmdServe() error {
 		Runtime:    rt,
 		Network:    nm,
 		Builder:    template.Builder{KilninitPath: kilninit},
+		SealKey:    sealKey,
 		KernelPath: filepath.Join(root, "kernel", "vmlinux-"+kernelVersion),
 	}
 	exe, err := os.Executable()
@@ -132,6 +138,7 @@ func cmdServe() error {
 		FirecrackerVersion: firecrackerVersion,
 		Root:               root,
 		Base:               ctx,
+		SealKey:            sealKey,
 	}
 	if viewer != nil {
 		apiServer.Viewers = viewer
@@ -230,7 +237,9 @@ func cmdServe() error {
 	}
 }
 
-// readConfig reads config.json written by kiln init.
+// readConfig reads config.json written by kiln init. A host that predates
+// the sealing key gains one here and keeps it, so an upgrade needs no
+// command.
 func readConfig(path string) (configFile, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -240,7 +249,30 @@ func readConfig(path string) (configFile, error) {
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return configFile{}, fmt.Errorf("serve: %s: %w", path, err)
 	}
+	if cfg.SealKey == "" {
+		key, err := store.NewKey()
+		if err != nil {
+			return configFile{}, fmt.Errorf("serve: %w", err)
+		}
+		cfg.SealKey = base64.StdEncoding.EncodeToString(key)
+		if err := saveConfig(path, cfg); err != nil {
+			return configFile{}, fmt.Errorf("serve: store the new sealing key: %w", err)
+		}
+		fmt.Println("kiln serve: wrote a sealing key to the config")
+	}
 	return cfg, nil
+}
+
+// sealKey decodes the key that seals registry tokens.
+func (c configFile) sealKey() ([]byte, error) {
+	raw, err := base64.StdEncoding.DecodeString(c.SealKey)
+	if err != nil {
+		return nil, fmt.Errorf("serve: secret_key: %w", err)
+	}
+	if len(raw) != store.KeySize {
+		return nil, fmt.Errorf("serve: secret_key is %d bytes, want %d", len(raw), store.KeySize)
+	}
+	return raw, nil
 }
 
 // hostnameOf returns the host part of a listen address, so the certificate

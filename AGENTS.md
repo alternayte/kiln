@@ -35,3 +35,4 @@ The server and the systemd unit: `infra/README.md`.
 - reader: a member of a tenant who sees its templates, sandboxes and snapshots and changes nothing. Avoid: read-only member.
 - terminal: an interactive PTY session into a running sandbox, carried over a WebSocket. Avoid: shell session, console, SSH.
 - preview environment: one template and one sandbox built from one commit, published on a hostname for a pull request. Avoid: preview deployment, ephemeral environment, review app.
+- start command: the command a template names to run its application, which the host runs once when a sandbox restores from that template snapshot. Avoid: entrypoint, run command.

@@ -43,7 +43,14 @@ const (
 	OpReadFile  = "read_file"
 	OpWriteFile = "write_file"
 	OpTerminal  = "terminal"
+	OpStart     = "start"
+	OpAwait     = "await"
 )
+
+// StartDeadlineSeconds is how long the host waits for a started application
+// to accept a connection on its port. A runtime that boots and binds fits; a
+// build belongs in setup.
+const StartDeadlineSeconds = 120
 
 // Terminal bounds. A window outside these is a client bug, and a pty ioctl
 // with a wild size confuses every curses program in the sandbox.
@@ -89,6 +96,9 @@ type Request struct {
 	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
 	// Path is the guest path of a file request.
 	Path string `json:"path,omitempty"`
+	// Port is the port a start command listens on. The guest waits for it
+	// before it answers.
+	Port int `json:"port,omitempty"`
 	// Cols and Rows are the terminal window at the moment the client opens it.
 	Cols int `json:"cols,omitempty"`
 	Rows int `json:"rows,omitempty"`

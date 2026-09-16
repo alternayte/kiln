@@ -178,10 +178,11 @@ func (s *sqliteStore) StartTemplateBuild(ctx context.Context, t Template) error 
 	case errors.Is(err, sql.ErrNoRows):
 		if _, err := tx.ExecContext(ctx, `INSERT INTO templates (
 			tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-			egress_allow, state, error, created_at, ttl_seconds
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			tenantOf(ctx), t.Name, t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
 			encoded, t.State, nullString(t.Error), t.CreatedAt.Unix(), nullIntPtr(t.TTLSeconds),
+			nullString(encodeStart(t.Start)), nullInt(t.StartPort),
 		); err != nil {
 			return err
 		}
@@ -192,10 +193,12 @@ func (s *sqliteStore) StartTemplateBuild(ctx context.Context, t Template) error 
 	default:
 		if _, err := tx.ExecContext(ctx, `UPDATE templates SET
 			image_ref = ?, image_digest = ?, vcpus = ?, memory_mb = ?, disk_mb = ?,
-			egress_allow = ?, state = ?, error = NULL, created_at = ?, ttl_seconds = ?
+			egress_allow = ?, state = ?, error = NULL, created_at = ?, ttl_seconds = ?,
+			start_cmd = ?, start_port = ?
 		WHERE tenant_id = ? AND name = ?`,
 			t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
-			encoded, t.State, t.CreatedAt.Unix(), nullIntPtr(t.TTLSeconds), tenantOf(ctx), t.Name,
+			encoded, t.State, t.CreatedAt.Unix(), nullIntPtr(t.TTLSeconds),
+			nullString(encodeStart(t.Start)), nullInt(t.StartPort), tenantOf(ctx), t.Name,
 		); err != nil {
 			return err
 		}
@@ -242,7 +245,7 @@ func (s *sqliteStore) GetTemplate(ctx context.Context, name string) (Template, e
 	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at, ttl_seconds
+		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port
 	FROM templates WHERE name = ?`+clause, append([]any{name}, args...)...)
 	t, err := scanTemplate(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -255,7 +258,7 @@ func (s *sqliteStore) ListTemplates(ctx context.Context) ([]Template, error) {
 	clause, args := scope(ctx, "tenant_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at, ttl_seconds
+		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port
 	FROM templates WHERE 1 = 1`+clause+` ORDER BY name`, args...)
 	if err != nil {
 		return nil, err
@@ -459,10 +462,12 @@ func scanTemplate(row scanner) (Template, error) {
 		message sql.NullString
 		created int64
 		ttl     sql.NullInt64
+		start   sql.NullString
+		port    sql.NullInt64
 	)
 	if err := row.Scan(
 		&t.TenantID, &t.Name, &t.ImageRef, &t.ImageDigest, &t.VCPUs, &t.MemoryMB, &t.DiskMB,
-		&egress, &t.State, &message, &created, &ttl,
+		&egress, &t.State, &message, &created, &ttl, &start, &port,
 	); err != nil {
 		return Template{}, err
 	}
@@ -478,6 +483,12 @@ func scanTemplate(row scanner) (Template, error) {
 		seconds := int(ttl.Int64)
 		t.TTLSeconds = &seconds
 	}
+	if start.Valid && start.String != "" {
+		if err := json.Unmarshal([]byte(start.String), &t.Start); err != nil {
+			return Template{}, fmt.Errorf("store: template %s: start_cmd: %w", t.Name, err)
+		}
+	}
+	t.StartPort = int(port.Int64)
 	return t, nil
 }
 
@@ -489,6 +500,19 @@ func nullString(s string) any {
 }
 
 // nullInt stores a zero as NULL.
+// encodeStart stores the command as JSON, so an argument with a space
+// survives the round trip.
+func encodeStart(cmd []string) string {
+	if len(cmd) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(cmd)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
 func nullInt(v int) any {
 	if v == 0 {
 		return nil
@@ -1118,7 +1142,7 @@ func scanTenant(row scanner) (Tenant, error) {
 func (s *sqliteStore) ListTemplatesPastTTL(ctx context.Context, now time.Time) ([]Template, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at, ttl_seconds
+		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port
 	FROM templates
 	WHERE ttl_seconds IS NOT NULL AND created_at + ttl_seconds <= ?
 	ORDER BY tenant_id, name`, now.Unix())

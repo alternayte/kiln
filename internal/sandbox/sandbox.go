@@ -144,6 +144,10 @@ type image struct {
 	template   store.Template
 	snapshotID string
 	secret     bool
+	// fromTemplate marks the template's own snapshot, which comes from a
+	// fresh VM. A sleep image and a fork image restore memory that already
+	// holds the running application, so only this one starts it.
+	fromTemplate bool
 }
 
 func (i image) memPath() string   { return filepath.Join(i.dir, "mem") }
@@ -221,8 +225,9 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (store.Sandbox,
 	m.event(ctx, id, "", store.SandboxCreating, "create", now)
 
 	img := image{
-		dir:      m.templateDir(tpl),
-		template: tpl,
+		dir:          m.templateDir(tpl),
+		template:     tpl,
+		fromTemplate: true,
 	}
 	running, err := m.restore(ctx, img, row, env, restoreOptions{from: store.SandboxCreating, reason: "restored"})
 	if err != nil {
@@ -302,6 +307,16 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 	}
 	if err := vm.ResumeHooks(ctx, entropy, time.Now().UnixNano(), row.ID, env); err != nil {
 		return store.Sandbox{}, err
+	}
+	// The application starts after the resume hooks, which place the
+	// hostname and the secrets it reads.
+	if img.fromTemplate && len(img.template.Start) > 0 {
+		if err := vm.Start(ctx, img.template.Start, img.template.StartPort,
+			guestproto.StartDeadlineSeconds, env); err != nil {
+			return store.Sandbox{}, fmt.Errorf("start %v on port %d: %w",
+				img.template.Start, img.template.StartPort, err)
+		}
+		m.watchStart(row.ID, vm, img.template.StartPort)
 	}
 	if err := m.cfg.Store.SetSandboxRuntime(ctx, row.ID, att.TAPName, row.VsockCID, vm.PID); err != nil {
 		return store.Sandbox{}, err

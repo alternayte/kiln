@@ -169,6 +169,7 @@ func schemas() map[string]any {
 		"Template": object(map[string]any{
 			"name": str, "image": str, "image_digest": str, "state": str, "error": str,
 			"vcpus": num, "memory_mb": num, "disk_mb": num, "ttl_seconds": num,
+			"start": map[string]any{"type": "array", "items": str}, "port": num,
 			"egress_allow":   map[string]any{"type": "array", "items": str},
 			"snapshot_bytes": num, "sandboxes": num, "created_at": str,
 		}),

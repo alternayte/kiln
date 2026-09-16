@@ -68,6 +68,10 @@ type Template struct {
 	// preview environment sets one, because nothing will come back to
 	// delete it.
 	TTLSeconds *int
+	// Start is the command that runs the application, and StartPort is the
+	// port it listens on. They travel together or not at all.
+	Start     []string
+	StartPort int
 }
 
 // Registry is one tenant's credential for one image registry. The token is

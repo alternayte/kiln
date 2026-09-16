@@ -18,6 +18,8 @@ type createTemplateRequest struct {
 	Setup       []string  `json:"setup"`
 	EgressAllow *[]string `json:"egress_allow"`
 	TTLSeconds  *int      `json:"ttl_seconds"`
+	Start       []string  `json:"start"`
+	Port        int       `json:"port"`
 }
 
 // templateResponse is one template as the API reports it.
@@ -35,6 +37,8 @@ type templateResponse struct {
 	Sandboxes     int       `json:"sandboxes"`
 	CreatedAt     time.Time `json:"created_at"`
 	TTLSeconds    *int      `json:"ttl_seconds,omitempty"`
+	Start         []string  `json:"start,omitempty"`
+	Port          int       `json:"port,omitempty"`
 }
 
 func templateJSON(info template.Info) templateResponse {
@@ -56,6 +60,8 @@ func templateJSON(info template.Info) templateResponse {
 		Sandboxes:     info.Sandboxes,
 		CreatedAt:     info.CreatedAt,
 		TTLSeconds:    info.TTLSeconds,
+		Start:         info.Start,
+		Port:          info.StartPort,
 	}
 }
 
@@ -83,6 +89,8 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 		Setup:       req.Setup,
 		EgressAllow: *req.EgressAllow,
 		TTLSeconds:  req.TTLSeconds,
+		Start:       req.Start,
+		StartPort:   req.Port,
 	}
 	// The build outlives the request, so it runs on the daemon context. The
 	// tenant travels with it, or the rows land on the wrong tenant.

@@ -170,7 +170,7 @@ class GeneratedClient:
         """List the templates of this tenant."""
         return self._json("GET", "/v1/templates")
 
-    def create_template(self, name: str, image: str, egress_allow: list[str], vcpus: Optional[int] = None, memory_mb: Optional[int] = None, disk_mb: Optional[int] = None, setup: Optional[list[str]] = None, ttl_seconds: Optional[int] = None) -> Any:
+    def create_template(self, name: str, image: str, egress_allow: list[str], vcpus: Optional[int] = None, memory_mb: Optional[int] = None, disk_mb: Optional[int] = None, setup: Optional[list[str]] = None, ttl_seconds: Optional[int] = None, start: Optional[list[str]] = None, port: Optional[int] = None) -> Any:
         """Build a template from an OCI image. The build runs after the answer."""
         body = {k: v for k, v in {
             "name": name,
@@ -181,6 +181,8 @@ class GeneratedClient:
             "setup": setup,
             "egress_allow": egress_allow,
             "ttl_seconds": ttl_seconds,
+            "start": start,
+            "port": port,
         }.items() if v is not None}
         return self._json("POST", "/v1/templates", body)
 

@@ -216,11 +216,20 @@
           "name": {
             "type": "string"
           },
+          "port": {
+            "type": "integer"
+          },
           "sandboxes": {
             "type": "integer"
           },
           "snapshot_bytes": {
             "type": "integer"
+          },
+          "start": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "state": {
             "type": "string"
@@ -2080,7 +2089,16 @@
                   "name": {
                     "type": "string"
                   },
+                  "port": {
+                    "type": "integer"
+                  },
                   "setup": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "start": {
                     "items": {
                       "type": "string"
                     },

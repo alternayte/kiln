@@ -40,6 +40,9 @@ type BuildRequest struct {
 	// TTLSeconds ends the template with no client involved. Nil is no
 	// deadline.
 	TTLSeconds *int
+	// Start runs the application, and StartPort is the port it listens on.
+	Start     []string
+	StartPort int
 }
 
 // InvalidError reports a request that cannot be accepted.
@@ -83,6 +86,14 @@ func (r BuildRequest) Validate() error {
 	}
 	if err := network.ValidateAllow(r.EgressAllow); err != nil {
 		return &InvalidError{Message: err.Error()}
+	}
+	// A start with no port has no readiness, and a port with no start never
+	// listens. Either both or neither.
+	if (len(r.Start) == 0) != (r.StartPort == 0) {
+		return invalidf("start and port travel together")
+	}
+	if r.StartPort < 0 || r.StartPort > 65535 {
+		return invalidf("port must be between 1 and 65535")
 	}
 	return nil
 }
@@ -161,6 +172,8 @@ func (m *Manager) Start(ctx context.Context, req BuildRequest) error {
 		State:       store.TemplateBuilding,
 		CreatedAt:   now,
 		TTLSeconds:  req.TTLSeconds,
+		Start:       req.Start,
+		StartPort:   req.StartPort,
 	}
 	if m.IsBuilding(buildKey(ctx, req.Name)) {
 		return store.ErrConflict

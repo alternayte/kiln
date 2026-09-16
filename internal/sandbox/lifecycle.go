@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -475,4 +476,25 @@ func (m *Manager) Forget(id string) {
 	delete(m.attrs, id)
 	m.mu.Unlock()
 	m.stopTimer(id)
+}
+
+// watchStart records how the application ended. Nothing restarts it: a crash
+// the change caused is what a preview exists to reveal, and a restart would
+// hide it. The sandbox keeps running, so the person can open a terminal and
+// look.
+func (m *Manager) watchStart(id string, vm *runtime.VM, port int) {
+	go func() {
+		ctx := context.Background()
+		res, err := vm.Await(ctx, port)
+		if err != nil {
+			// The sandbox slept, forked or was destroyed under the wait.
+			// None of those is the application ending.
+			return
+		}
+		reason := fmt.Sprintf("the application exited with %d", res.ExitCode)
+		if tail := strings.TrimSpace(res.Output); tail != "" {
+			reason = reason + ": " + tail
+		}
+		m.event(ctx, id, store.SandboxRunning, store.SandboxRunning, reason, m.now())
+	}()
 }

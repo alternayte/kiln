@@ -89,8 +89,10 @@ export type Template = {
     image_digest?: string;
     memory_mb?: number;
     name?: string;
+    port?: number;
     sandboxes?: number;
     snapshot_bytes?: number;
+    start?: Array<string>;
     state?: string;
     ttl_seconds?: number;
     vcpus?: number;
@@ -1101,7 +1103,9 @@ export type CreateTemplateData = {
         image: string;
         memory_mb?: number;
         name: string;
+        port?: number;
         setup?: Array<string>;
+        start?: Array<string>;
         ttl_seconds?: number;
         vcpus?: number;
     };

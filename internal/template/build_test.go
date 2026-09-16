@@ -243,3 +243,32 @@ func TestBuildAttachesUnderTheProtectedID(t *testing.T) {
 		t.Fatalf("the build attaches the network as %q, which the reconciler does not protect", attachID)
 	}
 }
+
+// A start with no port has no readiness, and a port with no start never
+// listens. A template that names one without the other would build, and the
+// sandbox from it would answer nothing.
+func TestBuildRequestRefusesHalfAStartCommand(t *testing.T) {
+	base := BuildRequest{
+		Name: "app", Image: "docker.io/library/python:3.12-slim",
+		VCPUs: 1, MemoryMB: 512, DiskMB: 2048, EgressAllow: []string{},
+	}
+	only := base
+	only.Start = []string{"/app/server"}
+	if err := only.Validate(); err == nil {
+		t.Error("a start with no port was accepted")
+	}
+	port := base
+	port.StartPort = 8080
+	if err := port.Validate(); err == nil {
+		t.Error("a port with no start was accepted")
+	}
+	both := base
+	both.Start = []string{"/app/server"}
+	both.StartPort = 8080
+	if err := both.Validate(); err != nil {
+		t.Errorf("a start with its port was refused: %v", err)
+	}
+	if err := base.Validate(); err != nil {
+		t.Errorf("a template with neither was refused: %v", err)
+	}
+}

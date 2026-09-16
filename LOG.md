@@ -234,3 +234,40 @@ Found by running it, not by reading it:
 The demo that closes this: on the Dedibox, a template built through the UI, a
 sandbox created from it, and a shell in the browser running `uname -srm` and
 reporting `stty size` as the window narrowed.
+
+## 2026-09-17 — v0.4.0, preview environments
+
+Done: a pull request, or an agent that finished a feature, gets a running
+copy of the application on a public hostname. A tenant stores a registry
+credential with `POST /v1/registries`; the host pulls the image with the
+credentials of that tenant and no other, and the sandbox never holds the
+token, because the sandbox runs the code under review. `POST /v1/templates`
+takes `ttl_seconds`, and the reconciler deletes a template past its deadline
+with its sandboxes and its snapshots. `.github/actions/preview` drives all of
+it from a workflow, and `docs/preview-environments.md` and `llms.txt` carry
+the same recipe for an agent.
+
+The spec said the token is "encrypted at rest with the host key". There was
+no such key, and no encryption anywhere in the repo. There is one now, in
+config.json, which is 0600. Checking that turned up the thing worth knowing:
+SQLite created kiln.db 0644, so every local user could read every tenant's
+rows. The store takes it to 0600 on open.
+
+Found by running it, not by reading it:
+- A build gave its VMs an id hashed from the template name, and the
+  reconciler protected an id hashed from tenant/name. The two never matched,
+  so every build was an orphan and any sweep inside the two to four minutes
+  of a build killed the VM and purged its TAP. Three builds died before the
+  cause was clear. The same mismatch would have given two tenants building
+  one name the same VM id. Fixing Runtime.Start left Network.Attach on the
+  old id, and the next build died the same way; one id now names the VM, the
+  attachment and the protection.
+- The startup sweep reported "8 destroyed, 0 templates" while that same sweep
+  had deleted a template, its running sandbox and a 512MB snapshot. The
+  templates count was the stuck-template count, and the expired ones had no
+  count at all.
+- A build no longer loads the operator's Docker credentials at all. A tenant
+  with no stored credential pulls anonymously, which a public image allows.
+
+Not verified here, and not claimed: anything that needs a real pull request.
+The comment edited in place and the fork label flow are syntax-checked only.

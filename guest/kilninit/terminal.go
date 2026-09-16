@@ -42,7 +42,7 @@ func runTerminal(conn net.Conn, req *guestproto.Request) {
 	}
 	setWinsize(ptm, size)
 
-	cmd := exec.Command(guestproto.TerminalShell, "-l")
+	cmd := exec.Command(terminalShell(), "-l")
 	cmd.Dir = cwd
 	// TERM makes a curses program usable. Without it the shell assumes dumb.
 	cmd.Env = append(guestproto.ExecEnv(injectedSecrets(), req.Env), "TERM=xterm-256color")
@@ -90,6 +90,18 @@ func runTerminal(conn net.Conn, req *guestproto.Request) {
 		res.ExitCode = -1
 	}
 	writeResult(conn, res)
+}
+
+// terminalShell picks the best shell the image carries. bash gives tab
+// completion, history and arrow keys; dash, which /bin/sh usually is, gives
+// none of them and feels broken to a person typing into it.
+func terminalShell() string {
+	for _, shell := range []string{"/bin/bash", "/usr/bin/bash", "/bin/zsh"} {
+		if info, err := os.Stat(shell); err == nil && !info.IsDir() {
+			return shell
+		}
+	}
+	return guestproto.TerminalShell
 }
 
 // pumpTerminalInput copies keystrokes and window sizes from the host onto the

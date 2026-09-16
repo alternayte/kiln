@@ -48,6 +48,8 @@ const (
 // Terminal bounds. A window outside these is a client bug, and a pty ioctl
 // with a wild size confuses every curses program in the sandbox.
 const (
+	// TerminalShell is the last resort. Every image has it, and the agent
+	// prefers a better one when the image carries it.
 	TerminalShell   = "/bin/sh"
 	TerminalMaxCols = 1000
 	TerminalMaxRows = 1000

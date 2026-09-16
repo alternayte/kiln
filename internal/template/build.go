@@ -304,7 +304,7 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 		return err
 	}
 
-	att, err := m.Network.Attach(ctx, m.buildID(req.Name, "s"), req.EgressAllow)
+	att, err := m.Network.Attach(ctx, m.buildVMID(ctx, req.Name, "s"), req.EgressAllow)
 	if err != nil {
 		return err
 	}

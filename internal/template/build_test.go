@@ -227,3 +227,19 @@ func TestBuildVMIDsDifferPerTenant(t *testing.T) {
 		t.Fatalf("two tenants building python share the VM id %q", acme)
 	}
 }
+
+// The TAP a build attaches is named after an id too. The reconciler keeps a
+// TAP whose short id belongs to a protected build, so the attachment has to
+// use the same id as the VM, or a sweep purges the device mid-build.
+func TestBuildAttachesUnderTheProtectedID(t *testing.T) {
+	m := &Manager{}
+	ctx := store.WithTenant(context.Background(), "acme")
+	m.setBuilding(buildKey(ctx, "python"), true)
+
+	// The attachment uses the setup VM's id, which is what the reconciler
+	// protects and what it derives the kept TAP name from.
+	attachID := m.buildVMID(ctx, "python", "s")
+	if !m.Protected()[attachID] {
+		t.Fatalf("the build attaches the network as %q, which the reconciler does not protect", attachID)
+	}
+}

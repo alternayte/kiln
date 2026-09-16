@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	authall "github.com/alternayte/auth-all"
 	"github.com/alternayte/auth-all/plugins/apikeys"
@@ -83,11 +84,20 @@ func TestProxyNamesTheTenantAndHidesTheCallerCredential(t *testing.T) {
 	default:
 	}
 
-	// The audit log holds the call that did reach the host.
+	// The audit log holds the call that did reach the host. The row is
+	// written after the answer reaches the client, so the test waits for it
+	// instead of assuming the handler has already finished.
 	var count int
-	row := srv.Audit.DB.QueryRow(`SELECT count(*) FROM kiln_audit WHERE tenant_id = ? AND path = '/v1/sandboxes' AND status = 200`, tenantID)
-	if err := row.Scan(&count); err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		row := srv.Audit.DB.QueryRow(`SELECT count(*) FROM kiln_audit WHERE tenant_id = ? AND path = '/v1/sandboxes' AND status = 200`, tenantID)
+		if err := row.Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count == 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	if count != 1 {
 		t.Fatalf("audit rows %d, want 1", count)

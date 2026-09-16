@@ -6,7 +6,7 @@ import (
 )
 
 // Version is the semver of this contract. It rises with the binary.
-const Version = "0.2.0"
+const Version = "0.3.0"
 
 // OpenAPI returns the OpenAPI 3.1 document of the tenant API. The operator
 // routes stay out: a tenant never reaches them, and the SDKs never call them.

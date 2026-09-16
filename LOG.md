@@ -194,3 +194,43 @@ DNS resolver stopped.
 AGENTS.md carries two exceptions now. The auth-all API names a type
 Organization and a plugin admin, so those two words are legal in code that
 calls it.
+
+## 2026-09-16 — v0.3.0, the web UI and a terminal
+
+Done: the gateway serves a React SPA from its own binary, and a sandbox has an
+interactive shell in the browser. The auth prefix moved to `/api/auth`, the
+auth-all default, so the official TypeScript client works with no local
+variant; every access token issued under the old issuer stopped being
+accepted. The member role `viewer` became `reader`, because `viewer` already
+names a preview login.
+
+Found by running it, not by reading it:
+- The gateway wraps its ResponseWriter twice, for the audit status and for the
+  WWW-Authenticate header, and neither wrapper implemented http.Hijacker.
+  httputil.ReverseProxy refused to switch protocols, so every terminal died
+  at the upgrade. The audit code broke the feature it was watching.
+- Coolify's Traefik advertises HTTP/3. A WebSocket over h2 or h3 needs
+  Extended CONNECT, which net/http does not serve, so the browser hung in
+  CONNECTING while the same request over HTTP/1.1 answered 101. quic-go
+  advertises Extended CONNECT unconditionally; Go disabled the h2 equivalent
+  by default in 1.24. Removing `--entrypoints.https.http3` fixed it.
+- A build gave its VMs an id hashed from the template name, and the
+  reconciler protected an id hashed from tenant/name. The two never matched,
+  so every build was an orphan and any sweep inside the two to four minutes
+  of a build killed the VM and purged its TAP. Three builds failed this way
+  before the cause was clear. The same mismatch would have given two tenants
+  building one name the same VM id.
+- The terminal client forgave its retry budget the moment a socket opened.
+  A socket that opened and died 140ms later therefore retried for ever, at a
+  constant half second. The budget is forgiven only after the shell holds.
+- A sandbox restored from a template built before the guest agent had a
+  terminal refuses the op, and the host closed with no reason. The close now
+  carries one, and names the rebuild that fixes it.
+- /bin/sh is dash on a Debian image: no tab completion, no history, no arrow
+  keys, and a bare # for a prompt. The agent takes bash when the image has it.
+- A session can hold memberships and no active tenant. Every /v1 call answered
+  403 and the screens sat empty. A chooser stands in the way now.
+
+The demo that closes this: on the Dedibox, a template built through the UI, a
+sandbox created from it, and a shell in the browser running `uname -srm` and
+reporting `stty size` as the window narrowed.

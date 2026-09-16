@@ -44,6 +44,20 @@ func run() error {
 		return err
 	}
 	defer db.Close()
+	ctx0 := context.Background()
+
+	// The store is this gateway's own, and the migration is idempotent, so a
+	// start applies what is pending. A deployment then needs no second step,
+	// and an image with no shell needs no command run inside it.
+	if env("KILN_SKIP_MIGRATE", "") == "" {
+		applied, err := auth.Migrate(ctx0)
+		if err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+		if len(applied) > 0 {
+			fmt.Printf("kiln-gateway: applied %d statements\n", len(applied))
+		}
+	}
 
 	host, err := gateway.NewHost(hostCredentials())
 	if err != nil {

@@ -362,3 +362,26 @@ older agent, and the browser saw an abrupt socket close with no reason.
 Verified before tagging: the release binary, copied to the Dedibox with no
 source and no Go, ran `kiln init` into a scratch root and wrote a working
 guest agent.
+
+## 2026-09-17 — v0.7.0, env and extra ports for previews
+
+Done: `POST /v1/sandboxes` takes `env`, and the preview Action takes `env`
+and `publish`. A preview that needs a per-PR database URL, or serves a
+frontend and an API on two ports, now works from CI. Spec:
+`docs/specs/preview-config.md`.
+
+- `env` sits on sandbox create, not on the template. A template forks into
+  many sandboxes, and a value on its row would reach every one of them.
+- Kiln handles every `env` value like the host secrets. It reaches guest
+  memory through the resume hooks and never reaches disk. The store keeps
+  the key names, which `GET` returns as `env_keys`.
+- A key in both `env` and `secrets` is refused. Either precedence would
+  override one side with no error.
+- A fork's preview gets no `env`. The label approves the code, not what the
+  code can reach.
+- `port` is published first and stays `url`. Each `publish` port shares its
+  hostname stem, and `urls` maps every port to its URL.
+
+Verified before tagging: every gate passed in CI on the feature commit,
+including the new `TestGateP4/EnvFork`. Not yet verified: the Action against
+a real pull request with `env` and `publish`.

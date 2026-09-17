@@ -5,7 +5,7 @@ reviewer clicks a link instead of reading a diff and imagining the result.
 
 Two things reach for this, and they use the same API.
 
-- **CI**, on every pull request. See [the Action](../.github/actions/preview/README.md), which a workflow pins by tag: `alternayte/kiln/.github/actions/preview@v0.6.0`.
+- **CI**, on every pull request. See [the Action](../.github/actions/preview/README.md), which a workflow pins by tag: `alternayte/kiln/.github/actions/preview@v0.7.0`.
 - **A coding agent**, which has finished a feature and wants to prove it runs.
   That is this page.
 

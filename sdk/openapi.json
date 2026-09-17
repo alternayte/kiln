@@ -126,6 +126,12 @@
           "created_at": {
             "type": "string"
           },
+          "env_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "id": {
             "type": "string"
           },
@@ -781,6 +787,10 @@
             "application/json": {
               "schema": {
                 "properties": {
+                  "env": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
                   "idle_seconds": {
                     "type": "integer"
                   },

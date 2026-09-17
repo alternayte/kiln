@@ -69,6 +69,39 @@ says to run, so without it the sandbox holds your application's files and
 serves nothing. Creating the sandbox waits until that command listens on
 `port`, so the URL in the comment is live when it appears.
 
+## Configuration
+
+`env` takes one `KEY=value` per line. Fill values from your secrets:
+
+```yaml
+          env: |
+            DATABASE_URL=${{ secrets.PREVIEW_DATABASE_URL }}
+            FEATURE_X=on
+```
+
+Kiln handles every value like the host secrets. It reaches the sandbox memory and
+nothing else: the host never writes it to disk, `GET /v1/sandboxes/{id}`
+returns the key names only, and the Action masks each value in the log. A
+line with no `=` fails the run before anything is built. A value cannot span
+lines; encode one that does, for example in base64.
+
+A database for each pull request is yours to create before this step and to
+drop when the pull request closes. Put its host in `egress-allow`.
+
+## More than one port
+
+`publish` names other ports, space separated:
+
+```yaml
+          port: "3000"
+          publish: "8080 9000"
+```
+
+`port` gets `<stem>.<zone>` and stays the `url` output. Each other port gets
+`<stem>-<port>.<zone>`, so a frontend finds its API from its own `Host`
+header. The comment lists every URL, and the `urls` output is a JSON object
+from port to URL. Creating the sandbox waits for `port` only.
+
 ## Forks
 
 A fork's commit is a stranger's code beside your API key, so a maintainer
@@ -77,6 +110,10 @@ the next run builds it. A new commit takes the label away, and the preview
 stops until a maintainer labels it again.
 
 A pull request from a branch in your own repository needs no label.
+
+A fork's preview never gets `env`. The label approves the code, not what the
+code can reach, and a value in the sandbox can leave through its own
+published port. The log says so when `env` was set.
 
 ## What it leaves behind
 

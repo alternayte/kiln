@@ -25,6 +25,20 @@ inputs:
       the image says to run, so a preview that serves anything needs this.
       Creating the sandbox waits until it listens on `port`.
     required: true
+  publish:
+    description: >
+      Other ports to publish beside `port`, space separated. Each one gets a
+      hostname that shares the stem of the `port` hostname, as
+      `<stem>-<port>.<zone>`. Creating the sandbox waits for `port` only.
+    required: false
+    default: ""
+  env:
+    description: >
+      Environment variables for the application, one KEY=value per line. Kiln
+      handles every value like the host secrets: it reaches the sandbox memory
+      only and is never returned. A preview from a fork gets none of them.
+    required: false
+    default: ""
   egress-allow:
     description: >
       Hostnames the preview may reach, space separated. Empty allows no
@@ -66,6 +80,9 @@ outputs:
   url:
     description: The preview URL, empty when the pull request closed.
     value: ${{ steps.up.outputs.url }}
+  urls:
+    description: Every published port with its URL, as a JSON object, empty when the pull request closed.
+    value: ${{ steps.up.outputs.urls }}
 
 runs:
   using: composite
@@ -94,6 +111,9 @@ runs:
         KILN_API_KEY: ${{ inputs.api-key }}
         IMAGE: ${{ inputs.image }}
         PORT: ${{ inputs.port }}
+        PUBLISH: ${{ inputs.publish }}
+        ENV_LINES: ${{ inputs.env }}
+        FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
         START: ${{ inputs.start }}
         EGRESS: ${{ inputs.egress-allow }}
         SETUP: ${{ inputs.setup }}
@@ -114,7 +134,9 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         REPO: ${{ github.repository }}
         PR: ${{ github.event.pull_request.number }}
+        PORT: ${{ inputs.port }}
         URL: ${{ steps.up.outputs.url }}
+        URLS: ${{ steps.up.outputs.urls }}
       run: ${{ github.action_path }}/comment.sh
 
     - name: Destroy the preview

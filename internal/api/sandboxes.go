@@ -22,12 +22,13 @@ import (
 const execOutputCap = 1 << 20
 
 type createSandboxRequest struct {
-	Template    string          `json:"template"`
-	Lifecycle   string          `json:"lifecycle"`
-	IdleSeconds *int            `json:"idle_seconds"`
-	TTLSeconds  *int            `json:"ttl_seconds"`
-	Metadata    json.RawMessage `json:"metadata"`
-	Secrets     []string        `json:"secrets"`
+	Template    string            `json:"template"`
+	Lifecycle   string            `json:"lifecycle"`
+	IdleSeconds *int              `json:"idle_seconds"`
+	TTLSeconds  *int              `json:"ttl_seconds"`
+	Metadata    json.RawMessage   `json:"metadata"`
+	Secrets     []string          `json:"secrets"`
+	Env         map[string]string `json:"env"`
 }
 
 type execRequest struct {
@@ -49,6 +50,8 @@ type sandboxResponse struct {
 	LastActiveAt time.Time           `json:"last_active_at"`
 	DestroyedAt  *time.Time          `json:"destroyed_at,omitempty"`
 	Published    []publishedResponse `json:"published"`
+	// EnvKeys names the env keys. The values are never returned.
+	EnvKeys []string `json:"env_keys"`
 }
 
 type execResponse struct {
@@ -77,6 +80,10 @@ func (s *Server) sandboxJSON(ctx context.Context, sb store.Sandbox) (sandboxResp
 		LastActiveAt: sb.LastActiveAt,
 		DestroyedAt:  sb.DestroyedAt,
 		Published:    []publishedResponse{},
+		EnvKeys:      sb.EnvKeys,
+	}
+	if out.EnvKeys == nil {
+		out.EnvKeys = []string{}
 	}
 	rows, err := s.Sandboxes.Published(ctx, sb.ID)
 	if err != nil {
@@ -121,6 +128,7 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 		TTLSeconds:  req.TTLSeconds,
 		Metadata:    metadata,
 		Secrets:     req.Secrets,
+		Env:         req.Env,
 	})
 	if err != nil {
 		s.writeErr(w, err)

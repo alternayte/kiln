@@ -9,8 +9,11 @@ Not named json.py: the script's own directory comes first on sys.path, so
 """
 import json
 import os
+import re
 import shlex
 import sys
+
+KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def words(value):
@@ -21,6 +24,39 @@ def words(value):
 
 def lines(value):
     return [line for line in value.splitlines() if line.strip()]
+
+
+def env_pairs(value):
+    """One KEY=value per line, split on the first =. A blank line is skipped.
+    Anything else is a caller error, reported before any call to Kiln."""
+    pairs = {}
+    for number, line in enumerate(value.splitlines(), 1):
+        if not line.strip():
+            continue
+        if "=" not in line:
+            raise ValueError(f"env line {number} has no '='")
+        key, val = line.split("=", 1)
+        key = key.strip()
+        if not KEY.match(key):
+            raise ValueError(f"env line {number}: key {key!r} must match {KEY.pattern}")
+        if key in pairs:
+            raise ValueError(f"env line {number}: key {key} appears twice")
+        pairs[key] = val
+    return pairs
+
+
+def extra_ports(value, primary):
+    ports = []
+    for word in words(value):
+        if not word.isdigit() or not 1 <= int(word) <= 65535:
+            raise ValueError(f"publish entry {word!r} is not a port from 1 to 65535")
+        port = int(word)
+        if port == primary:
+            raise ValueError(f"publish entry {port} is the same as port")
+        if port in ports:
+            raise ValueError(f"publish entry {port} appears twice")
+        ports.append(port)
+    return ports
 
 
 def main(argv):
@@ -44,8 +80,36 @@ def main(argv):
         }))
         return 0
 
+    if what == "check":
+        # Every caller error fails here, before the template is built. The
+        # masks go out first, so no later line of the log shows a value.
+        try:
+            pairs = env_pairs(env.get("ENV_LINES", ""))
+            extra_ports(env.get("PUBLISH", ""), int(env["PORT"]))
+        except ValueError as err:
+            print(err, file=sys.stderr)
+            return 1
+        for val in pairs.values():
+            if val:
+                print(f"::add-mask::{val}")
+        return 0
+
+    if what == "ports":
+        for port in extra_ports(env.get("PUBLISH", ""), int(env["PORT"])):
+            print(port)
+        return 0
+
+    if what == "urls":
+        # "<port> <url>" lines in publish order, as one JSON object.
+        urls = {}
+        for line in lines(sys.stdin.read()):
+            port, url = line.split(" ", 1)
+            urls[port] = url
+        print(json.dumps(urls))
+        return 0
+
     if what == "sandbox":
-        print(json.dumps({
+        body = {
             "template": env["NAME"],
             "lifecycle": "persistent",
             "idle_seconds": int(env["IDLE_SECONDS"]),
@@ -56,11 +120,17 @@ def main(argv):
                 "pull_request": env["PR"],
                 "commit": env["SHA"],
             },
-        }))
+        }
+        # A fork's commit never sees env: a label approves the code, not what
+        # the code can reach, and a value can leave through the published port.
+        pairs = env_pairs(env.get("ENV_LINES", ""))
+        if pairs and env.get("FORK") != "true":
+            body["env"] = pairs
+        print(json.dumps(body))
         return 0
 
     if what == "publish":
-        print(json.dumps({"port": int(env["PORT"]), "visibility": "public"}))
+        print(json.dumps({"port": int(argv[2]), "visibility": "public"}))
         return 0
 
     if what == "get":

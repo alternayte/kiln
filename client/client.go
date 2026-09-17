@@ -189,12 +189,13 @@ func (c *Client) DeleteTemplate(ctx context.Context, name string) error {
 // SandboxRequest is one POST /v1/sandboxes body. Lifecycle and IdleSeconds
 // are required. TTLSeconds nil means no deadline.
 type SandboxRequest struct {
-	Template    string         `json:"template"`
-	Lifecycle   string         `json:"lifecycle"`
-	IdleSeconds int            `json:"idle_seconds"`
-	TTLSeconds  *int           `json:"ttl_seconds,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
-	Secrets     []string       `json:"secrets,omitempty"`
+	Template    string            `json:"template"`
+	Lifecycle   string            `json:"lifecycle"`
+	IdleSeconds int               `json:"idle_seconds"`
+	TTLSeconds  *int              `json:"ttl_seconds,omitempty"`
+	Metadata    map[string]any    `json:"metadata,omitempty"`
+	Secrets     []string          `json:"secrets,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
 }
 
 // Sandbox is one sandbox row.
@@ -210,6 +211,7 @@ type Sandbox struct {
 	LastActiveAt time.Time       `json:"last_active_at"`
 	DestroyedAt  *time.Time      `json:"destroyed_at,omitempty"`
 	Published    []Published     `json:"published"`
+	EnvKeys      []string        `json:"env_keys"`
 }
 
 // Published is one preview of a sandbox port.

@@ -114,6 +114,7 @@ Body:
 - `idle_seconds` (integer): Seconds of inactivity until the sandbox sleeps.
 - `metadata` (object): Free-form labels the caller reads back.
 - `secrets` (array of string): Names of host secrets to inject.
+- `env` (object): Environment variables for the start command, exec and the terminal. Every value is handled like the host secrets: it reaches guest memory only and is never returned. A key must not also be in secrets.
 
 Answers 201 with `Sandbox`.
 

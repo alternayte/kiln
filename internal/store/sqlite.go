@@ -532,6 +532,15 @@ func nullIntPtr(v *int) any {
 // the same transaction, so two creates can never take the same CID. A caller
 // that sets VsockCID keeps it.
 func (s *sqliteStore) CreateSandbox(ctx context.Context, sb Sandbox) (Sandbox, error) {
+	keys := sb.EnvKeys
+	if keys == nil {
+		keys = []string{}
+	}
+	encoded, err := json.Marshal(keys)
+	if err != nil {
+		return Sandbox{}, err
+	}
+	envKeys := string(encoded)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Sandbox{}, err
@@ -566,12 +575,12 @@ func (s *sqliteStore) CreateSandbox(ctx context.Context, sb Sandbox) (Sandbox, e
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO sandboxes (
 		id, tenant_id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
-		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, secret_bearing
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, secret_bearing, env_keys
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sb.ID, tenantOf(ctx), sb.TemplateName, nullString(sb.SnapshotID), sb.Lifecycle, sb.State,
 		nullIntPtr(sb.TTLSeconds), sb.IdleSeconds, sb.LastActiveAt.Unix(),
 		nullString(sb.TapName), nullIntPtr(cid), nullInt(sb.PID), sb.Metadata, sb.CreatedAt.Unix(),
-		boolInt(sb.SecretBearing),
+		boolInt(sb.SecretBearing), envKeys,
 	); err != nil {
 		return Sandbox{}, err
 	}
@@ -597,7 +606,7 @@ func (s *sqliteStore) GetSandbox(ctx context.Context, id string) (Sandbox, error
 	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT
 		id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
-		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing
+		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing, env_keys
 	FROM sandboxes WHERE id = ?`+clause, append([]any{id}, args...)...)
 	sb, err := scanSandbox(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -610,7 +619,7 @@ func (s *sqliteStore) ListSandboxes(ctx context.Context) ([]Sandbox, error) {
 	clause, args := scope(ctx, "tenant_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
-		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing
+		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing, env_keys
 	FROM sandboxes WHERE 1 = 1`+clause+` ORDER BY created_at, id`, args...)
 	if err != nil {
 		return nil, err
@@ -702,13 +711,17 @@ func scanSandbox(row sandboxScanner) (Sandbox, error) {
 		pid       sql.NullInt64
 		created   int64
 		destroyed sql.NullInt64
-		secret    int
+		bearing   int
+		envKeys   string
 	)
 	if err := row.Scan(
 		&sb.ID, &sb.TemplateName, &snapshot, &sb.Lifecycle, &sb.State, &ttl, &sb.IdleSeconds,
-		&active, &tap, &cid, &pid, &sb.Metadata, &created, &destroyed, &secret,
+		&active, &tap, &cid, &pid, &sb.Metadata, &created, &destroyed, &bearing, &envKeys,
 	); err != nil {
 		return Sandbox{}, err
+	}
+	if err := json.Unmarshal([]byte(envKeys), &sb.EnvKeys); err != nil {
+		return Sandbox{}, fmt.Errorf("store: env_keys of %s: %w", sb.ID, err)
 	}
 	sb.SnapshotID = snapshot.String
 	sb.LastActiveAt = time.Unix(active, 0).UTC()
@@ -727,7 +740,7 @@ func scanSandbox(row sandboxScanner) (Sandbox, error) {
 		t := time.Unix(destroyed.Int64, 0).UTC()
 		sb.DestroyedAt = &t
 	}
-	sb.SecretBearing = secret != 0
+	sb.SecretBearing = bearing != 0
 	return sb, nil
 }
 

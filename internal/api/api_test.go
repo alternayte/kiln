@@ -224,6 +224,16 @@ func TestCreateSandboxValidation(t *testing.T) {
 			code: CodeInvalid,
 		},
 		{
+			name: "env key is also in secrets",
+			body: `{"template":"py312","lifecycle":"ephemeral","idle_seconds":60,"secrets":["S"],"env":{"S":"tenant"}}`,
+			code: CodeInvalid,
+		},
+		{
+			name: "env key a process environment cannot hold",
+			body: `{"template":"py312","lifecycle":"ephemeral","idle_seconds":60,"env":{"A=B":"x"}}`,
+			code: CodeInvalid,
+		},
+		{
 			name: "unknown template",
 			body: `{"template":"absent","lifecycle":"ephemeral","idle_seconds":60}`,
 			code: CodeNotFound,

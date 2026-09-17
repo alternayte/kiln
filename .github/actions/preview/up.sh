@@ -19,6 +19,14 @@ api() {
 status() { tail -n1 <<< "$1"; }
 payload() { sed '$d' <<< "$1"; }
 
+# Caller errors fail before the template builds. This also masks every env
+# value, so no later line of the log shows one.
+python3 "$here/payload.py" check
+
+if [ "$FORK" = "true" ] && [ -n "$(tr -d '[:space:]' <<< "$ENV_LINES")" ]; then
+  echo "this pull request comes from a fork, so env is not sent to its preview"
+fi
+
 short="${SHA:0:7}"
 name="pr-${PR}-${short}"
 
@@ -56,15 +64,25 @@ if [ "$(status "$out")" != "201" ]; then
 fi
 sandbox="$(payload "$out" | python3 "$here/payload.py" get id)"
 
-body="$(python3 "$here/payload.py" publish)"
-out="$(api POST "/v1/sandboxes/$sandbox/publish" "$body")"
-if [ "$(status "$out")" != "201" ]; then
-  echo "the port was refused: $(payload "$out")" >&2
-  exit 1
-fi
-url="$(payload "$out" | python3 "$here/payload.py" get url)"
+# port goes first: the first published port of a sandbox gets the short
+# hostname, and every other port shares its stem.
+published=""
+for p in "$PORT" $(python3 "$here/payload.py" ports); do
+  body="$(python3 "$here/payload.py" publish "$p")"
+  out="$(api POST "/v1/sandboxes/$sandbox/publish" "$body")"
+  if [ "$(status "$out")" != "201" ]; then
+    echo "port $p was refused: $(payload "$out")" >&2
+    exit 1
+  fi
+  u="$(payload "$out" | python3 "$here/payload.py" get url)"
+  published+="$p $u"$'\n'
+  echo "port $p at $u"
+done
+url="$(head -n1 <<< "$published" | cut -d' ' -f2-)"
+urls="$(python3 "$here/payload.py" urls <<< "$published")"
 
 echo "url=$url" >> "$GITHUB_OUTPUT"
+echo "urls=$urls" >> "$GITHUB_OUTPUT"
 echo "preview at $url"
 
 # The previous preview of this pull request goes last, so the comment never

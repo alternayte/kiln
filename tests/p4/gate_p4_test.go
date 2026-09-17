@@ -385,6 +385,54 @@ func TestGateP4(t *testing.T) {
 		}
 	})
 
+	t.Run("EnvFork", func(t *testing.T) {
+		const value = "env-v4lue-3c1a"
+		id := cli.createSandbox(name, map[string]any{
+			"template":     name,
+			"lifecycle":    store.LifecyclePersistent,
+			"idle_seconds": 900,
+			"env":          map[string]string{"GREETING": value},
+		})
+		t.Cleanup(func() { cli.deleteSandboxIfPresent(id) })
+		if out := cli.exec(id, "sh", "-c", "echo $GREETING"); out.Stdout != value+"\n" {
+			t.Fatalf("env not injected: stdout %q", out.Stdout)
+		}
+		resp, body := cli.request(http.MethodGet, "/v1/sandboxes/"+id, "")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("get sandbox: status %d: %s", resp.StatusCode, body)
+		}
+		var view struct {
+			EnvKeys []string `json:"env_keys"`
+		}
+		if err := json.Unmarshal(body, &view); err != nil {
+			t.Fatal(err)
+		}
+		if len(view.EnvKeys) != 1 || view.EnvKeys[0] != "GREETING" {
+			t.Fatalf("env_keys %v, want [GREETING]", view.EnvKeys)
+		}
+		if bytes.Contains(body, []byte(value)) {
+			t.Fatalf("get sandbox returned an env value: %s", body)
+		}
+		for _, file := range []string{"kiln.db", "kiln.db-wal"} {
+			raw, err := os.ReadFile(filepath.Join(root, file))
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+			if bytes.Contains(raw, []byte(value)) {
+				t.Fatalf("%s holds an env value", file)
+			}
+		}
+		if code, body := cli.forkRaw(id, 1, false); code != http.StatusConflict {
+			t.Fatalf("env fork without allow: status %d, want 409: %s", code, body)
+		}
+
+		// A wake restores memory that already holds the values.
+		cli.snapshot(id, true)
+		if out := cli.exec(id, "sh", "-c", "echo $GREETING"); out.Stdout != value+"\n" {
+			t.Fatalf("wake lost the env: stdout %q", out.Stdout)
+		}
+	})
+
 	t.Run("PartialFailure", func(t *testing.T) {
 		before := liveSandboxes(t, ctx, st, name)
 		pages.arm(5)

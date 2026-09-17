@@ -93,7 +93,7 @@ export class GeneratedClient {
   }
 
   /** Create a sandbox by restoring a template snapshot. */
-  createSandbox(body: { template: string; lifecycle?: string; ttl_seconds?: number; idle_seconds?: number; metadata?: Record<string, unknown>; secrets?: string[] }): Promise<unknown> {
+  createSandbox(body: { template: string; lifecycle?: string; ttl_seconds?: number; idle_seconds?: number; metadata?: Record<string, unknown>; secrets?: string[]; env?: Record<string, unknown> }): Promise<unknown> {
     return this.json("POST", "/v1/sandboxes", body);
   }
 

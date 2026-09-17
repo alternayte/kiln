@@ -14,6 +14,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"sync"
 	"time"
 
@@ -116,7 +118,20 @@ type CreateRequest struct {
 	TTLSeconds  *int
 	Metadata    map[string]any
 	Secrets     []string
+	// Env holds literal values the caller supplies. Every value is handled
+	// like the host secrets: it reaches guest memory and nothing else.
+	Env map[string]string
 }
+
+// Env bounds. The resume hooks carry the values in one frame of at most
+// guestproto.MaxFrame bytes, beside the host secrets and the hook data.
+const (
+	envMaxKeys  = 128
+	envMaxBytes = 64 << 10
+)
+
+// envKeyPattern is a key a process environment can hold.
+var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func (r CreateRequest) validate() error {
 	if r.Template == "" {
@@ -132,6 +147,26 @@ func (r CreateRequest) validate() error {
 	}
 	if r.TTLSeconds != nil && *r.TTLSeconds <= 0 {
 		return invalidf("ttl_seconds must be greater than zero or null")
+	}
+	if len(r.Env) > envMaxKeys {
+		return invalidf("env holds %d keys, more than %d", len(r.Env), envMaxKeys)
+	}
+	size := 0
+	for k, v := range r.Env {
+		if !envKeyPattern.MatchString(k) {
+			return invalidf("env key %q must match %s", k, envKeyPattern)
+		}
+		size += len(k) + len(v)
+	}
+	if size > envMaxBytes {
+		return invalidf("env holds %d bytes, more than %d", size, envMaxBytes)
+	}
+	// Either precedence would override one side with no error: the operator's
+	// value or the tenant's.
+	for _, name := range r.Secrets {
+		if _, ok := r.Env[name]; ok {
+			return invalidf("env key %q is also in secrets", name)
+		}
 	}
 	return nil
 }
@@ -177,7 +212,7 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (store.Sandbox,
 	if tpl.State != store.TemplateReady {
 		return store.Sandbox{}, store.ErrConflict
 	}
-	env := make(map[string]string, len(req.Secrets))
+	env := make(map[string]string, len(req.Secrets)+len(req.Env))
 	for _, name := range req.Secrets {
 		value, ok := m.cfg.Secrets[name]
 		if !ok {
@@ -185,6 +220,13 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (store.Sandbox,
 		}
 		env[name] = value
 	}
+	// validate refused a key in both, so the union loses nothing.
+	envKeys := make([]string, 0, len(req.Env))
+	for k, v := range req.Env {
+		env[k] = v
+		envKeys = append(envKeys, k)
+	}
+	sort.Strings(envKeys)
 	if err := checkSpace(m.cfg.Root, int64(tpl.DiskMB)); err != nil {
 		return store.Sandbox{}, err
 	}
@@ -215,6 +257,7 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (store.Sandbox,
 		Metadata:      metadata,
 		CreatedAt:     now,
 		SecretBearing: len(env) > 0,
+		EnvKeys:       envKeys,
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrExhausted) {
@@ -588,6 +631,7 @@ func (m *Manager) makeCopies(ctx context.Context, img image, base store.Sandbox,
 			Metadata:      base.Metadata,
 			CreatedAt:     now,
 			SecretBearing: img.secret,
+			EnvKeys:       base.EnvKeys,
 		})
 		if err != nil {
 			m.clearActive(id)

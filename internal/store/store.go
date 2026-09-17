@@ -112,6 +112,9 @@ type Sandbox struct {
 	DestroyedAt  *time.Time
 	// SecretBearing marks a sandbox that holds injected secrets in memory.
 	SecretBearing bool
+	// EnvKeys names the env keys the sandbox was created with, sorted. The
+	// values live only in guest memory.
+	EnvKeys []string
 }
 
 // Snapshot is one row of the snapshots table. Listed is false for an image a

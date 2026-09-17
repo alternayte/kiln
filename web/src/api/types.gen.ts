@@ -55,6 +55,7 @@ export type RegistryList = Array<Registry>;
 
 export type Sandbox = {
     created_at?: string;
+    env_keys?: Array<string>;
     id?: string;
     lifecycle?: string;
     metadata?: {
@@ -384,6 +385,9 @@ export type ListSandboxesResponse = ListSandboxesResponses[keyof ListSandboxesRe
 
 export type CreateSandboxData = {
     body: {
+        env?: {
+            [key: string]: unknown;
+        };
         idle_seconds?: number;
         lifecycle?: string;
         metadata?: {

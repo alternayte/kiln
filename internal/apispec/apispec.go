@@ -111,6 +111,7 @@ func Operations() []Operation {
 				{Name: "idle_seconds", Type: "integer", Doc: "Seconds of inactivity until the sandbox sleeps."},
 				{Name: "metadata", Type: "object", Doc: "Free-form labels the caller reads back."},
 				{Name: "secrets", Type: "array", Items: "string", Doc: "Names of host secrets to inject."},
+				{Name: "env", Type: "object", Doc: "Environment variables for the start command, exec and the terminal. Every value is handled like the host secrets: it reaches guest memory only and is never returned. A key must not also be in secrets."},
 			},
 			Returns: "Sandbox",
 		},

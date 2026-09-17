@@ -160,6 +160,7 @@ func schemas() map[string]any {
 		"id": str, "template": str, "state": str, "lifecycle": str,
 		"created_at": str, "published": list("Published"),
 		"metadata": map[string]any{"type": "object"},
+		"env_keys": map[string]any{"type": "array", "items": str},
 	})
 	return map[string]any{
 		"Error": object(map[string]any{

@@ -81,7 +81,7 @@ class GeneratedClient:
         """List the sandboxes of this tenant."""
         return self._json("GET", "/v1/sandboxes")
 
-    def create_sandbox(self, template: str, lifecycle: Optional[str] = None, ttl_seconds: Optional[int] = None, idle_seconds: Optional[int] = None, metadata: Optional[dict[str, Any]] = None, secrets: Optional[list[str]] = None) -> Any:
+    def create_sandbox(self, template: str, lifecycle: Optional[str] = None, ttl_seconds: Optional[int] = None, idle_seconds: Optional[int] = None, metadata: Optional[dict[str, Any]] = None, secrets: Optional[list[str]] = None, env: Optional[dict[str, Any]] = None) -> Any:
         """Create a sandbox by restoring a template snapshot."""
         body = {k: v for k, v in {
             "template": template,
@@ -90,6 +90,7 @@ class GeneratedClient:
             "idle_seconds": idle_seconds,
             "metadata": metadata,
             "secrets": secrets,
+            "env": env,
         }.items() if v is not None}
         return self._json("POST", "/v1/sandboxes", body)
 

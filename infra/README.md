@@ -179,6 +179,41 @@ ports. After a code change, build and install the binary again, then
 `pulumi up` copies the whole working tree, including untracked files. Gates run
 under `sudo`, because jailer needs root.
 
+## Serving the gateway behind something else
+
+The gateway is usually reached through a load balancer, an ingress or a CDN.
+One requirement decides whether the terminal works.
+
+**The terminal is a WebSocket, and a WebSocket upgrade needs HTTP/1.1.** Over
+HTTP/2 and HTTP/3 a WebSocket is carried by Extended CONNECT, from RFC 8441
+and RFC 9220, which Go's net/http server does not implement. So whatever
+stands in front of the gateway must let a browser reach it over HTTP/1.1.
+
+In practice that means not advertising HTTP/3 for the gateway's hostname. A
+browser reads `alt-svc: h3=…` and moves to QUIC, and every QUIC listener built
+on quic-go advertises Extended CONNECT whether or not anything behind it
+serves it. HTTP/2 is safe: Go disabled the equivalent setting by default in
+1.24, so a browser does not attempt a WebSocket over h2 and opens an HTTP/1.1
+connection for it instead.
+
+The symptom, when this is wrong, looks nothing like the cause. The page loads,
+the API answers, and the terminal alone sits at `connecting` until it gives
+up. Every other request is fine, because only the upgrade needs HTTP/1.1.
+
+To check a deployment:
+
+```sh
+curl -sI https://gateway.example.com/ | grep -i alt-svc      # expect nothing
+curl -s -i -N --http1.1 -H 'Authorization: Bearer <api key>' \
+  -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+  'https://gateway.example.com/v1/sandboxes/<id>/terminal?cols=80&rows=24' | head -1
+```
+
+The second command answers `HTTP/1.1 101 Switching Protocols` when the path is
+clear. If it does and a browser still hangs, the browser is using HTTP/3 and
+the `alt-svc` header is why.
+
 ## Preview setup (P6)
 
 `just gate P6` and `just demo` need a public hostname, wildcard DNS and an

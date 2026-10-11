@@ -241,15 +241,16 @@ func cmdServe() error {
 
 // readConfig reads config.json written by kiln init. A host that predates
 // the sealing key gains one here and keeps it, so an upgrade needs no
-// command.
+// command. serve, ctl and gateway-env all read it, so the error names the
+// file and not one command.
 func readConfig(path string) (configFile, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return configFile{}, fmt.Errorf("serve: %w; run kiln init", err)
+		return configFile{}, fmt.Errorf("%w; run kiln init, or set KILN_ROOT to the root kiln init wrote", err)
 	}
 	var cfg configFile
 	if err := json.Unmarshal(b, &cfg); err != nil {
-		return configFile{}, fmt.Errorf("serve: %s: %w", path, err)
+		return configFile{}, fmt.Errorf("%s: %w", path, err)
 	}
 	if cfg.SealKey == "" {
 		key, err := store.NewKey()

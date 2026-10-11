@@ -62,11 +62,6 @@ export class GeneratedClient {
     return (await response.json()) as T;
   }
 
-  /** Read the event stream of this tenant. */
-  events(): Promise<unknown> {
-    return this.json("GET", "/v1/events");
-  }
-
   /** Report whether the host can run sandboxes. */
   health(): Promise<unknown> {
     return this.json("GET", "/v1/health");
@@ -93,7 +88,7 @@ export class GeneratedClient {
   }
 
   /** Create a sandbox by restoring a template snapshot. */
-  createSandbox(body: { template: string; lifecycle?: string; ttl_seconds?: number; idle_seconds?: number; metadata?: Record<string, unknown>; secrets?: string[]; env?: Record<string, unknown> }): Promise<unknown> {
+  createSandbox(body: { template: string; lifecycle: string; idle_seconds: number; ttl_seconds?: number; metadata?: Record<string, unknown>; secrets?: string[]; env?: Record<string, unknown> }): Promise<unknown> {
     return this.json("POST", "/v1/sandboxes", body);
   }
 
@@ -110,16 +105,6 @@ export class GeneratedClient {
   /** Run a command inside a sandbox. Accept text/event-stream to read the output as it runs. */
   exec(id: string, body: { cmd: string[]; cwd?: string; env?: Record<string, unknown>; timeout_seconds?: number }): Promise<unknown> {
     return this.json("POST", `/v1/sandboxes/${encodeURIComponent(String(id))}/exec`, body);
-  }
-
-  /** Read one file out of a sandbox. */
-  readFile(id: string, path: string): Promise<unknown> {
-    return this.json("GET", `/v1/sandboxes/${encodeURIComponent(String(id))}/files/${encodeURIComponent(String(path))}`);
-  }
-
-  /** Write one file into a sandbox. */
-  writeFile(id: string, path: string): Promise<void> {
-    return this.json("PUT", `/v1/sandboxes/${encodeURIComponent(String(id))}/files/${encodeURIComponent(String(path))}`);
   }
 
   /** Snapshot a running sandbox and restore several copies of it. */
@@ -168,7 +153,7 @@ export class GeneratedClient {
   }
 
   /** Build a template from an OCI image. The build runs after the answer. */
-  createTemplate(body: { name: string; image: string; egress_allow: string[]; vcpus?: number; memory_mb?: number; disk_mb?: number; setup?: string[]; ttl_seconds?: number; start?: string[]; port?: number }): Promise<unknown> {
+  createTemplate(body: { name: string; image: string; vcpus: number; memory_mb: number; disk_mb: number; egress_allow: string[]; setup?: string[]; ttl_seconds?: number; start?: string[]; port?: number }): Promise<unknown> {
     return this.json("POST", "/v1/templates", body);
   }
 

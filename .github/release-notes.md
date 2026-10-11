@@ -9,7 +9,10 @@ sudo kiln init --zone example.com --acme-email you@example.com
 sudo kiln serve
 ```
 
-The binary carries the guest agent, so `kiln init` writes it out.
+The binary carries the guest agent, so `kiln init` writes it out. The
+[README](https://github.com/alternayte/kiln#readme) carries the first
+sandbox; [docs/gateway.md](https://github.com/alternayte/kiln/blob/main/docs/gateway.md)
+carries the gateway.
 
 The gateway image is `ghcr.io/alternayte/kiln-gateway` at this tag.
 

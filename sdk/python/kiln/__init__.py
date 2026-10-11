@@ -11,9 +11,23 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, Optional
 
+import httpx
+
 from ._generated import GeneratedClient, KilnError
 
 __all__ = ["Kiln", "Sandbox", "ExecResult", "ExecChunk", "KilnError"]
+
+
+def _sse(response: httpx.Response) -> Iterator[tuple[str, str]]:
+    """Yield (event, data) pairs from a server-sent event body."""
+    event = ""
+    for line in response.iter_lines():
+        line = line.rstrip("\r")
+        if line.startswith("event:"):
+            event = line[6:].strip()
+            continue
+        if line.startswith("data:"):
+            yield event, line[5:].strip()
 
 
 @dataclass
@@ -47,6 +61,26 @@ class Kiln(GeneratedClient):
         """Create a sandbox and return it as an object."""
         created = self.create_sandbox(**body)
         return Sandbox(self, created["id"])
+
+    def events(self, *, after: Optional[int] = None, sandbox_id: Optional[str] = None) -> Iterator[dict[str, Any]]:
+        """Read the event stream as it arrives. It never ends; stop iterating to close it.
+
+        With no `after` the stream starts at the latest event. `after=0`
+        replays every event of this tenant, and `after=<id>` continues from
+        one. `sandbox_id` keeps the events of one sandbox.
+        """
+        params: dict[str, Any] = {}
+        if after is not None:
+            params["after"] = after
+        if sandbox_id is not None:
+            params["sandbox_id"] = sandbox_id
+        headers = {"Authorization": f"Bearer {self.api_key}", "Accept": "text/event-stream"}
+        with self._client.stream("GET", f"{self.base_url}/v1/events", params=params, headers=headers) as response:
+            if response.status_code >= 400:
+                response.read()
+                raise KilnError(response.status_code, "internal", response.text)
+            for _, data in _sse(response):
+                yield json.loads(data)
 
     def build_template(self, *, poll_seconds: float = 2.0, timeout_seconds: float = 900.0, **body: Any) -> None:
         """Build a template and wait until it is ready."""
@@ -121,15 +155,7 @@ class Sandbox:
             if response.status_code >= 400:
                 response.read()
                 raise KilnError(response.status_code, "internal", response.text)
-            event = ""
-            for line in response.iter_lines():
-                line = line.rstrip("\r")
-                if line.startswith("event:"):
-                    event = line[6:].strip()
-                    continue
-                if not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
+            for event, data in _sse(response):
                 if event == "exit":
                     finished = json.loads(data)
                     yield ExecResult(

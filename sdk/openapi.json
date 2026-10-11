@@ -22,7 +22,7 @@
           "at": {
             "type": "string"
           },
-          "from": {
+          "from_state": {
             "type": "string"
           },
           "id": {
@@ -34,7 +34,7 @@
           "sandbox_id": {
             "type": "string"
           },
-          "to": {
+          "to_state": {
             "type": "string"
           }
         },
@@ -351,7 +351,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
+              "text/event-stream": {
                 "schema": {
                   "$ref": "#/components/schemas/EventList"
                 }
@@ -410,7 +410,7 @@
             "description": "A cap of this tenant is reached. The message names the cap."
           }
         },
-        "summary": "Read the event stream of this tenant."
+        "summary": "Read the event stream of this tenant as server-sent events. The stream starts at the latest event and never ends; ?after=0 replays every event, ?after=\u003cid\u003e continues from one, and ?sandbox_id= keeps one sandbox."
       }
     },
     "/v1/health": {
@@ -815,7 +815,9 @@
                   }
                 },
                 "required": [
-                  "template"
+                  "template",
+                  "lifecycle",
+                  "idle_seconds"
                 ],
                 "type": "object"
               }
@@ -1173,7 +1175,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
+              "application/octet-stream": {
                 "schema": {
                   "$ref": "#/components/schemas/FileBody"
                 }
@@ -1232,7 +1234,7 @@
             "description": "A cap of this tenant is reached. The message names the cap."
           }
         },
-        "summary": "Read one file out of a sandbox."
+        "summary": "Read one file out of a sandbox. The answer is the file's bytes."
       },
       "put": {
         "operationId": "writeFile",
@@ -1256,6 +1258,17 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "204": {
             "description": "The call succeeded."
@@ -1311,7 +1324,7 @@
             "description": "A cap of this tenant is reached. The message names the cap."
           }
         },
-        "summary": "Write one file into a sandbox."
+        "summary": "Write one file into a sandbox. The request body is the file's bytes, and parent directories are created."
       }
     },
     "/v1/sandboxes/{id}/fork": {
@@ -2124,6 +2137,9 @@
                 "required": [
                   "name",
                   "image",
+                  "vcpus",
+                  "memory_mb",
+                  "disk_mb",
                   "egress_allow"
                 ],
                 "type": "object"

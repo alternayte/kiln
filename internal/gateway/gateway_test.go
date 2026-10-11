@@ -266,6 +266,92 @@ func TestAgentSurface(t *testing.T) {
 	}
 }
 
+// The raw operations work as tools: a file write carries its content, and
+// the event stream, which never ends, answers inside a bound with what
+// arrived. A terminal is a WebSocket and is no tool at all.
+func TestAgentSurfaceRawTools(t *testing.T) {
+	var written []byte
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/sandboxes/sbx-1/files/"):
+			written, _ = io.ReadAll(r.Body)
+			if r.URL.Path != "/v1/sandboxes/sbx-1/files/work/a.txt" {
+				t.Errorf("file path %q", r.URL.Path)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/events":
+			if r.URL.Query().Get("after") != "0" || r.URL.Query().Get("sandbox_id") != "sbx-1" {
+				t.Errorf("events query %q", r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			io.WriteString(w, "event: transition\ndata: {\"id\":1,\"to_state\":\"creating\"}\n\n")
+			io.WriteString(w, "event: transition\ndata: {\"id\":2,\"to_state\":\"running\"}\n\n")
+			w.(http.Flusher).Flush()
+			// A real stream never ends. The gateway must answer anyway.
+			<-r.Context().Done()
+		default:
+			t.Errorf("unexpected host call %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer host.Close()
+	srv, key, _ := newTestGateway(t, host.URL)
+	public := httptest.NewServer(srv.Handler())
+	defer public.Close()
+
+	rpc := func(t *testing.T, payload string) map[string]any {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodPost, public.URL+"/mcp", strings.NewReader(payload))
+		req.Header.Set("Authorization", "Bearer "+key)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	listed := rpc(t, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	result, _ := listed["result"].(map[string]any)
+	for _, tool := range result["tools"].([]any) {
+		name := tool.(map[string]any)["name"]
+		if name == "terminal" {
+			t.Fatal("the terminal reached the tool list; no tool call can carry a WebSocket")
+		}
+		if name == "writeFile" {
+			schema := tool.(map[string]any)["inputSchema"].(map[string]any)
+			if _, ok := schema["properties"].(map[string]any)["content"]; !ok {
+				t.Fatal("the writeFile tool takes no content")
+			}
+		}
+	}
+
+	rpc(t, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"writeFile","arguments":{"id":"sbx-1","path":"work/a.txt","content":"hello\n"}}}`)
+	if string(written) != "hello\n" {
+		t.Fatalf("the host received %q, want the tool's content", written)
+	}
+
+	start := time.Now()
+	called := rpc(t, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"events","arguments":{"after":0,"sandbox_id":"sbx-1"}}}`)
+	if took := time.Since(start); took > eventsWindow+2*time.Second {
+		t.Fatalf("the events tool took %s; the stream never ends and the tool must not wait for it", took)
+	}
+	result, _ = called["result"].(map[string]any)
+	if result["isError"] == true {
+		t.Fatalf("events %+v", called)
+	}
+	events, _ := result["structuredContent"].([]any)
+	if len(events) != 2 {
+		t.Fatalf("events tool answered %+v, want the two events the host wrote", called)
+	}
+}
+
 // An MCP client finds the authorization server from a refused call, and the
 // documents it needs are served without a credential.
 func TestOAuthDiscovery(t *testing.T) {

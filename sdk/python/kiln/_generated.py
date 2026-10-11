@@ -52,10 +52,6 @@ class GeneratedClient:
             return None
         return response.json()
 
-    def events(self) -> Any:
-        """Read the event stream of this tenant."""
-        return self._json("GET", "/v1/events")
-
     def health(self) -> Any:
         """Report whether the host can run sandboxes."""
         return self._json("GET", "/v1/health")
@@ -81,7 +77,7 @@ class GeneratedClient:
         """List the sandboxes of this tenant."""
         return self._json("GET", "/v1/sandboxes")
 
-    def create_sandbox(self, template: str, lifecycle: Optional[str] = None, ttl_seconds: Optional[int] = None, idle_seconds: Optional[int] = None, metadata: Optional[dict[str, Any]] = None, secrets: Optional[list[str]] = None, env: Optional[dict[str, Any]] = None) -> Any:
+    def create_sandbox(self, template: str, lifecycle: str, idle_seconds: int, ttl_seconds: Optional[int] = None, metadata: Optional[dict[str, Any]] = None, secrets: Optional[list[str]] = None, env: Optional[dict[str, Any]] = None) -> Any:
         """Create a sandbox by restoring a template snapshot."""
         body = {k: v for k, v in {
             "template": template,
@@ -111,14 +107,6 @@ class GeneratedClient:
             "timeout_seconds": timeout_seconds,
         }.items() if v is not None}
         return self._json("POST", f"/v1/sandboxes/{id}/exec", body)
-
-    def read_file(self, id: str, path: str) -> Any:
-        """Read one file out of a sandbox."""
-        return self._json("GET", f"/v1/sandboxes/{id}/files/{path}")
-
-    def write_file(self, id: str, path: str) -> Any:
-        """Write one file into a sandbox."""
-        return self._json("PUT", f"/v1/sandboxes/{id}/files/{path}")
 
     def fork(self, id: str, count: int, allow_secret_fork: Optional[bool] = None) -> Any:
         """Snapshot a running sandbox and restore several copies of it."""
@@ -171,7 +159,7 @@ class GeneratedClient:
         """List the templates of this tenant."""
         return self._json("GET", "/v1/templates")
 
-    def create_template(self, name: str, image: str, egress_allow: list[str], vcpus: Optional[int] = None, memory_mb: Optional[int] = None, disk_mb: Optional[int] = None, setup: Optional[list[str]] = None, ttl_seconds: Optional[int] = None, start: Optional[list[str]] = None, port: Optional[int] = None) -> Any:
+    def create_template(self, name: str, image: str, vcpus: int, memory_mb: int, disk_mb: int, egress_allow: list[str], setup: Optional[list[str]] = None, ttl_seconds: Optional[int] = None, start: Optional[list[str]] = None, port: Optional[int] = None) -> Any:
         """Build a template from an OCI image. The build runs after the answer."""
         body = {k: v for k, v in {
             "name": name,

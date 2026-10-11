@@ -66,7 +66,7 @@ func cmdInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	zone := fs.String("zone", "", "preview zone for published sandboxes, for example example.com")
 	email := fs.String("acme-email", "", "ACME account email for the wildcard certificate")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
@@ -197,6 +197,17 @@ func initViewer(ctx context.Context, root, zone string) error {
 // path, and the agent a host runs always matches the host that wrote it.
 func installKilninit(dst string) error {
 	return guestbin.Write(dst)
+}
+
+// parseFlags parses one subcommand's flags. --help prints the usage and
+// ends the command with no error, instead of an exit status that reads as
+// a failure.
+func parseFlags(fs *flag.FlagSet, args []string) error {
+	err := fs.Parse(args)
+	if errors.Is(err, flag.ErrHelp) {
+		os.Exit(0)
+	}
+	return err
 }
 
 func fileExists(path string) bool {

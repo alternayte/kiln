@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, CreateTemplateData, CreateTemplateErrors, CreateTemplateResponses, CreateViewerData, CreateViewerErrors, CreateViewerResponses, DeleteRegistryData, DeleteRegistryErrors, DeleteRegistryResponses, DeleteSandboxData, DeleteSandboxErrors, DeleteSandboxResponses, DeleteSnapshotData, DeleteSnapshotErrors, DeleteSnapshotResponses, DeleteTemplateData, DeleteTemplateErrors, DeleteTemplateResponses, DeleteViewerData, DeleteViewerErrors, DeleteViewerResponses, EventsData, EventsErrors, EventsResponses, ExecData, ExecErrors, ExecResponses, ForkData, ForkErrors, ForkResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, GetSnapshotData, GetSnapshotErrors, GetSnapshotResponses, GetTemplateData, GetTemplateErrors, GetTemplateResponses, HealthData, HealthErrors, HealthResponses, ListRegistriesData, ListRegistriesErrors, ListRegistriesResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, ListSnapshotsData, ListSnapshotsErrors, ListSnapshotsResponses, ListTemplatesData, ListTemplatesErrors, ListTemplatesResponses, ListViewersData, ListViewersErrors, ListViewersResponses, PublishData, PublishErrors, PublishResponses, PutRegistryData, PutRegistryErrors, PutRegistryResponses, ReadFileData, ReadFileErrors, ReadFileResponses, RestoreData, RestoreErrors, RestoreResponses, RetireData, RetireErrors, RetireResponses, SnapshotData, SnapshotErrors, SnapshotResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
+import type { CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, CreateTemplateData, CreateTemplateErrors, CreateTemplateResponses, CreateViewerData, CreateViewerErrors, CreateViewerResponses, DeleteRegistryData, DeleteRegistryErrors, DeleteRegistryResponses, DeleteSandboxData, DeleteSandboxErrors, DeleteSandboxResponses, DeleteSnapshotData, DeleteSnapshotErrors, DeleteSnapshotResponses, DeleteTemplateData, DeleteTemplateErrors, DeleteTemplateResponses, DeleteViewerData, DeleteViewerErrors, DeleteViewerResponses, EventsData, EventsErrors, EventsResponse, EventsResponses, ExecData, ExecErrors, ExecResponses, ForkData, ForkErrors, ForkResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, GetSnapshotData, GetSnapshotErrors, GetSnapshotResponses, GetTemplateData, GetTemplateErrors, GetTemplateResponses, HealthData, HealthErrors, HealthResponses, ListRegistriesData, ListRegistriesErrors, ListRegistriesResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, ListSnapshotsData, ListSnapshotsErrors, ListSnapshotsResponses, ListTemplatesData, ListTemplatesErrors, ListTemplatesResponses, ListViewersData, ListViewersErrors, ListViewersResponses, PublishData, PublishErrors, PublishResponses, PutRegistryData, PutRegistryErrors, PutRegistryResponses, ReadFileData, ReadFileErrors, ReadFileResponses, RestoreData, RestoreErrors, RestoreResponses, RetireData, RetireErrors, RetireResponses, SnapshotData, SnapshotErrors, SnapshotResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -19,9 +19,9 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 };
 
 /**
- * Read the event stream of this tenant.
+ * Read the event stream of this tenant as server-sent events. The stream starts at the latest event and never ends; ?after=0 replays every event, ?after=<id> continues from one, and ?sandbox_id= keeps one sandbox.
  */
-export const events = <ThrowOnError extends boolean = false>(options?: Options<EventsData, ThrowOnError>) => (options?.client ?? client).get<EventsResponses, EventsErrors, ThrowOnError>({
+export const events = <ThrowOnError extends boolean = false>(options?: Options<EventsData, ThrowOnError, EventsResponse>) => (options?.client ?? client).sse.get<EventsResponses, EventsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
     url: '/v1/events',
     ...options
@@ -121,7 +121,7 @@ export const exec = <ThrowOnError extends boolean = false>(options: Options<Exec
 });
 
 /**
- * Read one file out of a sandbox.
+ * Read one file out of a sandbox. The answer is the file's bytes.
  */
 export const readFile = <ThrowOnError extends boolean = false>(options: Options<ReadFileData, ThrowOnError>) => (options.client ?? client).get<ReadFileResponses, ReadFileErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
@@ -130,12 +130,17 @@ export const readFile = <ThrowOnError extends boolean = false>(options: Options<
 });
 
 /**
- * Write one file into a sandbox.
+ * Write one file into a sandbox. The request body is the file's bytes, and parent directories are created.
  */
 export const writeFile = <ThrowOnError extends boolean = false>(options: Options<WriteFileData, ThrowOnError>) => (options.client ?? client).put<WriteFileResponses, WriteFileErrors, ThrowOnError>({
+    bodySerializer: null,
     security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
     url: '/v1/sandboxes/{id}/files/{path}',
-    ...options
+    ...options,
+    headers: {
+        'Content-Type': 'application/octet-stream',
+        ...options.headers
+    }
 });
 
 /**

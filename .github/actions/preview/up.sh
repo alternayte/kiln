@@ -52,7 +52,9 @@ if [ "$state" != "ready" ]; then
   echo "the template did not build: state=$state" >&2
   payload "$out" | python3 "$here/payload.py" get error >&2 || true
   echo "--- events" >&2
-  payload "$(api GET /v1/events)" >&2 || true
+  # The event stream never ends, and it starts at the latest event. after=0
+  # replays the tenant's history, and the time limit closes the stream.
+  curl -sS --max-time 5 -H "Authorization: Bearer $KILN_API_KEY" "$KILN_URL/v1/events?after=0" >&2 || true
   exit 1
 fi
 

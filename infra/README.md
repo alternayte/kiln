@@ -25,9 +25,10 @@ sudo kiln init --zone example.com --acme-email you@example.com
 sudo kiln serve
 ```
 
-The binary carries the guest agent, so `kiln init` writes it out. The steps
-below bootstrap a box from source instead, which is what a change to Kiln
-itself needs.
+The binary carries the guest agent, so `kiln init` writes it out. The root
+[README](../README.md) carries the first sandbox and the config keys. The
+steps below bring up a box from source instead, which is what a change to
+Kiln itself needs.
 
 ## OVH Eco
 
@@ -148,12 +149,14 @@ copies the tree and re-runs the commands.
 
 ## Run as a service
 
-`infra/kiln.service` runs `kiln serve` under systemd. Install it after `kiln
-init`, on the server, from the repo:
+`infra/kiln.service` runs `/usr/local/bin/kiln serve` under systemd, the
+path a release install writes. Install it after `kiln init`, on the server.
+From source:
 
 ```sh
+bash scripts/build-kilninit.sh
 go build -o /tmp/kiln ./cmd/kiln
-sudo install -m 755 /tmp/kiln /var/lib/kiln/bin/kiln
+sudo install -m 755 /tmp/kiln /usr/local/bin/kiln
 sudo install -m 644 infra/kiln.service /etc/systemd/system/kiln.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now kiln
@@ -164,7 +167,32 @@ journalctl -u kiln -f
 microVMs, so `systemctl restart kiln` keeps every sandbox. Stop the service
 before a gate or `just demo` with a daemon of its own: both bind the same
 ports. After a code change, build and install the binary again, then
-`sudo systemctl restart kiln`.
+`sudo systemctl restart kiln`. A box whose unit still names
+`/var/lib/kiln/bin/kiln` keeps working; install the binary at the new path
+before you copy the new unit file.
+
+## The gateway listener
+
+A gateway on another machine reaches the host over mTLS. `kiln init` has no
+flag for it: add two keys to `config.json`, restart the service, and open
+the port.
+
+```json
+"gateway_addr": "0.0.0.0:8443",
+"gateway_names": ["kiln.example.com"]
+```
+
+`gateway_names` goes into the listener's certificate, so it names what the
+gateway dials: a hostname, or the IP. Then print what the gateway needs, and
+paste it into its credential store:
+
+```sh
+sudo kiln gateway-env --name production --host kiln.example.com:8443
+```
+
+The block holds `KILN_HOST_URL`, `KILN_HOST_TOKEN` and the three PEM values.
+`kiln ca revoke --serial <n>` cuts one certificate off. The rest of the
+gateway setup is [docs/gateway.md](../docs/gateway.md).
 
 ## Config
 

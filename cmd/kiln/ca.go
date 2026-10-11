@@ -28,7 +28,7 @@ func cmdCA(args []string) error {
 		fs := flag.NewFlagSet("ca issue", flag.ContinueOnError)
 		name := fs.String("name", "", "name of the gateway this certificate belongs to")
 		days := fs.Int("days", 365, "days until the certificate expires")
-		if err := fs.Parse(args[1:]); err != nil {
+		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
 		if *name == "" {
@@ -44,7 +44,7 @@ func cmdCA(args []string) error {
 	case "revoke":
 		fs := flag.NewFlagSet("ca revoke", flag.ContinueOnError)
 		serial := fs.String("serial", "", "serial of the certificate to refuse from now on")
-		if err := fs.Parse(args[1:]); err != nil {
+		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
 		if *serial == "" {
@@ -67,7 +67,7 @@ func cmdGatewayEnv(args []string) error {
 	name := fs.String("name", "gateway", "name of the gateway this certificate belongs to")
 	days := fs.Int("days", 365, "days until the certificate expires")
 	addr := fs.String("host", "", "address the gateway dials, for example kiln.example.com:8443")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	root := kilnRoot()

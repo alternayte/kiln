@@ -37,7 +37,7 @@ func uiHandler() (http.Handler, error) {
 		if indexErr != nil {
 			// The binary was built without a bundle. Saying so beats a blank
 			// page that looks like a broken deployment.
-			http.Error(w, "the web UI is not built into this binary; run `just web` and rebuild", http.StatusServiceUnavailable)
+			http.Error(w, "the web UI is not built into this binary; run `bun run build` in web/ and rebuild", http.StatusServiceUnavailable)
 			return
 		}
 		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")

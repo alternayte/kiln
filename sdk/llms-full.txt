@@ -13,12 +13,14 @@ Authenticate every call with `Authorization: Bearer <api key>`. A key names one 
 
 ## The shortest path to a running sandbox
 
-1. `POST /v1/templates` builds a template from an OCI image. It answers 202 and builds after the answer.
+1. `POST /v1/templates` builds a template from an OCI image. `name`, `image`, `vcpus`, `memory_mb`, `disk_mb` and `egress_allow` are required; an empty `egress_allow` allows no egress. It answers 202 and builds after the answer.
 2. `GET /v1/templates/{name}` until `state` is `ready`.
-3. `POST /v1/sandboxes` restores that template into a sandbox.
+3. `POST /v1/sandboxes` restores that template into a sandbox. `template`, `lifecycle` (`ephemeral` or `persistent`) and `idle_seconds` are required.
 4. `POST /v1/sandboxes/{id}/exec` runs a command. Send `Accept: text/event-stream` to read output as it runs.
 5. `POST /v1/sandboxes/{id}/publish` serves a guest port on a public hostname.
 6. `DELETE /v1/sandboxes/{id}` destroys it. Nothing is left behind.
+
+`GET /v1/events` is a server-sent event stream that never ends. It starts at the latest event; send `?after=0` to replay every event of this tenant, and `?sandbox_id=` to keep one sandbox.
 
 ## Showing your work: a preview URL
 
@@ -44,7 +46,7 @@ Every error is `{"error":{"code":"...","message":"..."}}`. The code is stable: `
 
 `GET /v1/events`
 
-Read the event stream of this tenant.
+Read the event stream of this tenant as server-sent events. The stream starts at the latest event and never ends; ?after=0 replays every event, ?after=<id> continues from one, and ?sandbox_id= keeps one sandbox.
 
 This call can stream. Read the body as it arrives.
 
@@ -109,9 +111,9 @@ Create a sandbox by restoring a template snapshot.
 Body:
 
 - `template` (string, required): Template the sandbox restores from.
-- `lifecycle` (string): ephemeral or persistent.
-- `ttl_seconds` (integer): Seconds until the sandbox is destroyed.
-- `idle_seconds` (integer): Seconds of inactivity until the sandbox sleeps.
+- `lifecycle` (string, required): ephemeral or persistent. An ephemeral sandbox is destroyed at idle_seconds of no activity; a persistent one sleeps then and wakes on the next request.
+- `ttl_seconds` (integer): Seconds until the sandbox is destroyed, whatever its activity. Null is no deadline.
+- `idle_seconds` (integer, required): Seconds of no activity until an ephemeral sandbox is destroyed or a persistent one sleeps. Must be greater than zero.
 - `metadata` (object): Free-form labels the caller reads back.
 - `secrets` (array of string): Names of host secrets to inject.
 - `env` (object): Environment variables for the start command, exec and the terminal. Every value is handled like the host secrets: it reaches guest memory only and is never returned. A key must not also be in secrets.
@@ -167,7 +169,7 @@ Answers 200 with `ExecResult`.
 
 `GET /v1/sandboxes/{id}/files/{path...}`
 
-Read one file out of a sandbox.
+Read one file out of a sandbox. The answer is the file's bytes.
 
 This call can stream. Read the body as it arrives.
 
@@ -182,7 +184,7 @@ Answers 200 with `FileBody`.
 
 `PUT /v1/sandboxes/{id}/files/{path...}`
 
-Write one file into a sandbox.
+Write one file into a sandbox. The request body is the file's bytes, and parent directories are created.
 
 This call can stream. Read the body as it arrives.
 
@@ -339,9 +341,9 @@ Body:
 
 - `name` (string, required): Name of the template inside this tenant.
 - `image` (string, required): OCI image reference, for example docker.io/library/python:3.12-slim.
-- `vcpus` (integer): Virtual CPUs of every sandbox from this template.
-- `memory_mb` (integer): Memory of every sandbox from this template.
-- `disk_mb` (integer): Disk of every sandbox from this template.
+- `vcpus` (integer, required): Virtual CPUs of every sandbox from this template, 1 to 32.
+- `memory_mb` (integer, required): Memory of every sandbox from this template.
+- `disk_mb` (integer, required): Disk of every sandbox from this template.
 - `setup` (array of string): Commands that run once while the template builds.
 - `egress_allow` (array of string, required): Hostnames a sandbox may reach. An empty list allows no egress.
 - `ttl_seconds` (integer): Seconds until the host deletes this template with its snapshot and its sandboxes. A preview environment sets one, because nothing comes back to delete it.

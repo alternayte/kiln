@@ -90,6 +90,16 @@ function BuildForm({ onDone }: { onDone: () => void }) {
   const [image, setImage] = useState("");
   const [egress, setEgress] = useState("");
   const [setup, setSetup] = useState("");
+  // The host has no defaults for the resources: a build names all three.
+  const [vcpus, setVcpus] = useState("1");
+  const [memoryMb, setMemoryMb] = useState("512");
+  const [diskMb, setDiskMb] = useState("2048");
+  const resources = {
+    vcpus: Number(vcpus),
+    memory_mb: Number(memoryMb),
+    disk_mb: Number(diskMb),
+  };
+  const resourcesValid = Object.values(resources).every((n) => Number.isInteger(n) && n > 0);
 
   const build = useMutation({
     mutationFn: async () =>
@@ -98,6 +108,7 @@ function BuildForm({ onDone }: { onDone: () => void }) {
           body: {
             name,
             image,
+            ...resources,
             // Egress is deny by default, so an empty list reaches nothing.
             egress_allow: egress
               .split(/[\s,]+/)
@@ -134,6 +145,31 @@ function BuildForm({ onDone }: { onDone: () => void }) {
             placeholder="docker.io/library/python:3.12-slim"
           />
         </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field
+            label="vCPUs"
+            type="number"
+            min={1}
+            max={32}
+            value={vcpus}
+            onChange={(event) => setVcpus(event.target.value)}
+          />
+          <Field
+            label="Memory (MB)"
+            type="number"
+            min={1}
+            value={memoryMb}
+            onChange={(event) => setMemoryMb(event.target.value)}
+          />
+          <Field
+            label="Disk (MB)"
+            type="number"
+            min={1}
+            value={diskMb}
+            onChange={(event) => setDiskMb(event.target.value)}
+            hint="Every sandbox from this template gets these."
+          />
+        </div>
         <Field
           label="Egress allow"
           value={egress}
@@ -157,7 +193,7 @@ function BuildForm({ onDone }: { onDone: () => void }) {
         {build.error ? <Notice>{errorText(build.error)}</Notice> : null}
         <Button
           variant="primary"
-          disabled={!name || !image || build.isPending}
+          disabled={!name || !image || !resourcesValid || build.isPending}
           onClick={() => build.mutate()}
         >
           {build.isPending ? "Starting the build" : "Build"}

@@ -2,10 +2,22 @@
 
 Self-hosted microVM sandboxes. One Go binary, one SQLite file, one VPS.
 
-**This file is the whole specification.** There are no other design documents. Read it
-in full at the start of every session. It is about 1000 lines and that is deliberate —
-reading three of four documents and inventing the fourth is the failure this format
-removes.
+**This file is the v1 design record, frozen on 2026-10-11.** It describes the design
+that P0 to P6 were built against, and it is the reason behind the parts that have not
+moved: the one snapshot primitive, the disk and memory model, the hazards H1 to H5, the
+controls C1 to C9 and the gates. The build authority is `docs/specs/`, one spec per
+slice, and where a spec and this file differ, the spec wins. In particular, since v0.2.0
+the host has tenants, a public gateway with API keys, OAuth and MCP
+(`docs/specs/v02-public-control-api.md`), a web UI with a terminal
+(`docs/specs/gateway-web-ui.md`), a gateway image built from a Dockerfile, a mTLS
+listener for that gateway, and preview environments driven from CI
+(`docs/specs/preview-environments.md`); the done-line host is the VPS alone, and there
+is no Lima VM. The paths named below (`SDD.md`, `scripts/hooks/pre-commit`,
+`docs/01-architecture.md`, `docs/04-security.md`, `just gate P7`) are the names this
+file used before the repository took its current shape; the file is
+`docs/internal/sdd.md`, the hook is `.githooks/pre-commit` and the hazards live in §2
+and §5 here. Read `README.md` first and the spec of your slice second; read this file
+for the reasons.
 
 **This file is frozen.** A pre-commit hook rejects commits that touch it (§7.3). If the
 design is wrong, say so and stop. Never edit this file so that it agrees with your

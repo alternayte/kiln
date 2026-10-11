@@ -16,10 +16,15 @@ fi
 bun install --frozen-lockfile > /dev/null
 # The client comes from internal/apispec by way of sdk/openapi.json, so a
 # route change that the UI has not seen fails here rather than in a browser.
+# The comparison is against what was on disk, not against the git index, so
+# a client that was regenerated and not yet committed passes.
+before="$(mktemp -d)"
+trap 'rm -rf "$before"' EXIT
+cp -R src/api "$before/api"
 bun run generate > /dev/null
-if ! git diff --quiet -- src/api; then
+if ! diff -r "$before/api" src/api > /dev/null; then
   echo "web: src/api is stale. Run 'bun run generate' in web/ and commit it." >&2
-  git --no-pager diff --stat -- src/api >&2
+  diff -r "$before/api" src/api | head -40 >&2
   exit 1
 fi
 bun run build > /dev/null

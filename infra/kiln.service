@@ -9,7 +9,8 @@ Type=simple
 # jailer needs root. It drops each microVM to its own uid inside the jail.
 User=root
 Environment=KILN_ROOT=/var/lib/kiln
-ExecStart=/var/lib/kiln/bin/kiln serve
+# The binary a release installs, and the one `install` in the README writes.
+ExecStart=/usr/local/bin/kiln serve
 Restart=on-failure
 RestartSec=2
 # Stop only the daemon. The next start adopts the microVMs and page servers

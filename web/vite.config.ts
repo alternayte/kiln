@@ -23,10 +23,11 @@ export default defineConfig({
   server: {
     port: 5173,
     // The dev server proxies to a local gateway, so the session cookie is
-    // same-origin in development too.
+    // same-origin in development too. /api carries the auth-all routes and
+    // /api/me; /v1 carries the terminal WebSocket.
     proxy: {
       "/v1": { target: "http://localhost:8080", ws: true },
-      "/auth": "http://localhost:8080",
+      "/api": "http://localhost:8080",
       "/operator": "http://localhost:8080",
     },
   },

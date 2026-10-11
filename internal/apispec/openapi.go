@@ -96,15 +96,35 @@ func operationObject(op Operation) map[string]any {
 			"content":  map[string]any{"application/json": map[string]any{"schema": schema}},
 		}
 	}
+	// A raw write carries the file's bytes, not a JSON object.
+	if op.Raw && op.Method == "PUT" {
+		out["requestBody"] = map[string]any{
+			"required": true,
+			"content": map[string]any{"application/octet-stream": map[string]any{
+				"schema": map[string]any{"type": "string", "format": "binary"},
+			}},
+		}
+	}
 	return out
+}
+
+// successContent names the media type of a successful answer. A raw file
+// read answers with bytes, and the event stream with server-sent events.
+func successContent(op Operation) map[string]any {
+	schema := map[string]any{"$ref": "#/components/schemas/" + op.Returns}
+	switch {
+	case op.Raw && op.Method == "GET" && op.Returns == "FileBody":
+		return map[string]any{"application/octet-stream": map[string]any{"schema": schema}}
+	case op.Raw && op.Method == "GET":
+		return map[string]any{"text/event-stream": map[string]any{"schema": schema}}
+	}
+	return map[string]any{"application/json": map[string]any{"schema": schema}}
 }
 
 func responses(op Operation) map[string]any {
 	success := map[string]any{"description": "The call succeeded."}
 	if op.Returns != "" {
-		success["content"] = map[string]any{
-			"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/" + op.Returns}},
-		}
+		success["content"] = successContent(op)
 	}
 	out := map[string]any{statusKey(op.Status): success}
 	for _, code := range []string{"400", "401", "404", "409", "507"} {
@@ -186,7 +206,7 @@ func schemas() map[string]any {
 		"Snapshot":        object(map[string]any{"id": str, "template": str, "size_bytes": num, "created_at": str}),
 		"SnapshotList":    list("Snapshot"),
 		"Published":       object(map[string]any{"port": num, "url": str, "visibility": str}),
-		"Event":           object(map[string]any{"id": num, "sandbox_id": str, "from": str, "to": str, "reason": str, "at": str}),
+		"Event":           object(map[string]any{"id": num, "sandbox_id": str, "from_state": str, "to_state": str, "reason": str, "at": str}),
 		"EventList":       list("Event"),
 		"FileBody":        map[string]any{"type": "string", "format": "binary"},
 		"Tenant": object(map[string]any{

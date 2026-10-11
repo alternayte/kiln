@@ -6,8 +6,10 @@ import (
 	"strings"
 )
 
-// TypeScript returns the generated client. It covers every tenant operation,
-// and the handwritten layer in sdk/typescript/src/kiln.ts builds on it.
+// TypeScript returns the generated client. It covers every tenant operation
+// whose body is JSON, and the handwritten layer in sdk/typescript/src/index.ts
+// builds on it and carries the raw ones: files, the event stream and the
+// terminal.
 func TypeScript() string {
 	var b strings.Builder
 	b.WriteString("// Generated from internal/apispec. Do not edit.\n")
@@ -74,7 +76,7 @@ export class GeneratedClient {
   }
 `)
 	for _, op := range Operations() {
-		if op.Operator || op.Terminal {
+		if op.Operator || op.Terminal || op.Raw {
 			continue
 		}
 		b.WriteString("\n  /** " + op.Summary + " */\n")
@@ -141,7 +143,7 @@ class GeneratedClient:
         return response.json()
 `)
 	for _, op := range Operations() {
-		if op.Operator || op.Terminal {
+		if op.Operator || op.Terminal || op.Raw {
 			continue
 		}
 		fmt.Fprintf(&b, "\n    def %s(self%s) -> Any:\n", snake(op.ID), pyArgs(op))

@@ -13,11 +13,11 @@ export type Error = {
 
 export type Event = {
     at?: string;
-    from?: string;
+    from_state?: string;
     id?: number;
     reason?: string;
     sandbox_id?: string;
-    to?: string;
+    to_state?: string;
 };
 
 export type EventList = Array<Event>;
@@ -388,8 +388,8 @@ export type CreateSandboxData = {
         env?: {
             [key: string]: unknown;
         };
-        idle_seconds?: number;
-        lifecycle?: string;
+        idle_seconds: number;
+        lifecycle: string;
         metadata?: {
             [key: string]: unknown;
         };
@@ -632,7 +632,7 @@ export type ReadFileResponses = {
 export type ReadFileResponse = ReadFileResponses[keyof ReadFileResponses];
 
 export type WriteFileData = {
-    body?: never;
+    body: Blob | File;
     path: {
         /**
          * Sandbox id.
@@ -1102,16 +1102,16 @@ export type ListTemplatesResponse = ListTemplatesResponses[keyof ListTemplatesRe
 
 export type CreateTemplateData = {
     body: {
-        disk_mb?: number;
+        disk_mb: number;
         egress_allow: Array<string>;
         image: string;
-        memory_mb?: number;
+        memory_mb: number;
         name: string;
         port?: number;
         setup?: Array<string>;
         start?: Array<string>;
         ttl_seconds?: number;
-        vcpus?: number;
+        vcpus: number;
     };
     path?: never;
     query?: never;

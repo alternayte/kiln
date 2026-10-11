@@ -28,10 +28,41 @@ export interface ExecOptions {
   onOutput?: (chunk: ExecChunk) => void;
 }
 
+/** One state transition on the event stream. */
+export interface Event {
+  id: number;
+  sandbox_id?: string;
+  from_state?: string;
+  to_state?: string;
+  reason?: string;
+  at: string;
+}
+
+export interface EventsOptions {
+  /** Start after this event id. 0 replays every event of this tenant. Omitted: the newest events only. */
+  after?: number;
+  /** Keep the events of one sandbox. */
+  sandboxId?: string;
+}
+
 export class Kiln extends GeneratedClient {
   /** Open one sandbox by id. */
   sandbox(id: string): Sandbox {
     return new Sandbox(this, id);
+  }
+
+  /** Read the event stream as it arrives. It never ends; break out of the loop to close it. */
+  async *events({ after, sandboxId }: EventsOptions = {}): AsyncGenerator<Event> {
+    const query = new URLSearchParams();
+    if (after !== undefined) query.set("after", String(after));
+    if (sandboxId !== undefined) query.set("sandbox_id", sandboxId);
+    const suffix = query.size > 0 ? `?${query}` : "";
+    const response = await this["request"]("GET", `/v1/events${suffix}`, undefined, {
+      headers: { Accept: "text/event-stream" },
+    });
+    for await (const [, data] of sse(response)) {
+      yield JSON.parse(data) as Event;
+    }
   }
 
   /** Create a sandbox and return it as an object. */
@@ -121,43 +152,54 @@ export class Sandbox {
   }
 }
 
-/** Read the SSE body of a streaming exec. */
-async function readExecStream(
-  response: Response,
-  onOutput: (chunk: ExecChunk) => void,
-): Promise<ExecResult> {
+/** Yield [event, data] pairs from a server-sent event body. */
+async function* sse(response: Response): AsyncGenerator<[string, string]> {
   const reader = response.body?.getReader();
   if (!reader) throw new KilnError(500, "internal", "the response carries no body");
   const decoder = new TextDecoder();
   let buffer = "";
   let event = "";
-  const result: ExecResult = { exit_code: 0, stdout: "", stderr: "" };
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let index: number;
-    while ((index = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, index).replace(/\r$/, "");
-      buffer = buffer.slice(index + 1);
-      if (line.startsWith("event:")) {
-        event = line.slice(6).trim();
-        continue;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let index: number;
+      while ((index = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, index).replace(/\r$/, "");
+        buffer = buffer.slice(index + 1);
+        if (line.startsWith("event:")) {
+          event = line.slice(6).trim();
+          continue;
+        }
+        if (!line.startsWith("data:")) continue;
+        yield [event, line.slice(5).trim()];
       }
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (event === "exit") {
-        Object.assign(result, JSON.parse(data));
-        continue;
-      }
-      if (event === "error") {
-        throw new KilnError(500, "internal", JSON.parse(data) as string);
-      }
-      const text = JSON.parse(data) as string;
-      const stream = event === "stderr" ? "stderr" : "stdout";
-      result[stream] += text;
-      onOutput({ stream, text });
     }
+  } finally {
+    // A caller that stops reading closes the connection.
+    await reader.cancel().catch(() => {});
+  }
+}
+
+/** Read the SSE body of a streaming exec. */
+async function readExecStream(
+  response: Response,
+  onOutput: (chunk: ExecChunk) => void,
+): Promise<ExecResult> {
+  const result: ExecResult = { exit_code: 0, stdout: "", stderr: "" };
+  for await (const [event, data] of sse(response)) {
+    if (event === "exit") {
+      Object.assign(result, JSON.parse(data));
+      continue;
+    }
+    if (event === "error") {
+      throw new KilnError(500, "internal", JSON.parse(data) as string);
+    }
+    const text = JSON.parse(data) as string;
+    const stream = event === "stderr" ? "stderr" : "stdout";
+    result[stream] += text;
+    onOutput({ stream, text });
   }
   return result;
 }

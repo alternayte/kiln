@@ -385,3 +385,62 @@ frontend and an API on two ports, now works from CI. Spec:
 Verified before tagging: every gate passed in CI on the feature commit,
 including the new `TestGateP4/EnvFork`. Not yet verified: the Action against
 a real pull request with `env` and `publish`.
+
+## 2026-10-11 — release-readiness review, and the onboarding path verified
+
+Done: a root `README.md` and `docs/gateway.md`, and the installation,
+quickstart, configuration and API documentation checked against what the
+binaries do. `just check` passes on a laptop with no KVM. No gate was run:
+every gate needs a KVM host, and CI runs them on push.
+
+Found by reading the code against the documents, not by running a VM:
+- `POST /v1/templates` refuses a body without `vcpus`, `memory_mb` and
+  `disk_mb`, and `POST /v1/sandboxes` refuses one without `lifecycle` and
+  `idle_seconds`. The OpenAPI document, both SDKs, the MCP tool schemas and
+  `llms.txt` called every one of them optional, so a client built from the
+  contract failed its first call. They are required in `internal/apispec`
+  now, and the generated files follow.
+- The web UI's template form never sent the three resource fields, so every
+  build from it was refused with `vcpus 0 is outside 1..32`. The regenerated
+  client's types caught it; the form has the fields now, with defaults.
+- `GET /v1/events` is a stream that never ends and starts at the latest
+  event. The MCP `events` tool read it to the end, so a tool call hung the
+  gateway request. The generated SDK `events()` methods did the same. The
+  preview Action printed it after a failed build and hung the job. The tool
+  reads for a bounded window and takes `after` and `sandbox_id`; the SDKs
+  carry a streaming iterator in the handwritten layer; the Action reads
+  with a time limit and `?after=0`.
+- The MCP `writeFile` tool had no way to carry content and wrote empty
+  files. It takes `content` now. The `terminal` operation was listed as a
+  tool, and a WebSocket cannot be a tool call; it is left out.
+- The OpenAPI `Event` schema named `from` and `to`; the host sends
+  `from_state` and `to_state`. `readFile` and `writeFile` are octet streams
+  in the document now, and `events` is `text/event-stream`.
+- The release notes install the binary at `/usr/local/bin/kiln`, and
+  `infra/kiln.service` ran `/var/lib/kiln/bin/kiln`. The unit names the
+  release path now, and the from-source steps install there too. A box
+  whose unit still names the old path keeps working until the unit file is
+  copied.
+- `kiln init` had no documented way to open the gateway listener:
+  `gateway_addr` and `gateway_names` are hand-edited keys. `infra/README.md`
+  says so now, and `docs/gateway.md` carries every gateway variable, which
+  no document outside the spec named before.
+- The Vite dev server forwarded `/auth`, a prefix that moved to `/api/auth`
+  in v0.3.0, so `bun run dev` could not sign in. It forwards `/api` now.
+- `checks/web.sh` compared the generated client against the git index, so
+  a regenerated and uncommitted client failed as stale. It compares before
+  and after generation now. `checks/sdk.sh` type-checks the handwritten
+  TypeScript layer and parses the Python one; nothing compiled them before.
+- `kiln init --help` exited 1 with `flag: help requested`, and a missing
+  config said `serve:` whatever command asked. Both fixed.
+
+The SDD gained a header, with `KILN_SPEC_CHANGE=1`, that names it the v1
+design record frozen on 2026-10-11 and `docs/specs/` the build authority,
+and lists what shipped after it; its body is unchanged, and the README says
+which document wins.
+`gate/P6` was tagged on the Dedibox on 2026-09-15 and never pushed, so
+`just status` on a fresh checkout names P6 open. Neither SDK is published to a
+registry. There is no `LICENSE` file, and `sdk/typescript/package.json` says
+MIT; the operator decides the licence. `docs/specs/template-services.md`
+and the two AGENTS.md lines it adds were untracked before this session and
+are left as they were.

@@ -43,6 +43,11 @@ type Operation struct {
 	// handwritten SDK layer carries it. The route is still described here,
 	// so the host cannot serve a route no document names.
 	Terminal bool
+	// Raw marks a call whose body is not a JSON object: file bytes, or an
+	// event stream that never ends. The OpenAPI document says so, the
+	// generated clients leave it to the handwritten layer, and the MCP
+	// server handles it by hand.
+	Raw bool
 }
 
 // Operations is the whole API. A route the host serves and this list does not
@@ -55,8 +60,8 @@ func Operations() []Operation {
 			Returns: "Health",
 		},
 		{
-			ID: "events", Method: "GET", Path: "/v1/events", Status: 200, Streams: true,
-			Summary: "Read the event stream of this tenant.",
+			ID: "events", Method: "GET", Path: "/v1/events", Status: 200, Streams: true, Raw: true,
+			Summary: "Read the event stream of this tenant as server-sent events. The stream starts at the latest event and never ends; ?after=0 replays every event, ?after=<id> continues from one, and ?sandbox_id= keeps one sandbox.",
 			Returns: "EventList",
 		},
 		{
@@ -70,9 +75,9 @@ func Operations() []Operation {
 			Body: []Field{
 				{Name: "name", Type: "string", Required: true, Doc: "Name of the template inside this tenant."},
 				{Name: "image", Type: "string", Required: true, Doc: "OCI image reference, for example docker.io/library/python:3.12-slim."},
-				{Name: "vcpus", Type: "integer", Doc: "Virtual CPUs of every sandbox from this template."},
-				{Name: "memory_mb", Type: "integer", Doc: "Memory of every sandbox from this template."},
-				{Name: "disk_mb", Type: "integer", Doc: "Disk of every sandbox from this template."},
+				{Name: "vcpus", Type: "integer", Required: true, Doc: "Virtual CPUs of every sandbox from this template, 1 to 32."},
+				{Name: "memory_mb", Type: "integer", Required: true, Doc: "Memory of every sandbox from this template."},
+				{Name: "disk_mb", Type: "integer", Required: true, Doc: "Disk of every sandbox from this template."},
 				{Name: "setup", Type: "array", Items: "string", Doc: "Commands that run once while the template builds."},
 				{Name: "egress_allow", Type: "array", Items: "string", Required: true,
 					Doc: "Hostnames a sandbox may reach. An empty list allows no egress."},
@@ -106,9 +111,9 @@ func Operations() []Operation {
 			Summary: "Create a sandbox by restoring a template snapshot.",
 			Body: []Field{
 				{Name: "template", Type: "string", Required: true, Doc: "Template the sandbox restores from."},
-				{Name: "lifecycle", Type: "string", Doc: "ephemeral or persistent."},
-				{Name: "ttl_seconds", Type: "integer", Doc: "Seconds until the sandbox is destroyed."},
-				{Name: "idle_seconds", Type: "integer", Doc: "Seconds of inactivity until the sandbox sleeps."},
+				{Name: "lifecycle", Type: "string", Required: true, Doc: "ephemeral or persistent. An ephemeral sandbox is destroyed at idle_seconds of no activity; a persistent one sleeps then and wakes on the next request."},
+				{Name: "ttl_seconds", Type: "integer", Doc: "Seconds until the sandbox is destroyed, whatever its activity. Null is no deadline."},
+				{Name: "idle_seconds", Type: "integer", Required: true, Doc: "Seconds of no activity until an ephemeral sandbox is destroyed or a persistent one sleeps. Must be greater than zero."},
 				{Name: "metadata", Type: "object", Doc: "Free-form labels the caller reads back."},
 				{Name: "secrets", Type: "array", Items: "string", Doc: "Names of host secrets to inject."},
 				{Name: "env", Type: "object", Doc: "Environment variables for the start command, exec and the terminal. Every value is handled like the host secrets: it reaches guest memory only and is never returned. A key must not also be in secrets."},
@@ -183,8 +188,8 @@ func Operations() []Operation {
 			},
 		},
 		{
-			ID: "readFile", Method: "GET", Path: "/v1/sandboxes/{id}/files/{path...}", Status: 200, Streams: true,
-			Summary: "Read one file out of a sandbox.",
+			ID: "readFile", Method: "GET", Path: "/v1/sandboxes/{id}/files/{path...}", Status: 200, Streams: true, Raw: true,
+			Summary: "Read one file out of a sandbox. The answer is the file's bytes.",
 			Params: []Field{
 				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
 				{Name: "path", Type: "string", Required: true, Doc: "Path inside the sandbox."},
@@ -192,8 +197,8 @@ func Operations() []Operation {
 			Returns: "FileBody",
 		},
 		{
-			ID: "writeFile", Method: "PUT", Path: "/v1/sandboxes/{id}/files/{path...}", Status: 204, Streams: true,
-			Summary: "Write one file into a sandbox.",
+			ID: "writeFile", Method: "PUT", Path: "/v1/sandboxes/{id}/files/{path...}", Status: 204, Streams: true, Raw: true,
+			Summary: "Write one file into a sandbox. The request body is the file's bytes, and parent directories are created.",
 			Params: []Field{
 				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
 				{Name: "path", Type: "string", Required: true, Doc: "Path inside the sandbox."},

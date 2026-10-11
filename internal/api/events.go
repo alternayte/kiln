@@ -61,6 +61,11 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// eventBatch bounds one read of the events table. A replay from ?after=0
+// over a long-lived tenant is paged, so one tick never builds the whole
+// history in memory; the loop reads again at once while a page is full.
+const eventBatch = 500
+
 // events streams state transitions as server-sent events. ?sandbox_id=
 // filters one sandbox; ?after= starts from a known event id, and the default
 // starts at the latest event so a fresh reader is not replayed all history.
@@ -98,23 +103,28 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-ticker.C:
 		}
-		list, err := s.Store.ListEventsSince(r.Context(), after)
-		if err != nil {
-			return
-		}
-		for _, e := range list {
-			after = e.ID
-			if filter != "" && e.SandboxID != filter {
-				continue
-			}
-			b, err := json.Marshal(eventJSON(e))
+		for {
+			list, err := s.Store.ListEventsSince(r.Context(), after, eventBatch)
 			if err != nil {
-				continue
-			}
-			if _, err := fmt.Fprintf(w, "event: transition\ndata: %s\n\n", b); err != nil {
 				return
 			}
+			for _, e := range list {
+				after = e.ID
+				if filter != "" && e.SandboxID != filter {
+					continue
+				}
+				b, err := json.Marshal(eventJSON(e))
+				if err != nil {
+					continue
+				}
+				if _, err := fmt.Fprintf(w, "event: transition\ndata: %s\n\n", b); err != nil {
+					return
+				}
+			}
+			flusher.Flush()
+			if len(list) < eventBatch {
+				break
+			}
 		}
-		flusher.Flush()
 	}
 }

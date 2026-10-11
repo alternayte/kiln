@@ -196,7 +196,7 @@ builds a template from it, runs one sandbox, publishes the port, and deletes
 everything when the pull request closes.
 
 ```yaml
-- uses: alternayte/kiln/.github/actions/preview@v0.7.0
+- uses: alternayte/kiln/.github/actions/preview@v0.8.0
   with:
     url: ${{ vars.KILN_URL }}
     api-key: ${{ secrets.KILN_API_KEY }}
@@ -270,6 +270,17 @@ Where things are:
 | `docs/specs/` | The build authority, one spec per slice |
 | `LOG.md` | What each session did and found |
 | `AGENTS.md` | Rules and domain words for agents working here |
+
+## Licence
+
+The host and the gateway are [AGPL-3.0](LICENSE). Running them, modified or
+not, for yourself or as a service, is free; offering a modified Kiln to
+others over a network means publishing those modifications. The parts that
+run inside your own code and pipelines are MIT, so calling Kiln never pulls
+the AGPL into your application: the Go [`client`](client/LICENSE), the
+[Python](sdk/python/LICENSE) and [TypeScript](sdk/typescript/LICENSE) SDKs,
+and the [GitHub Action](.github/actions/preview/LICENSE). A pull request
+needs the [contributor licence agreement](CLA.md), which a bot asks for once.
 
 ## What is not here
 

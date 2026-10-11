@@ -161,7 +161,10 @@ func (s *Server) writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, CodeConflict, err.Error())
 		return
 	case errors.Is(err, sandbox.ErrExhausted):
-		writeError(w, http.StatusInsufficientStorage, CodeExhausted, err.Error())
+		// A cap is a quota, and 429 is the status every client library
+		// treats as "not now", so a caller that backs off and retries does
+		// the right thing once a sandbox is destroyed or the cap is raised.
+		writeError(w, http.StatusTooManyRequests, CodeExhausted, err.Error())
 		return
 	case template.IsInvalid(err), sandbox.IsInvalid(err):
 		writeError(w, http.StatusBadRequest, CodeInvalid, err.Error())

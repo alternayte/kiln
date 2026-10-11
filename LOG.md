@@ -444,3 +444,33 @@ registry. There is no `LICENSE` file, and `sdk/typescript/package.json` says
 MIT; the operator decides the licence. `docs/specs/template-services.md`
 and the two AGENTS.md lines it adds were untracked before this session and
 are left as they were.
+
+## 2026-10-11 — v0.8.0, a licence, a CLA and the contract corrected
+
+Done: the host and the gateway are AGPL-3.0, and the Go client, both SDKs
+and the preview Action are MIT, so calling Kiln never pulls the AGPL into a
+caller's code. A pull request from anyone but the maintainer needs the CLA
+in `CLA.md`, which `.github/workflows/cla.yml` asks for once and records on
+the `cla-signatures` branch. `.github/workflows/sdk.yml` publishes
+`kiln-sdk` to PyPI and `@alternayte/kiln` to npm on a tag through trusted
+publishing, after a one-time registration on each registry.
+
+- `exhausted` answers 429, not 507. A cap is a quota, and 429 is the status
+  every client library backs off on.
+- `GET /v1/events` pages a replay in batches of 500 and reads again at
+  once while a page is full, so `?after=0` over a long history is not one
+  tick that builds it all in memory. The store takes a limit. Tested.
+- The TypeScript package imported `./generated` with no extension, which
+  Bun resolves and Node.js does not; the emitted package could not be loaded
+  by the runtime npm users have. It imports `./generated.js` now, and the
+  emitted module was loaded under Node.js before tagging.
+- The maintainer-only `just` recipes, `review`, `model` and the sync in
+  `agents`, say what they need instead of failing on a missing binary.
+- Three specs for what comes next, none built: `sandbox-labels.md`,
+  `preview-tokens.md` and `start-health-check.md`.
+
+Verified before tagging: `just check` on a laptop, and the kvm workflow
+green on the commit before this one, P0 to P5 and sec. Not verified here:
+the two registry publishes, which need the registrations; and the live
+host, which keeps the old unit path until its binary is installed at
+`/usr/local/bin/kiln`.

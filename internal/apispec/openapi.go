@@ -6,7 +6,7 @@ import (
 )
 
 // Version is the semver of this contract. It rises with the binary.
-const Version = "0.7.0"
+const Version = "0.8.0"
 
 // OpenAPI returns the OpenAPI 3.1 document of the tenant API. The operator
 // routes stay out: a tenant never reaches them, and the SDKs never call them.
@@ -127,7 +127,7 @@ func responses(op Operation) map[string]any {
 		success["content"] = successContent(op)
 	}
 	out := map[string]any{statusKey(op.Status): success}
-	for _, code := range []string{"400", "401", "404", "409", "507"} {
+	for _, code := range []string{"400", "401", "404", "409", "429"} {
 		out[code] = map[string]any{
 			"description": errorDoc[code],
 			"content": map[string]any{
@@ -143,7 +143,7 @@ var errorDoc = map[string]string{
 	"401": "The credential is missing, expired or revoked.",
 	"404": "The row does not exist, or it belongs to another tenant.",
 	"409": "The call conflicts with the state, for example a template that still has sandboxes.",
-	"507": "A cap of this tenant is reached. The message names the cap.",
+	"429": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.",
 }
 
 func statusKey(status int) string {

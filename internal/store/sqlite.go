@@ -404,12 +404,17 @@ func (s *sqliteStore) ListEvents(ctx context.Context, sandboxID string) ([]Event
 	return s.queryEvents(ctx, query, args...)
 }
 
-// ListEventsSince returns every event after one id, oldest first.
-func (s *sqliteStore) ListEventsSince(ctx context.Context, afterID int64) ([]Event, error) {
+// ListEventsSince returns the events after one id, oldest first, at most
+// limit of them.
+func (s *sqliteStore) ListEventsSince(ctx context.Context, afterID int64, limit int) ([]Event, error) {
 	clause, args := scope(ctx, "tenant_id")
-	return s.queryEvents(ctx,
-		`SELECT id, sandbox_id, from_state, to_state, reason, at FROM events WHERE id > ?`+clause+` ORDER BY id`,
-		append([]any{afterID}, args...)...)
+	query := `SELECT id, sandbox_id, from_state, to_state, reason, at FROM events WHERE id > ?` + clause + ` ORDER BY id`
+	args = append([]any{afterID}, args...)
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	return s.queryEvents(ctx, query, args...)
 }
 
 // LastEventID returns the newest event id, or zero when the table is empty.

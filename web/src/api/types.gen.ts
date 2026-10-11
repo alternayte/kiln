@@ -153,9 +153,9 @@ export type EventsErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type EventsError = EventsErrors[keyof EventsErrors];
@@ -194,9 +194,9 @@ export type HealthErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type HealthError = HealthErrors[keyof HealthErrors];
@@ -235,9 +235,9 @@ export type ListRegistriesErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type ListRegistriesError = ListRegistriesErrors[keyof ListRegistriesErrors];
@@ -280,9 +280,9 @@ export type PutRegistryErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type PutRegistryError = PutRegistryErrors[keyof PutRegistryErrors];
@@ -326,9 +326,9 @@ export type DeleteRegistryErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type DeleteRegistryError = DeleteRegistryErrors[keyof DeleteRegistryErrors];
@@ -367,9 +367,9 @@ export type ListSandboxesErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type ListSandboxesError = ListSandboxesErrors[keyof ListSandboxesErrors];
@@ -420,9 +420,9 @@ export type CreateSandboxErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type CreateSandboxError = CreateSandboxErrors[keyof CreateSandboxErrors];
@@ -466,9 +466,9 @@ export type DeleteSandboxErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type DeleteSandboxError = DeleteSandboxErrors[keyof DeleteSandboxErrors];
@@ -512,9 +512,9 @@ export type GetSandboxErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type GetSandboxError = GetSandboxErrors[keyof GetSandboxErrors];
@@ -565,9 +565,9 @@ export type ExecErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type ExecError = ExecErrors[keyof ExecErrors];
@@ -615,9 +615,9 @@ export type ReadFileErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type ReadFileError = ReadFileErrors[keyof ReadFileErrors];
@@ -665,9 +665,9 @@ export type WriteFileErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type WriteFileError = WriteFileErrors[keyof WriteFileErrors];
@@ -714,9 +714,9 @@ export type ForkErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type ForkError = ForkErrors[keyof ForkErrors];
@@ -763,9 +763,9 @@ export type PublishErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type PublishError = PublishErrors[keyof PublishErrors];
@@ -813,9 +813,9 @@ export type RetireErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type RetireError = RetireErrors[keyof RetireErrors];
@@ -861,9 +861,9 @@ export type SnapshotErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type SnapshotError = SnapshotErrors[keyof SnapshotErrors];
@@ -902,9 +902,9 @@ export type ListSnapshotsErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type ListSnapshotsError = ListSnapshotsErrors[keyof ListSnapshotsErrors];
@@ -948,9 +948,9 @@ export type DeleteSnapshotErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type DeleteSnapshotError = DeleteSnapshotErrors[keyof DeleteSnapshotErrors];
@@ -994,9 +994,9 @@ export type GetSnapshotErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type GetSnapshotError = GetSnapshotErrors[keyof GetSnapshotErrors];
@@ -1043,9 +1043,9 @@ export type RestoreErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type RestoreError = RestoreErrors[keyof RestoreErrors];
@@ -1084,9 +1084,9 @@ export type ListTemplatesErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type ListTemplatesError = ListTemplatesErrors[keyof ListTemplatesErrors];
@@ -1136,9 +1136,9 @@ export type CreateTemplateErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type CreateTemplateError = CreateTemplateErrors[keyof CreateTemplateErrors];
@@ -1182,9 +1182,9 @@ export type DeleteTemplateErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type DeleteTemplateError = DeleteTemplateErrors[keyof DeleteTemplateErrors];
@@ -1228,9 +1228,9 @@ export type GetTemplateErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type GetTemplateError = GetTemplateErrors[keyof GetTemplateErrors];
@@ -1269,9 +1269,9 @@ export type ListViewersErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type ListViewersError = ListViewersErrors[keyof ListViewersErrors];
@@ -1313,9 +1313,9 @@ export type CreateViewerErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type CreateViewerError = CreateViewerErrors[keyof CreateViewerErrors];
@@ -1359,9 +1359,9 @@ export type DeleteViewerErrors = {
      */
     409: Error;
     /**
-     * A cap of this tenant is reached. The message names the cap.
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
      */
-    507: Error;
+    429: Error;
 };
 
 export type DeleteViewerError = DeleteViewerErrors[keyof DeleteViewerErrors];

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -430,7 +431,51 @@ func TestTemplateBuildKeepsTheTenantAndItsCap(t *testing.T) {
 	if len(rows) != 1 || rows[0].Name != "one" {
 		t.Fatalf("the tenant holds %+v, want the template it created", rows)
 	}
-	if status := create("two"); status != http.StatusInsufficientStorage {
-		t.Fatalf("second build status %d, want 507 over the cap", status)
+	if status := create("two"); status != http.StatusTooManyRequests {
+		t.Fatalf("second build status %d, want 429 over the cap", status)
+	}
+}
+
+// A replay from after=0 arrives whole: the handler pages the table and reads
+// again at once while a page is full, so a long history is not one tick of
+// five hundred events and then a wait for the rest.
+func TestEventsReplayIsPaged(t *testing.T) {
+	ts, st := testServer(t)
+	ctx := context.Background()
+	const total = eventBatch*2 + 7
+	for i := 0; i < total; i++ {
+		if err := st.AppendEvent(ctx, store.Event{
+			SandboxID: "sbx", FromState: "creating", ToState: "running", Reason: "test",
+			At: time.Unix(1700000000+int64(i), 0).UTC(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, ts.URL+"/v1/events?after=0", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+serverToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	start := time.Now()
+	got := 0
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() && got < total {
+		if strings.HasPrefix(scanner.Text(), "data:") {
+			got++
+		}
+	}
+	if got != total {
+		t.Fatalf("read %d events, want %d", got, total)
+	}
+	// The first tick is one second in; three pages must not take three.
+	if took := time.Since(start); took > 2500*time.Millisecond {
+		t.Fatalf("the replay took %s; the pages waited for a tick each", took)
 	}
 }

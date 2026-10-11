@@ -36,7 +36,7 @@ func LLMsTXT(baseURL string) string {
 	fmt.Fprintf(&b, "The preview sleeps after its idle deadline and wakes on the next request, so an open review costs nothing while nobody is looking. The host deletes the template at its TTL with the sandbox and the snapshot, so a forgotten preview cleans itself up.\n\n")
 	fmt.Fprintf(&b, "Egress is deny by default. A preview that reaches a database or an API needs those hostnames in `egress_allow`, and nothing else is reachable from inside it.\n\n")
 	fmt.Fprintf(&b, "## Errors\n\n")
-	fmt.Fprintf(&b, "Every error is `{\"error\":{\"code\":\"...\",\"message\":\"...\"}}`. The code is stable: `invalid`, `not_found`, `conflict`, `exhausted`, `internal`. `exhausted` means a cap of this tenant is reached; the message names the cap. `not_found` also covers a row of another tenant.\n")
+	fmt.Fprintf(&b, "Every error is `{\"error\":{\"code\":\"...\",\"message\":\"...\"}}`. The code is stable: `invalid`, `not_found`, `conflict`, `exhausted`, `internal`. `exhausted` answers 429 and means a cap of this tenant is reached; the message names the cap. `not_found` also covers a row of another tenant.\n")
 	return b.String()
 }
 

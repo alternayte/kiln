@@ -30,8 +30,11 @@ check:
 
 # recipe: agents
 # Sync global agent files and skills, then verify this repo's agent files.
+# The sync is the maintainer's dotfiles; without them the recipe only verifies.
 agents:
-    bash ~/dotfiles/agents/sync.sh
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -f ~/dotfiles/agents/sync.sh ]; then bash ~/dotfiles/agents/sync.sh; else echo "agents: no ~/dotfiles/agents/sync.sh here, verifying only"; fi
     bash checks/agents-md.sh
     bash checks/check-headers.sh
 
@@ -131,6 +134,9 @@ demo:
 review base="": check-slow
     #!/usr/bin/env bash
     set -euo pipefail
+    # The reviewer is pi, the maintainer's agent runner. Everyone else reads
+    # the two prompts below and runs them with the reviewer they have.
+    command -v pi > /dev/null || { echo "review: needs pi (https://github.com/badlogic/pi-mono) on PATH; the prompts are in this recipe" >&2; exit 1; }
     base="{{base}}"
     if [ -z "$base" ]; then
         base="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || echo main)"
@@ -207,7 +213,9 @@ dev:
 model name:
     #!/usr/bin/env bash
     set -euo pipefail
+    # pi's settings; a machine without pi has nothing to set.
     models="$HOME/.pi/agent/models.json"
+    [ -f "$models" ] || { echo "model: no $models; this recipe configures pi, the maintainer's agent runner" >&2; exit 1; }
     settings="$HOME/.pi/agent/settings.json"
     id="$(jq -er --arg p "{{name}}" '.providers[$p].models[0].id' "$models")" || {
         echo "model: no provider '{{name}}' in $models. Valid: $(jq -r '.providers | keys | join(", ")' "$models")" >&2

@@ -1,7 +1,7 @@
 // The handwritten layer. It adds what a generator does badly: streaming
 // exec, file transfer, retries, and a sandbox object that reads like the
 // thing it names.
-import { GeneratedClient, KilnError, type ClientOptions } from "./generated";
+import { GeneratedClient, KilnError, type ClientOptions } from "./generated.js";
 
 export { KilnError, type ClientOptions };
 

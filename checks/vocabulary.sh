@@ -63,6 +63,8 @@ excluded() {
     # The frozen design doc predates the term list. The freeze rule forbids editing it,
     # so its wording cannot create new violations. Every live file is still checked.
     docs/internal/sdd.md) return 0 ;;
+    # Licence texts are verbatim legal documents; their words are not this repo's to choose.
+    LICENSE|*/LICENSE|LICENSE.*|*/LICENSE.*) return 0 ;;
     # Third-party APIs whose naming this repo does not control: add their client or schema paths here, one comment each.
     # Vite and npm choose the keys and import names in these two files; this repo does not.
     web/vite.config.ts|web/package.json) return 0 ;;

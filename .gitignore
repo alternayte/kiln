@@ -6,3 +6,6 @@ infra/infra
 # Python leaves these behind when the package is imported.
 __pycache__/
 *.pyc
+
+sdk/python/dist
+sdk/python/*.egg-info

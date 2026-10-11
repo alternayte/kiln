@@ -1,0 +1,67 @@
+name: sdk
+
+# A tag publishes the two client packages. They are MIT, generated from the
+# same API description the binary serves, and versioned with it. Both
+# registries are reached through trusted publishing, so no token lives in
+# this repository: PyPI and npm each hold a one-time registration of this
+# workflow as the publisher of its package.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # The packages carry the tag's version, or the publish is wrong by
+  # construction.
+  version:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euo pipefail
+          want="${GITHUB_REF_NAME#v}"
+          py="$(sed -n 's/^version = "\(.*\)"/\1/p' sdk/python/pyproject.toml)"
+          ts="$(jq -r .version sdk/typescript/package.json)"
+          for got in "$py" "$ts"; do
+            if [ "$got" != "$want" ]; then
+              echo "a package says $got and the tag is $want; bump both sdk versions before tagging" >&2
+              exit 1
+            fi
+          done
+
+  python:
+    needs: version
+    runs-on: ubuntu-24.04
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --quiet build
+      - run: python -m build sdk/python
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: sdk/python/dist
+
+  typescript:
+    needs: version
+    runs-on: ubuntu-24.04
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5 or later.
+      - run: npm install -g npm@latest
+      - run: npm install --no-save typescript@5
+        working-directory: sdk/typescript
+      - run: npm run build
+        working-directory: sdk/typescript
+      - run: npm publish --provenance --access public
+        working-directory: sdk/typescript

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +27,8 @@ type resolver struct {
 	set   string
 	allow map[string]bool
 	up    []string
+	// allowMu guards allow, which a policy change replaces.
+	allowMu sync.RWMutex
 
 	udp *net.UDPConn
 	tcp net.Listener
@@ -179,12 +182,41 @@ func (r *resolver) handle(query []byte) []byte {
 		log.Printf("network: resolver %s: %s: %v", r.id, name, err)
 		return response(query, dnsServFail)
 	}
-	r.install(resp)
+	r.install(name, resp)
 	return resp
 }
 
+// allowed reports whether a name is in the allowlist, as itself or under a
+// wildcard entry. A wildcard covers every depth of subdomain.
 func (r *resolver) allowed(name string) bool {
-	return r.allow[name]
+	r.allowMu.RLock()
+	defer r.allowMu.RUnlock()
+	if r.allow[name] {
+		return true
+	}
+	for rest := name; ; {
+		_, parent, ok := strings.Cut(rest, ".")
+		if !ok {
+			return false
+		}
+		if r.allow[wildcardPrefix+parent] {
+			return true
+		}
+		rest = parent
+	}
+}
+
+// replaceAllow swaps the allowlist and empties the address set. A query that
+// was already upstream checks the list again before it installs its answer,
+// so nothing the old list allowed lands in the set afterwards.
+func (r *resolver) replaceAllow(ctx context.Context, names map[string]bool) error {
+	r.allowMu.Lock()
+	r.allow = names
+	r.allowMu.Unlock()
+	r.nft.Lock()
+	defer r.nft.Unlock()
+	_, err := run(ctx, "nft", "flush", "set", "inet", Table, r.set)
+	return err
 }
 
 // forward sends the query to the host resolvers. A truncated UDP answer is
@@ -257,9 +289,14 @@ func exchangeTCP(upstream string, query []byte) ([]byte, error) {
 }
 
 // install adds every A record address to the VM's set for the record's TTL.
-func (r *resolver) install(resp []byte) {
+func (r *resolver) install(name string, resp []byte) {
 	records, err := answers(resp)
 	if err != nil {
+		return
+	}
+	r.nft.Lock()
+	defer r.nft.Unlock()
+	if !r.allowed(name) {
 		return
 	}
 	for _, rec := range records {
@@ -278,10 +315,9 @@ func (r *resolver) install(resp []byte) {
 }
 
 // addElement refreshes one address in the VM's nftables set. The delete
-// makes a stale, shorter timeout give way to the new TTL.
+// makes a stale, shorter timeout give way to the new TTL. The caller holds
+// r.nft.
 func (r *resolver) addElement(ip string, ttl uint32) {
-	r.nft.Lock()
-	defer r.nft.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, _ = run(ctx, "nft", "delete", "element", "inet", Table, r.set, "{", ip, "}")

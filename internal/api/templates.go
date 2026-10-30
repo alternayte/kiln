@@ -20,6 +20,15 @@ type createTemplateRequest struct {
 	TTLSeconds  *int      `json:"ttl_seconds"`
 	Start       []string  `json:"start"`
 	Port        int       `json:"port"`
+	User        string    `json:"user"`
+	// Credential pulls the images of this build and goes no further.
+	Credential *templateCredential `json:"credential"`
+}
+
+// templateCredential is the registry login of one build.
+type templateCredential struct {
+	Username string `json:"username"`
+	Token    string `json:"token"`
 }
 
 // templateResponse is one template as the API reports it.
@@ -39,6 +48,7 @@ type templateResponse struct {
 	TTLSeconds    *int      `json:"ttl_seconds,omitempty"`
 	Start         []string  `json:"start,omitempty"`
 	Port          int       `json:"port,omitempty"`
+	User          string    `json:"user,omitempty"`
 }
 
 func templateJSON(info template.Info) templateResponse {
@@ -62,6 +72,7 @@ func templateJSON(info template.Info) templateResponse {
 		TTLSeconds:    info.TTLSeconds,
 		Start:         info.Start,
 		Port:          info.StartPort,
+		User:          info.User,
 	}
 }
 
@@ -91,6 +102,10 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 		TTLSeconds:  req.TTLSeconds,
 		Start:       req.Start,
 		StartPort:   req.Port,
+		User:        req.User,
+	}
+	if req.Credential != nil {
+		build.Credential = &template.Credential{Username: req.Credential.Username, Token: req.Credential.Token}
 	}
 	// The build outlives the request, so it runs on the daemon context. The
 	// tenant travels with it, or the rows land on the wrong tenant.

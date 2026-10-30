@@ -95,6 +95,9 @@ type Manager struct {
 	// request is still working on.
 	activeMu sync.Mutex
 	active   map[string]bool
+
+	// egressMu orders policy changes, so the row and the live link agree.
+	egressMu sync.Mutex
 }
 
 // New returns a sandbox manager.
@@ -183,6 +186,9 @@ type image struct {
 	// fresh VM. A sleep image and a fork image restore memory that already
 	// holds the running application, so only this one starts it.
 	fromTemplate bool
+	// egress is the policy a copy of this image starts with. Nil is the
+	// template policy.
+	egress []string
 }
 
 func (i image) memPath() string   { return filepath.Join(i.dir, "mem") }
@@ -288,7 +294,13 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (store.Sandbox,
 
 // restore brings one sandbox row up from an image. It returns when the guest
 // answers a fresh vsock hello. The caller owns the row and every failure.
-func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env map[string]string, opts restoreOptions) (store.Sandbox, error) {
+func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env map[string]string, opts restoreOptions) (out store.Sandbox, err error) {
+	phase, began := "restore", time.Now()
+	defer func() {
+		if err != nil && phase != "" {
+			m.phaseEvent(ctx, row.ID, phase, began, err)
+		}
+	}()
 	if row.VsockCID == nil {
 		return store.Sandbox{}, fmt.Errorf("sandbox: %s has no vsock cid", row.ID)
 	}
@@ -302,7 +314,7 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 			return store.Sandbox{}, err
 		}
 	}
-	att, err := m.cfg.Network.Attach(ctx, row.ID, img.template.EgressAllow)
+	att, err := m.cfg.Network.Attach(ctx, row.ID, row.Egress(img.template))
 	if err != nil {
 		return store.Sandbox{}, err
 	}
@@ -348,20 +360,25 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 	if _, err := rand.Read(entropy); err != nil {
 		return store.Sandbox{}, err
 	}
-	if err := vm.ResumeHooks(ctx, entropy, time.Now().UnixNano(), row.ID, env); err != nil {
+	if err := vm.ResumeHooks(ctx, entropy, time.Now().UnixNano(), row.ID, env, img.template.User); err != nil {
 		return store.Sandbox{}, err
 	}
+	m.phaseEvent(ctx, row.ID, phase, began, nil)
+	phase = ""
 	if len(img.template.Start) > 0 && img.template.StartPort > 0 {
 		// The application starts after the resume hooks, which place the
 		// hostname and the secrets it reads. Only a template snapshot needs
 		// starting: a sleep image and a fork image restore memory that
 		// already holds the process.
 		if img.fromTemplate {
+			phase, began = "start", time.Now()
 			if err := vm.Start(ctx, img.template.Start, img.template.StartPort,
 				guestproto.StartDeadlineSeconds, env); err != nil {
 				return store.Sandbox{}, fmt.Errorf("start %v on port %d: %w",
 					img.template.Start, img.template.StartPort, err)
 			}
+			m.phaseEvent(ctx, row.ID, phase, began, nil)
+			phase = ""
 		}
 		// The watch dies with the VM it watches, so every restore takes it
 		// up again. Without this a sandbox that slept once reports no crash
@@ -434,6 +451,7 @@ func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Sna
 		SecretBearing:   row.SecretBearing,
 		Listed:          true,
 		OriginSandboxID: row.ID,
+		EgressAllow:     row.EgressAllow,
 	}
 	if err := m.cfg.Store.CreateSnapshot(ctx, snap); err != nil {
 		_ = os.RemoveAll(dir)
@@ -497,6 +515,7 @@ func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bo
 		return nil, err
 	}
 	img := image{dir: dir, template: tpl, snapshotID: snapID, secret: row.SecretBearing}
+	img.egress = row.EgressAllow
 	if err := m.cfg.Store.CreateSnapshot(ctx, store.Snapshot{
 		ID:              snapID,
 		TemplateName:    row.TemplateName,
@@ -506,6 +525,7 @@ func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bo
 		SecretBearing:   row.SecretBearing,
 		Listed:          false,
 		OriginSandboxID: row.ID,
+		EgressAllow:     row.EgressAllow,
 	}); err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, err
@@ -553,6 +573,7 @@ func (m *Manager) RestoreSnapshot(ctx context.Context, snapshotID string, count 
 		template:   tpl,
 		snapshotID: snapshotID,
 		secret:     snap.SecretBearing,
+		egress:     snap.EgressAllow,
 	}
 	m.touch(ctx, origin)
 	copies, err := m.makeCopies(ctx, img, origin, count)
@@ -632,6 +653,7 @@ func (m *Manager) makeCopies(ctx context.Context, img image, base store.Sandbox,
 			CreatedAt:     now,
 			SecretBearing: img.secret,
 			EnvKeys:       base.EnvKeys,
+			EgressAllow:   img.egress,
 		})
 		if err != nil {
 			m.clearActive(id)
@@ -799,6 +821,23 @@ func (m *Manager) event(ctx context.Context, id, from, to, reason string, at tim
 		At:        at,
 	}); err != nil {
 		log.Printf("sandbox: %s: event: %v", id, err)
+	}
+}
+
+// phaseEvent records how long one step of a restore took. A failed step
+// carries its error, so a failure shows where it stopped.
+func (m *Manager) phaseEvent(ctx context.Context, id, phase string, began time.Time, failure error) {
+	event := store.Event{
+		SandboxID:  id,
+		Phase:      phase,
+		DurationMS: time.Since(began).Milliseconds(),
+		At:         m.now(),
+	}
+	if failure != nil {
+		event.Reason = failure.Error()
+	}
+	if err := m.cfg.Store.AppendEvent(context.WithoutCancel(ctx), event); err != nil {
+		log.Printf("sandbox: %s: phase event: %v", id, err)
 	}
 }
 

@@ -13,10 +13,13 @@ export type Error = {
 
 export type Event = {
     at?: string;
+    duration_ms?: number;
     from_state?: string;
     id?: number;
+    phase?: string;
     reason?: string;
     sandbox_id?: string;
+    template?: string;
     to_state?: string;
 };
 
@@ -39,6 +42,23 @@ export type Health = {
     sandboxes?: number;
 };
 
+export type Process = {
+    exit_code?: number | null;
+    id?: string;
+    more?: boolean;
+    running?: boolean;
+    stderr?: string;
+    stderr_lost?: number;
+    stderr_offset?: number;
+    stdout?: string;
+    stdout_lost?: number;
+    stdout_offset?: number;
+};
+
+export type ProcessCreated = {
+    id?: string;
+};
+
 export type Published = {
     port?: number;
     url?: string;
@@ -55,6 +75,7 @@ export type RegistryList = Array<Registry>;
 
 export type Sandbox = {
     created_at?: string;
+    egress_allow?: Array<string>;
     env_keys?: Array<string>;
     id?: string;
     lifecycle?: string;
@@ -96,6 +117,7 @@ export type Template = {
     start?: Array<string>;
     state?: string;
     ttl_seconds?: number;
+    user?: string;
     vcpus?: number;
 };
 
@@ -528,6 +550,54 @@ export type GetSandboxResponses = {
 
 export type GetSandboxResponse = GetSandboxResponses[keyof GetSandboxResponses];
 
+export type SetEgressData = {
+    body: {
+        egress_allow: Array<string>;
+    };
+    path: {
+        /**
+         * Sandbox id.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/v1/sandboxes/{id}/egress';
+};
+
+export type SetEgressErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
+     */
+    429: Error;
+};
+
+export type SetEgressError = SetEgressErrors[keyof SetEgressErrors];
+
+export type SetEgressResponses = {
+    /**
+     * The call succeeded.
+     */
+    200: Sandbox;
+};
+
+export type SetEgressResponse = SetEgressResponses[keyof SetEgressResponses];
+
 export type ExecData = {
     body: {
         cmd: Array<string>;
@@ -729,6 +799,172 @@ export type ForkResponses = {
 };
 
 export type ForkResponse = ForkResponses[keyof ForkResponses];
+
+export type StartProcessData = {
+    body: {
+        cmd: Array<string>;
+        cwd?: string;
+        env?: {
+            [key: string]: unknown;
+        };
+    };
+    path: {
+        /**
+         * Sandbox id.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/v1/sandboxes/{id}/processes';
+};
+
+export type StartProcessErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
+     */
+    429: Error;
+};
+
+export type StartProcessError = StartProcessErrors[keyof StartProcessErrors];
+
+export type StartProcessResponses = {
+    /**
+     * The call succeeded.
+     */
+    201: ProcessCreated;
+};
+
+export type StartProcessResponse = StartProcessResponses[keyof StartProcessResponses];
+
+export type SignalProcessData = {
+    body?: never;
+    path: {
+        /**
+         * Sandbox id.
+         */
+        id: string;
+        /**
+         * Process id from startProcess.
+         */
+        pid: string;
+    };
+    query?: {
+        /**
+         * TERM, KILL, INT, HUP, QUIT, USR1 or USR2. Default TERM.
+         */
+        signal?: string;
+    };
+    url: '/v1/sandboxes/{id}/processes/{pid}';
+};
+
+export type SignalProcessErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
+     */
+    429: Error;
+};
+
+export type SignalProcessError = SignalProcessErrors[keyof SignalProcessErrors];
+
+export type SignalProcessResponses = {
+    /**
+     * The call succeeded.
+     */
+    204: void;
+};
+
+export type SignalProcessResponse = SignalProcessResponses[keyof SignalProcessResponses];
+
+export type ReadProcessData = {
+    body?: never;
+    path: {
+        /**
+         * Sandbox id.
+         */
+        id: string;
+        /**
+         * Process id from startProcess.
+         */
+        pid: string;
+    };
+    query?: {
+        /**
+         * Byte of stdout to read from. Default 0.
+         */
+        stdout_offset?: number;
+        /**
+         * Byte of stderr to read from. Default 0.
+         */
+        stderr_offset?: number;
+    };
+    url: '/v1/sandboxes/{id}/processes/{pid}';
+};
+
+export type ReadProcessErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
+     */
+    429: Error;
+};
+
+export type ReadProcessError = ReadProcessErrors[keyof ReadProcessErrors];
+
+export type ReadProcessResponses = {
+    /**
+     * The call succeeded.
+     */
+    200: Process;
+};
+
+export type ReadProcessResponse = ReadProcessResponses[keyof ReadProcessResponses];
 
 export type PublishData = {
     body: {
@@ -1102,6 +1338,9 @@ export type ListTemplatesResponse = ListTemplatesResponses[keyof ListTemplatesRe
 
 export type CreateTemplateData = {
     body: {
+        credential?: {
+            [key: string]: unknown;
+        };
         disk_mb: number;
         egress_allow: Array<string>;
         image: string;
@@ -1111,6 +1350,7 @@ export type CreateTemplateData = {
         setup?: Array<string>;
         start?: Array<string>;
         ttl_seconds?: number;
+        user?: string;
         vcpus: number;
     };
     path?: never;

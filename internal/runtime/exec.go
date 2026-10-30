@@ -197,7 +197,7 @@ func (vm *VM) WriteFile(ctx context.Context, path string, r io.Reader) error {
 }
 
 // Resume sends the resume hook data and waits for the agent's answer.
-func (vm *VM) ResumeHooks(ctx context.Context, entropy []byte, unixNanos int64, hostname string, secrets map[string]string) error {
+func (vm *VM) ResumeHooks(ctx context.Context, entropy []byte, unixNanos int64, hostname string, secrets map[string]string, user string) error {
 	ac, err := vm.dialAgent(ctx)
 	if err != nil {
 		return err
@@ -209,6 +209,7 @@ func (vm *VM) ResumeHooks(ctx context.Context, entropy []byte, unixNanos int64, 
 		UnixNanos: unixNanos,
 		Hostname:  hostname,
 		Secrets:   secrets,
+		User:      user,
 	}); err != nil {
 		return err
 	}

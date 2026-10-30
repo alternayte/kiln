@@ -27,17 +27,30 @@ type eventView struct {
 	ToState   string    `json:"to_state,omitempty"`
 	Reason    string    `json:"reason,omitempty"`
 	At        time.Time `json:"at"`
+	// Template names the template of a build event. Phase and DurationMS say
+	// how long one step of a build or a restore took.
+	Template   string `json:"template,omitempty"`
+	Phase      string `json:"phase,omitempty"`
+	DurationMS *int64 `json:"duration_ms,omitempty"`
 }
 
 func eventJSON(e store.Event) eventView {
-	return eventView{
+	view := eventView{
 		ID:        e.ID,
 		SandboxID: e.SandboxID,
 		FromState: e.FromState,
 		ToState:   e.ToState,
 		Reason:    e.Reason,
 		At:        e.At,
+		Template:  e.Template,
+		Phase:     e.Phase,
 	}
+	// A phase can take no measurable time, and it still reports.
+	if e.Phase != "" {
+		ms := e.DurationMS
+		view.DurationMS = &ms
+	}
+	return view
 }
 
 // health reports the daemon's view of the host.

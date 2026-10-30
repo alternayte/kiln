@@ -1,6 +1,6 @@
 // Package network owns the host side of every microVM link: the TAP device,
 // the per-VM nftables chains and the resolver that answers only the names in a
-// template's allowlist. Guest addresses never vary; only the host side does.
+// sandbox's allowlist. Guest addresses never vary; only the host side does.
 package network
 
 import (
@@ -84,7 +84,7 @@ func markScript() string {
 }
 
 // Attach creates the TAP device, the resolver, the nftables chains and the
-// routing rule for one VM. The allowlist is the template's egress_allow.
+// routing rule for one VM. The allowlist is the egress policy of the VM.
 func (m *Manager) Attach(ctx context.Context, id string, allow []string) (*Attachment, error) {
 	if _, err := normalizeAllow(allow); err != nil {
 		return nil, err
@@ -532,13 +532,50 @@ func run(ctx context.Context, name string, args ...string) (string, error) {
 	return string(out), nil
 }
 
+// SetEgress replaces the allowlist of one live attachment. The address set
+// empties and every connection the guest opened ends, because repository code
+// holds such a connection open otherwise. A connection the host opened to a
+// published port stays.
+func (a *Attachment) SetEgress(ctx context.Context, allow []string) error {
+	names, err := normalizeAllow(allow)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.done || a.resolver == nil {
+		return fmt.Errorf("network: sandbox %s has no live link", a.ID)
+	}
+	if err := a.resolver.replaceAllow(ctx, names); err != nil {
+		return err
+	}
+	return a.cutGuestConnections(ctx)
+}
+
+// cutGuestConnections deletes the conntrack entries of the flows the guest
+// opened on this TAP. Every guest has one source address, so the firewall
+// mark names the sandbox. Without an entry the next packet of the flow is new
+// and meets the empty set.
+func (a *Attachment) cutGuestConnections(ctx context.Context) error {
+	_, err := run(ctx, "conntrack", "-D", "--orig-src", runtime.GuestIP, "--mark", strconv.Itoa(a.mark))
+	if err != nil && !strings.Contains(err.Error(), "0 flow entries have been deleted") {
+		return err
+	}
+	return nil
+}
+
 // ValidateAllow reports whether every entry is a hostname.
 func ValidateAllow(allow []string) error {
 	_, err := normalizeAllow(allow)
 	return err
 }
 
-// normalizeAllow lowercases names and rejects entries that are not hostnames.
+// wildcardPrefix marks an entry that matches every subdomain of a name, and
+// not the name itself.
+const wildcardPrefix = "*."
+
+// normalizeAllow lowercases names and rejects entries that are not hostnames
+// or the wildcard form of one.
 func normalizeAllow(names []string) (map[string]bool, error) {
 	out := make(map[string]bool, len(names))
 	for i, raw := range names {
@@ -546,7 +583,7 @@ func normalizeAllow(names []string) (map[string]bool, error) {
 		if name == "" {
 			return nil, fmt.Errorf("network: egress_allow[%d] is empty", i)
 		}
-		if !validHostname(name) {
+		if !validHostname(strings.TrimPrefix(name, wildcardPrefix)) {
 			return nil, fmt.Errorf("network: egress_allow[%d] %q is not a hostname", i, raw)
 		}
 		out[name] = true

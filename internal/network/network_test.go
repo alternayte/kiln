@@ -44,6 +44,34 @@ func dnsResponse(t *testing.T, question []byte, records []answer) []byte {
 	return msg
 }
 
+// A wildcard covers every depth of subdomain and never the name itself. The
+// rule is Factoree's, and a switch between providers must not change it.
+func TestResolverWildcardMatch(t *testing.T) {
+	names, err := normalizeAllow([]string{"pypi.org", "*.Example.com."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &resolver{allow: names}
+	for name, want := range map[string]bool{
+		"pypi.org":        true,
+		"a.pypi.org":      false,
+		"example.com":     false,
+		"a.example.com":   true,
+		"a.b.example.com": true,
+		"badexample.com":  false,
+		"com":             false,
+	} {
+		if got := r.allowed(name); got != want {
+			t.Errorf("allowed(%q) = %t, want %t", name, got, want)
+		}
+	}
+	for _, bad := range []string{"*", "*example.com", "*.", "a.*.example.com"} {
+		if _, err := normalizeAllow([]string{bad}); err == nil {
+			t.Errorf("normalizeAllow accepted %q", bad)
+		}
+	}
+}
+
 func TestQuestionParsesNormalQuery(t *testing.T) {
 	name, end, err := question(dnsQuery("pypi.org", dnsTypeA))
 	if err != nil {

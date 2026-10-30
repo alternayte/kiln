@@ -18,6 +18,7 @@ type Manifest struct {
 	DiskMB      int       `json:"disk_mb"`
 	EgressAllow []string  `json:"egress_allow"`
 	Setup       []string  `json:"setup,omitempty"`
+	User        string    `json:"user,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 

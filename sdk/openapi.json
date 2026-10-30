@@ -22,16 +22,25 @@
           "at": {
             "type": "string"
           },
+          "duration_ms": {
+            "type": "integer"
+          },
           "from_state": {
             "type": "string"
           },
           "id": {
             "type": "integer"
           },
+          "phase": {
+            "type": "string"
+          },
           "reason": {
             "type": "string"
           },
           "sandbox_id": {
+            "type": "string"
+          },
+          "template": {
             "type": "string"
           },
           "to_state": {
@@ -87,6 +96,52 @@
         },
         "type": "object"
       },
+      "Process": {
+        "properties": {
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "more": {
+            "type": "boolean"
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "stderr": {
+            "type": "string"
+          },
+          "stderr_lost": {
+            "type": "integer"
+          },
+          "stderr_offset": {
+            "type": "integer"
+          },
+          "stdout": {
+            "type": "string"
+          },
+          "stdout_lost": {
+            "type": "integer"
+          },
+          "stdout_offset": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "ProcessCreated": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "Published": {
         "properties": {
           "port": {
@@ -125,6 +180,12 @@
         "properties": {
           "created_at": {
             "type": "string"
+          },
+          "egress_allow": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "env_keys": {
             "items": {
@@ -243,6 +304,9 @@
           "ttl_seconds": {
             "type": "integer"
           },
+          "user": {
+            "type": "string"
+          },
           "vcpus": {
             "type": "integer"
           }
@@ -341,7 +405,7 @@
   "info": {
     "description": "Isolated Linux microVMs on one host, created from OCI images and forked into copies.",
     "title": "Kiln",
-    "version": "0.8.0"
+    "version": "0.9.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1039,6 +1103,106 @@
         "summary": "Read one sandbox with its published ports."
       }
     },
+    "/v1/sandboxes/{id}/egress": {
+      "put": {
+        "operationId": "setEgress",
+        "parameters": [
+          {
+            "description": "Sandbox id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "egress_allow": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "egress_allow"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sandbox"
+                }
+              }
+            },
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised."
+          }
+        },
+        "summary": "Replace the egress policy of one sandbox. The answer comes after the host swaps the list and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it."
+      }
+    },
     "/v1/sandboxes/{id}/exec": {
       "post": {
         "operationId": "exec",
@@ -1425,6 +1589,304 @@
           }
         },
         "summary": "Snapshot a running sandbox and restore several copies of it."
+      }
+    },
+    "/v1/sandboxes/{id}/processes": {
+      "post": {
+        "operationId": "startProcess",
+        "parameters": [
+          {
+            "description": "Sandbox id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "cmd": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "cwd": {
+                    "type": "string"
+                  },
+                  "env": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "cmd"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessCreated"
+                }
+              }
+            },
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised."
+          }
+        },
+        "summary": "Start a detached process and answer once it runs. It has no deadline, it outlives this request, and the sandbox does not sleep while it runs."
+      }
+    },
+    "/v1/sandboxes/{id}/processes/{pid}": {
+      "delete": {
+        "operationId": "signalProcess",
+        "parameters": [
+          {
+            "description": "Sandbox id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Process id from startProcess.",
+            "in": "path",
+            "name": "pid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "TERM, KILL, INT, HUP, QUIT, USR1 or USR2. Default TERM.",
+            "in": "query",
+            "name": "signal",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised."
+          }
+        },
+        "summary": "Send a signal to the process group of a detached process. A process that has ended takes no signal, and the call still succeeds."
+      },
+      "get": {
+        "operationId": "readProcess",
+        "parameters": [
+          {
+            "description": "Sandbox id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Process id from startProcess.",
+            "in": "path",
+            "name": "pid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Byte of stdout to read from. Default 0.",
+            "in": "query",
+            "name": "stdout_offset",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Byte of stderr to read from. Default 0.",
+            "in": "query",
+            "name": "stderr_offset",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Process"
+                }
+              }
+            },
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised."
+          }
+        },
+        "summary": "Read the state of a detached process and its output after each offset. One answer holds at most 1 MiB of each stream, the guest keeps the last 8 MiB, and the answer names the next offsets and the bytes lost."
       }
     },
     "/v1/sandboxes/{id}/publish": {
@@ -2094,6 +2556,10 @@
             "application/json": {
               "schema": {
                 "properties": {
+                  "credential": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
                   "disk_mb": {
                     "type": "integer"
                   },
@@ -2129,6 +2595,9 @@
                   },
                   "ttl_seconds": {
                     "type": "integer"
+                  },
+                  "user": {
+                    "type": "string"
                   },
                   "vcpus": {
                     "type": "integer"

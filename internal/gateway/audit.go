@@ -28,6 +28,9 @@ type Entry struct {
 	Status   int
 	Duration time.Duration
 	At       time.Time
+	// Credential records that a build carried a registry login. Its value
+	// never reaches this table.
+	Credential bool
 }
 
 // EnsureSchema creates the table. The gateway owns this store, so it creates
@@ -54,8 +57,19 @@ func (a *Audit) EnsureSchema(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, err = a.DB.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS kiln_audit_tenant ON kiln_audit(tenant_id, id)`)
-	return err
+	if _, err = a.DB.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS kiln_audit_tenant ON kiln_audit(tenant_id, id)`); err != nil {
+		return err
+	}
+	// A table from an older gateway has no credential column. SQLite has no
+	// ADD COLUMN IF NOT EXISTS, so it reports the duplicate instead.
+	add := `ALTER TABLE kiln_audit ADD COLUMN credential INTEGER NOT NULL DEFAULT 0`
+	if a.Driver == "postgres" {
+		add = `ALTER TABLE kiln_audit ADD COLUMN IF NOT EXISTS credential INTEGER NOT NULL DEFAULT 0`
+	}
+	if _, err = a.DB.ExecContext(ctx, add); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return err
+	}
+	return nil
 }
 
 // Record writes one row. A failed write is logged and never fails the call
@@ -65,13 +79,20 @@ func (a *Audit) Record(ctx context.Context, e Entry) {
 		return
 	}
 	_, err := a.DB.ExecContext(context.WithoutCancel(ctx), a.rebind(`INSERT INTO kiln_audit (
-		tenant_id, user_id, key_id, method, path, status, duration_ms, at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
+		tenant_id, user_id, key_id, method, path, status, duration_ms, at, credential
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		e.TenantID, nullString(e.UserID), nullString(e.KeyID), e.Method, e.Path,
-		e.Status, e.Duration.Milliseconds(), e.At.Unix())
+		e.Status, e.Duration.Milliseconds(), e.At.Unix(), credentialFlag(e.Credential))
 	if err != nil {
 		log.Printf("gateway: audit: %v", err)
 	}
+}
+
+func credentialFlag(present bool) int {
+	if present {
+		return 1
+	}
+	return 0
 }
 
 func nullString(s string) any {

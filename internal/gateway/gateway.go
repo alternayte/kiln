@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -131,6 +132,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	start := time.Now()
+	credential := carriesCredential(r)
 	recorder := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -155,16 +157,41 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request) {
 	if s.Audit != nil {
 		p := authall.PrincipalFrom(r.Context())
 		s.Audit.Record(r.Context(), Entry{
-			TenantID: tenant,
-			UserID:   userID(p),
-			KeyID:    keyID(p),
-			Method:   r.Method,
-			Path:     r.URL.Path,
-			Status:   recorder.status,
-			Duration: time.Since(start),
-			At:       time.Now().UTC(),
+			TenantID:   tenant,
+			UserID:     userID(p),
+			KeyID:      keyID(p),
+			Method:     r.Method,
+			Path:       r.URL.Path,
+			Status:     recorder.status,
+			Duration:   time.Since(start),
+			At:         time.Now().UTC(),
+			Credential: credential,
 		})
 	}
+}
+
+// carriesCredential reports whether a template build carries a registry login,
+// and leaves the body for the host to read. The value goes no further than
+// this function.
+func carriesCredential(r *http.Request) bool {
+	if r.Method != http.MethodPost || r.URL.Path != "/v1/templates" || r.Body == nil {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	r.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(body), r.Body), r.Body}
+	if err != nil {
+		return false
+	}
+	var probe struct {
+		Credential json.RawMessage `json:"credential"`
+	}
+	if json.Unmarshal(body, &probe) != nil {
+		return false
+	}
+	return len(probe.Credential) > 0 && string(probe.Credential) != "null"
 }
 
 func userID(p *authall.Principal) string {

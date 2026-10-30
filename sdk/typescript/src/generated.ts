@@ -102,6 +102,11 @@ export class GeneratedClient {
     return this.json("GET", `/v1/sandboxes/${encodeURIComponent(String(id))}`);
   }
 
+  /** Replace the egress policy of one sandbox. The answer comes after the host swaps the list and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it. */
+  setEgress(id: string, body: { egress_allow: string[] }): Promise<unknown> {
+    return this.json("PUT", `/v1/sandboxes/${encodeURIComponent(String(id))}/egress`, body);
+  }
+
   /** Run a command inside a sandbox. Accept text/event-stream to read the output as it runs. */
   exec(id: string, body: { cmd: string[]; cwd?: string; env?: Record<string, unknown>; timeout_seconds?: number }): Promise<unknown> {
     return this.json("POST", `/v1/sandboxes/${encodeURIComponent(String(id))}/exec`, body);
@@ -110,6 +115,28 @@ export class GeneratedClient {
   /** Snapshot a running sandbox and restore several copies of it. */
   fork(id: string, body: { count: number; allow_secret_fork?: boolean }): Promise<unknown> {
     return this.json("POST", `/v1/sandboxes/${encodeURIComponent(String(id))}/fork`, body);
+  }
+
+  /** Start a detached process and answer once it runs. It has no deadline, it outlives this request, and the sandbox does not sleep while it runs. */
+  startProcess(id: string, body: { cmd: string[]; cwd?: string; env?: Record<string, unknown> }): Promise<unknown> {
+    return this.json("POST", `/v1/sandboxes/${encodeURIComponent(String(id))}/processes`, body);
+  }
+
+  /** Send a signal to the process group of a detached process. A process that has ended takes no signal, and the call still succeeds. */
+  signalProcess(id: string, pid: string, query?: { signal?: string }): Promise<void> {
+    const search = new URLSearchParams();
+    if (query?.signal !== undefined) search.set("signal", String(query.signal));
+    const suffix = search.size > 0 ? `?${search}` : "";
+    return this.json("DELETE", `/v1/sandboxes/${encodeURIComponent(String(id))}/processes/${encodeURIComponent(String(pid))}` + suffix);
+  }
+
+  /** Read the state of a detached process and its output after each offset. One answer holds at most 1 MiB of each stream, the guest keeps the last 8 MiB, and the answer names the next offsets and the bytes lost. */
+  readProcess(id: string, pid: string, query?: { stdout_offset?: number; stderr_offset?: number }): Promise<unknown> {
+    const search = new URLSearchParams();
+    if (query?.stdout_offset !== undefined) search.set("stdout_offset", String(query.stdout_offset));
+    if (query?.stderr_offset !== undefined) search.set("stderr_offset", String(query.stderr_offset));
+    const suffix = search.size > 0 ? `?${search}` : "";
+    return this.json("GET", `/v1/sandboxes/${encodeURIComponent(String(id))}/processes/${encodeURIComponent(String(pid))}` + suffix);
   }
 
   /** Serve a guest port on a public hostname. */
@@ -153,7 +180,7 @@ export class GeneratedClient {
   }
 
   /** Build a template from an OCI image. The build runs after the answer. */
-  createTemplate(body: { name: string; image: string; vcpus: number; memory_mb: number; disk_mb: number; egress_allow: string[]; setup?: string[]; ttl_seconds?: number; start?: string[]; port?: number }): Promise<unknown> {
+  createTemplate(body: { name: string; image: string; vcpus: number; memory_mb: number; disk_mb: number; egress_allow: string[]; setup?: string[]; ttl_seconds?: number; start?: string[]; port?: number; user?: string; credential?: Record<string, unknown> }): Promise<unknown> {
     return this.json("POST", "/v1/templates", body);
   }
 

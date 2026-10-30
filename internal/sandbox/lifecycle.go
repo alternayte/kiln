@@ -184,7 +184,12 @@ func (m *Manager) enforce(id string) {
 	switch row.State {
 	case store.SandboxRunning:
 		if row.Lifecycle == store.LifecycleEphemeral {
-			if ttlDue || !now.Before(row.LastActiveAt.Add(time.Duration(row.IdleSeconds)*time.Second)) {
+			idle := !now.Before(row.LastActiveAt.Add(time.Duration(row.IdleSeconds) * time.Second))
+			if !ttlDue && idle && m.processesRunning(ctx, row) {
+				m.touch(ctx, row)
+				return
+			}
+			if ttlDue || idle {
 				if err := m.destroyLocked(ctx, id); err != nil {
 					log.Printf("sandbox: %s: idle destroy: %v", id, err)
 				}
@@ -198,6 +203,10 @@ func (m *Manager) enforce(id string) {
 				return
 			}
 			if !now.Before(row.LastActiveAt.Add(time.Duration(row.IdleSeconds) * time.Second)) {
+				if m.processesRunning(ctx, row) {
+					m.touch(ctx, row)
+					return
+				}
 				if err := m.sleepLocked(ctx, id); err != nil {
 					log.Printf("sandbox: %s: idle sleep: %v", id, err)
 					m.arm(row)

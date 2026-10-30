@@ -5,13 +5,20 @@ hostname.
 
 Pin this Action to a tag, as the example below does. Inside the Kiln
 repository itself, `./.github/actions/preview` is the local path. You build and push the image; Kiln builds a template from it, runs
-one sandbox, publishes the port, and comments the link.
+one sandbox, publishes the port, and comments the link. The pull request also
+shows the preview under "Deployments", with a "View deployment" button.
 
-## Once, per tenant
+## The registry login
 
-Store the credential the host pulls your image with. The host pulls; the
-sandbox never does, because a preview runs the pull request's code and that
-code must not hold the token.
+`registry-token: ${{ github.token }}` pulls your image for this build. The host
+holds the token in memory for the build and stores nothing. The sandbox never
+holds it, because a preview runs the pull request's code. Two repositories in
+one tenant can build at the same moment, because each build carries its own
+login. A public image needs none of this.
+
+`POST /v1/registries` is the choice for a long-lived token, such as a bot's
+token shared by every build of a tenant. Do not store the job token this way:
+GitHub revokes it when the job ends.
 
 ```sh
 curl -X POST "$KILN_URL/v1/registries" \
@@ -21,9 +28,8 @@ curl -X POST "$KILN_URL/v1/registries" \
 ```
 
 The token is never returned again. `GET /v1/registries` lists the hostname
-and the username only.
-
-A public image needs none of this.
+and the username only. `registry-token` wins over a stored credential on the
+same registry.
 
 ## The workflow
 
@@ -36,6 +42,8 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  deployments: write
+  packages: read
 
 jobs:
   preview:
@@ -47,16 +55,20 @@ jobs:
           # checked out by SHA and never trusted to change the workflow.
           ref: ${{ github.event.pull_request.head.sha }}
 
-      # Build and push your image here, tagged with the commit SHA.
+      # Build and push your image here, tagged with the commit SHA. To cache
+      # the build, set these on docker/build-push-action:
+      #   cache-from: type=gha
+      #   cache-to: type=gha,mode=max
 
       # Pin a tag. @main tracks every push to Kiln, fixes and mistakes
       # alike, and a preview that breaks on somebody else's commit is worse
       # than one that lags a release.
-      - uses: alternayte/kiln/.github/actions/preview@v0.8.0
+      - uses: alternayte/kiln/.github/actions/preview@v0.9.0
         with:
           url: ${{ vars.KILN_URL }}
           api-key: ${{ secrets.KILN_API_KEY }}
           image: ghcr.io/${{ github.repository }}:${{ github.event.pull_request.head.sha }}
+          registry-token: ${{ github.token }}
           port: "8000"
           start: /app/server --port 8000
           egress-allow: api.example.com
@@ -114,6 +126,18 @@ A pull request from a branch in your own repository needs no label.
 A fork's preview never gets `env`. The label approves the code, not what the
 code can reach, and a value in the sandbox can leave through its own
 published port. The log says so when `env` was set.
+
+## Deployments
+
+Each commit creates a GitHub deployment for its SHA in the environment
+`preview/pr-<n>`. It reports `in_progress`, then `success` with the preview URL
+in `environment_url`, or `failure`. A newer commit sets the older deployments
+to `inactive`, and so does closing the pull request. Tools that read the
+`deployment_status` event, as they do for Vercel and Netlify, read this one.
+
+A workflow with no `deployments: write` still gets its preview and its comment,
+and its log holds a warning. The environment stays in the repository settings
+after the pull request closes, because `GITHUB_TOKEN` cannot delete one.
 
 ## What it leaves behind
 

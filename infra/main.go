@@ -93,7 +93,7 @@ func checkScript(remoteDir string) string {
 	return fmt.Sprintf(`set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update -qq
-sudo apt-get install -y -qq iproute2 nftables e2fsprogs sqlite3 curl ca-certificates tar gzip jq git make busybox-static
+sudo apt-get install -y -qq iproute2 nftables conntrack e2fsprogs sqlite3 curl ca-certificates tar gzip jq git make busybox-static
 if ! command -v just >/dev/null 2>&1; then
   sudo apt-get install -y -qq just || curl -fsSL https://just.systems/install.sh | sudo bash -s -- --to /usr/local/bin
 fi

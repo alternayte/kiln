@@ -52,6 +52,8 @@ type sandboxResponse struct {
 	Published    []publishedResponse `json:"published"`
 	// EnvKeys names the env keys. The values are never returned.
 	EnvKeys []string `json:"env_keys"`
+	// EgressAllow is the policy in force on this sandbox.
+	EgressAllow []string `json:"egress_allow"`
 }
 
 type execResponse struct {
@@ -84,6 +86,10 @@ func (s *Server) sandboxJSON(ctx context.Context, sb store.Sandbox) (sandboxResp
 	}
 	if out.EnvKeys == nil {
 		out.EnvKeys = []string{}
+	}
+	out.EgressAllow, _ = s.Sandboxes.EgressOf(ctx, sb)
+	if out.EgressAllow == nil {
+		out.EgressAllow = []string{}
 	}
 	rows, err := s.Sandboxes.Published(ctx, sb.ID)
 	if err != nil {

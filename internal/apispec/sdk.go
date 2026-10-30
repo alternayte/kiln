@@ -81,7 +81,16 @@ export class GeneratedClient {
 		}
 		b.WriteString("\n  /** " + op.Summary + " */\n")
 		fmt.Fprintf(&b, "  %s(%s): Promise<%s> {\n", op.ID, tsArgs(op), tsReturn(op))
-		fmt.Fprintf(&b, "    return this.json(%q, %s%s);\n", op.Method, tsPath(op), tsBodyArg(op))
+		if len(op.Query) > 0 {
+			b.WriteString("    const search = new URLSearchParams();\n")
+			for _, q := range op.Query {
+				fmt.Fprintf(&b, "    if (query?.%s !== undefined) search.set(%q, String(query.%s));\n", q.Name, q.Name, q.Name)
+			}
+			b.WriteString("    const suffix = search.size > 0 ? `?${search}` : \"\";\n")
+			fmt.Fprintf(&b, "    return this.json(%q, %s + suffix%s);\n", op.Method, tsPath(op), tsBodyArg(op))
+		} else {
+			fmt.Fprintf(&b, "    return this.json(%q, %s%s);\n", op.Method, tsPath(op), tsBodyArg(op))
+		}
 		b.WriteString("  }\n")
 	}
 	b.WriteString("}\n")
@@ -95,6 +104,7 @@ func Python() string {
 	b.WriteString("\"\"\"Generated from internal/apispec. Do not edit.\n\nRun: just sdk\n\"\"\"\n\n")
 	b.WriteString(`from __future__ import annotations
 
+import urllib.parse
 from typing import Any, Optional
 
 import httpx
@@ -148,6 +158,15 @@ class GeneratedClient:
 		}
 		fmt.Fprintf(&b, "\n    def %s(self%s) -> Any:\n", snake(op.ID), pyArgs(op))
 		fmt.Fprintf(&b, "        \"\"\"%s\"\"\"\n", op.Summary)
+		if len(op.Query) > 0 {
+			b.WriteString("        query = urllib.parse.urlencode({k: v for k, v in {\n")
+			for _, q := range op.Query {
+				fmt.Fprintf(&b, "            %q: %s,\n", q.Name, snake(q.Name))
+			}
+			b.WriteString("        }.items() if v is not None})\n")
+			fmt.Fprintf(&b, "        return self._json(%q, %s + (\"?\" + query if query else \"\"))\n", op.Method, pyPath(op))
+			continue
+		}
 		if len(op.Body) > 0 {
 			b.WriteString("        body = {k: v for k, v in {\n")
 			for _, f := range op.Body {
@@ -179,6 +198,13 @@ func tsArgs(op Operation) string {
 			fields = append(fields, fmt.Sprintf("%s%s: %s", f.Name, optional, tsType(f)))
 		}
 		args = append(args, "body: { "+strings.Join(fields, "; ")+" }")
+	}
+	if len(op.Query) > 0 {
+		var fields []string
+		for _, q := range op.Query {
+			fields = append(fields, fmt.Sprintf("%s?: %s", q.Name, tsType(q)))
+		}
+		args = append(args, "query?: { "+strings.Join(fields, "; ")+" }")
 	}
 	return strings.Join(args, ", ")
 }
@@ -238,6 +264,9 @@ func pyArgs(op Operation) string {
 			continue
 		}
 		optional += fmt.Sprintf(", %s: Optional[%s] = None", snake(f.Name), pyType(f))
+	}
+	for _, q := range op.Query {
+		optional += fmt.Sprintf(", %s: Optional[%s] = None", snake(q.Name), pyType(q))
 	}
 	return strings.Join(args, "") + required + optional
 }

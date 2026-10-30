@@ -43,7 +43,24 @@ type BuildRequest struct {
 	// Start runs the application, and StartPort is the port it listens on.
 	Start     []string
 	StartPort int
+	// User is who everything a caller asks for runs as. Setup stays root,
+	// because the image and its setup need it.
+	User string
+	// Credential pulls the images of this build. It lives in memory for the
+	// build and reaches no row, no manifest, no event and no log.
+	Credential *Credential
 }
+
+// Credential is the registry login of one build. The registry is the host of
+// the image reference.
+type Credential struct {
+	Username string
+	Token    string
+}
+
+// userPattern is a user name or a numeric id, as an image's passwd file holds
+// it.
+var userPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$`)
 
 // InvalidError reports a request that cannot be accepted.
 type InvalidError struct {
@@ -94,6 +111,17 @@ func (r BuildRequest) Validate() error {
 	}
 	if r.StartPort < 0 || r.StartPort > 65535 {
 		return invalidf("port must be between 1 and 65535")
+	}
+	if r.User != "" && !userPattern.MatchString(r.User) {
+		return invalidf("user %q must match %s", r.User, userPattern)
+	}
+	if r.Credential != nil {
+		if r.Credential.Username == "" || r.Credential.Token == "" {
+			return invalidf("credential needs a username and a token")
+		}
+		if _, err := withBuildCredential(nil, r.Image, r.Credential); err != nil {
+			return &InvalidError{Message: err.Error()}
+		}
 	}
 	return nil
 }
@@ -174,6 +202,7 @@ func (m *Manager) Start(ctx context.Context, req BuildRequest) error {
 		TTLSeconds:  req.TTLSeconds,
 		Start:       req.Start,
 		StartPort:   req.StartPort,
+		User:        req.User,
 	}
 	if m.IsBuilding(buildKey(ctx, req.Name)) {
 		return store.ErrConflict
@@ -190,6 +219,7 @@ func (m *Manager) Start(ctx context.Context, req BuildRequest) error {
 		ToState:   store.TemplateBuilding,
 		Reason:    "build started",
 		At:        now,
+		Template:  req.Name,
 	}); err != nil {
 		// The build itself matters more than its first event.
 		log.Printf("template: %s: start event: %v", req.Name, err)
@@ -301,6 +331,7 @@ func (m *Manager) build(ctx context.Context, req BuildRequest) {
 		ToState:   state,
 		Reason:    reason,
 		At:        now,
+		Template:  req.Name,
 	}); eerr != nil {
 		log.Printf("template: %s: event: %v", req.Name, eerr)
 	}
@@ -322,8 +353,11 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 	if err != nil {
 		return err
 	}
-	builder.Credentials = creds
-	imported, err := builder.Import(ctx, ImportSpec{Ref: req.Image, RootfsPath: rootfs, SizeMB: req.DiskMB})
+	if builder.Credentials, err = withBuildCredential(creds, req.Image, req.Credential); err != nil {
+		return err
+	}
+	phase := func(name string, began time.Time, err error) { m.phaseEvent(ctx, req.Name, name, began, err) }
+	imported, err := builder.Import(ctx, ImportSpec{Ref: req.Image, RootfsPath: rootfs, SizeMB: req.DiskMB, Phase: phase})
 	if err != nil {
 		return err
 	}
@@ -331,8 +365,10 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 		return err
 	}
 
+	began := time.Now()
 	att, err := m.Network.Attach(ctx, m.buildVMID(ctx, req.Name, "s"), req.EgressAllow)
 	if err != nil {
+		phase("setup_boot", began, err)
 		return err
 	}
 	defer func() {
@@ -357,9 +393,56 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 		VsockPort:      guestproto.Port,
 		TAPName:        att.TAPName,
 	})
+	phase("setup_boot", began, err)
 	if err != nil {
 		return err
 	}
+	began = time.Now()
+	if err := m.runSetup(ctx, setupVM, req); err != nil {
+		phase("setup", began, err)
+		return err
+	}
+	phase("setup", began, nil)
+
+	// The snapshot boot attaches the finished rootfs read-only and a writable
+	// slot for a sandbox overlay. The snapshot then carries both drives, and
+	// the rootfs keeps its read-only feature for every restore.
+	began = time.Now()
+	overlay := filepath.Join(dir, "overlay.ext4")
+	snapVM, err := m.bootForSnapshot(ctx, req, rootfs, overlay, att.TAPName)
+	phase("snapshot_boot", began, err)
+	if err != nil {
+		return err
+	}
+	began = time.Now()
+	if _, err := m.Runtime.Snapshot(ctx, snapVM, dir); err != nil {
+		phase("snapshot", began, err)
+		_ = m.stopVM(ctx, snapVM)
+		return err
+	}
+	if err := m.stopVM(ctx, snapVM); err != nil {
+		phase("snapshot", began, err)
+		return err
+	}
+	phase("snapshot", began, nil)
+	_ = os.Remove(overlay)
+	return writeManifest(dir, Manifest{
+		Name:        req.Name,
+		ImageRef:    req.Image,
+		ImageDigest: imported.Digest,
+		VCPUs:       req.VCPUs,
+		MemoryMB:    req.MemoryMB,
+		DiskMB:      req.DiskMB,
+		EgressAllow: req.EgressAllow,
+		Setup:       req.Setup,
+		User:        req.User,
+		CreatedAt:   m.now(),
+	})
+}
+
+// runSetup runs the setup commands as root, checks that the template user
+// exists once they have run, and stops the VM.
+func (m *Manager) runSetup(ctx context.Context, setupVM *runtime.VM, req BuildRequest) error {
 	for i, cmd := range req.Setup {
 		res, execErr := setupVM.Exec(ctx, runtime.ExecRequest{
 			Cmd:            []string{"sh", "-c", cmd},
@@ -379,26 +462,30 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 			return err
 		}
 	}
-	if err := m.stopVM(ctx, setupVM); err != nil {
-		return err
+	// A sandbox from a template with no such user cannot run anything.
+	if req.User != "" {
+		if err := setupVM.CheckUser(ctx, req.User); err != nil {
+			_ = m.stopVM(ctx, setupVM)
+			return fmt.Errorf("user %q: %w", req.User, err)
+		}
 	}
+	return m.stopVM(ctx, setupVM)
+}
 
-	// The snapshot boot attaches the finished rootfs read-only and a writable
-	// slot for a sandbox overlay. The snapshot then carries both drives, and
-	// the rootfs keeps its read-only feature for every restore.
-	overlay := filepath.Join(dir, "overlay.ext4")
+// bootForSnapshot makes the empty overlay slot and boots the finished rootfs.
+func (m *Manager) bootForSnapshot(ctx context.Context, req BuildRequest, rootfs, overlay, tap string) (*runtime.VM, error) {
 	overlayFile, err := os.OpenFile(overlay, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := overlayFile.Truncate(int64(req.DiskMB) << 20); err != nil {
 		overlayFile.Close()
-		return err
+		return nil, err
 	}
 	if err := overlayFile.Close(); err != nil {
-		return err
+		return nil, err
 	}
-	snapVM, err := m.Runtime.Start(ctx, runtime.Spec{
+	return m.Runtime.Start(ctx, runtime.Spec{
 		ID:             m.buildVMID(ctx, req.Name, "n"),
 		KernelPath:     m.KernelPath,
 		RootfsPath:     rootfs,
@@ -408,30 +495,25 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 		MemoryMiB:      req.MemoryMB,
 		VsockCID:       m.allocCID(),
 		VsockPort:      guestproto.Port,
-		TAPName:        att.TAPName,
+		TAPName:        tap,
 	})
-	if err != nil {
-		return err
+}
+
+// phaseEvent records how long one step of a build took. A failed step carries
+// its error, so a failed build shows where it stopped.
+func (m *Manager) phaseEvent(ctx context.Context, name, phase string, began time.Time, failure error) {
+	event := store.Event{
+		Template:   name,
+		Phase:      phase,
+		DurationMS: time.Since(began).Milliseconds(),
+		At:         m.now(),
 	}
-	if _, err := m.Runtime.Snapshot(ctx, snapVM, dir); err != nil {
-		_ = m.stopVM(ctx, snapVM)
-		return err
+	if failure != nil {
+		event.Reason = failure.Error()
 	}
-	if err := m.stopVM(ctx, snapVM); err != nil {
-		return err
+	if err := m.Store.AppendEvent(context.WithoutCancel(ctx), event); err != nil {
+		log.Printf("template: %s: phase event: %v", name, err)
 	}
-	_ = os.Remove(overlay)
-	return writeManifest(dir, Manifest{
-		Name:        req.Name,
-		ImageRef:    req.Image,
-		ImageDigest: imported.Digest,
-		VCPUs:       req.VCPUs,
-		MemoryMB:    req.MemoryMB,
-		DiskMB:      req.DiskMB,
-		EgressAllow: req.EgressAllow,
-		Setup:       req.Setup,
-		CreatedAt:   m.now(),
-	})
 }
 
 // stopVM stops one build VM and reports its error.

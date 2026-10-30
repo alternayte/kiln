@@ -178,11 +178,11 @@ func (s *sqliteStore) StartTemplateBuild(ctx context.Context, t Template) error 
 	case errors.Is(err, sql.ErrNoRows):
 		if _, err := tx.ExecContext(ctx, `INSERT INTO templates (
 			tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-			egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			tenantOf(ctx), t.Name, t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
 			encoded, t.State, nullString(t.Error), t.CreatedAt.Unix(), nullIntPtr(t.TTLSeconds),
-			nullString(encodeStart(t.Start)), nullInt(t.StartPort),
+			nullString(encodeStart(t.Start)), nullInt(t.StartPort), nullString(t.User),
 		); err != nil {
 			return err
 		}
@@ -194,11 +194,11 @@ func (s *sqliteStore) StartTemplateBuild(ctx context.Context, t Template) error 
 		if _, err := tx.ExecContext(ctx, `UPDATE templates SET
 			image_ref = ?, image_digest = ?, vcpus = ?, memory_mb = ?, disk_mb = ?,
 			egress_allow = ?, state = ?, error = NULL, created_at = ?, ttl_seconds = ?,
-			start_cmd = ?, start_port = ?
+			start_cmd = ?, start_port = ?, run_as = ?
 		WHERE tenant_id = ? AND name = ?`,
 			t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
 			encoded, t.State, t.CreatedAt.Unix(), nullIntPtr(t.TTLSeconds),
-			nullString(encodeStart(t.Start)), nullInt(t.StartPort), tenantOf(ctx), t.Name,
+			nullString(encodeStart(t.Start)), nullInt(t.StartPort), nullString(t.User), tenantOf(ctx), t.Name,
 		); err != nil {
 			return err
 		}
@@ -245,7 +245,7 @@ func (s *sqliteStore) GetTemplate(ctx context.Context, name string) (Template, e
 	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port
+		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as
 	FROM templates WHERE name = ?`+clause, append([]any{name}, args...)...)
 	t, err := scanTemplate(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -258,7 +258,7 @@ func (s *sqliteStore) ListTemplates(ctx context.Context) ([]Template, error) {
 	clause, args := scope(ctx, "tenant_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port
+		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as
 	FROM templates WHERE 1 = 1`+clause+` ORDER BY name`, args...)
 	if err != nil {
 		return nil, err
@@ -383,14 +383,15 @@ func encodeEgress(egress []string) (string, error) {
 
 func (s *sqliteStore) AppendEvent(ctx context.Context, e Event) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO events (
-		tenant_id, sandbox_id, from_state, to_state, reason, at
-	) VALUES (?, ?, ?, ?, ?, ?)`,
-		tenantOf(ctx), nullString(e.SandboxID), nullString(e.FromState), nullString(e.ToState), nullString(e.Reason), e.At.Unix())
+		tenant_id, sandbox_id, from_state, to_state, reason, at, template_name, phase, duration_ms
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		tenantOf(ctx), nullString(e.SandboxID), nullString(e.FromState), nullString(e.ToState), nullString(e.Reason), e.At.Unix(),
+		nullString(e.Template), nullString(e.Phase), e.DurationMS)
 	return err
 }
 
 func (s *sqliteStore) ListEvents(ctx context.Context, sandboxID string) ([]Event, error) {
-	query := `SELECT id, sandbox_id, from_state, to_state, reason, at FROM events`
+	query := `SELECT id, sandbox_id, from_state, to_state, reason, at, template_name, phase, duration_ms FROM events`
 	var args []any
 	if sandboxID == "" {
 		query += ` WHERE sandbox_id IS NULL`
@@ -408,7 +409,7 @@ func (s *sqliteStore) ListEvents(ctx context.Context, sandboxID string) ([]Event
 // limit of them.
 func (s *sqliteStore) ListEventsSince(ctx context.Context, afterID int64, limit int) ([]Event, error) {
 	clause, args := scope(ctx, "tenant_id")
-	query := `SELECT id, sandbox_id, from_state, to_state, reason, at FROM events WHERE id > ?` + clause + ` ORDER BY id`
+	query := `SELECT id, sandbox_id, from_state, to_state, reason, at, template_name, phase, duration_ms FROM events WHERE id > ?` + clause + ` ORDER BY id`
 	args = append([]any{afterID}, args...)
 	if limit > 0 {
 		query += ` LIMIT ?`
@@ -443,12 +444,16 @@ func (s *sqliteStore) queryEvents(ctx context.Context, query string, args ...any
 			to    sql.NullString
 			why   sql.NullString
 			atSec int64
+			tpl   sql.NullString
+			phase sql.NullString
+			ms    sql.NullInt64
 		)
-		if err := rows.Scan(&e.ID, &sid, &from, &to, &why, &atSec); err != nil {
+		if err := rows.Scan(&e.ID, &sid, &from, &to, &why, &atSec, &tpl, &phase, &ms); err != nil {
 			return nil, err
 		}
 		e.SandboxID, e.FromState, e.ToState, e.Reason = sid.String, from.String, to.String, why.String
 		e.At = time.Unix(atSec, 0).UTC()
+		e.Template, e.Phase, e.DurationMS = tpl.String, phase.String, ms.Int64
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -469,10 +474,11 @@ func scanTemplate(row scanner) (Template, error) {
 		ttl     sql.NullInt64
 		start   sql.NullString
 		port    sql.NullInt64
+		runAs   sql.NullString
 	)
 	if err := row.Scan(
 		&t.TenantID, &t.Name, &t.ImageRef, &t.ImageDigest, &t.VCPUs, &t.MemoryMB, &t.DiskMB,
-		&egress, &t.State, &message, &created, &ttl, &start, &port,
+		&egress, &t.State, &message, &created, &ttl, &start, &port, &runAs,
 	); err != nil {
 		return Template{}, err
 	}
@@ -494,6 +500,7 @@ func scanTemplate(row scanner) (Template, error) {
 		}
 	}
 	t.StartPort = int(port.Int64)
+	t.User = runAs.String
 	return t, nil
 }
 
@@ -546,6 +553,10 @@ func (s *sqliteStore) CreateSandbox(ctx context.Context, sb Sandbox) (Sandbox, e
 		return Sandbox{}, err
 	}
 	envKeys := string(encoded)
+	egress, err := encodeOptionalEgress(sb.EgressAllow)
+	if err != nil {
+		return Sandbox{}, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Sandbox{}, err
@@ -580,12 +591,12 @@ func (s *sqliteStore) CreateSandbox(ctx context.Context, sb Sandbox) (Sandbox, e
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO sandboxes (
 		id, tenant_id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
-		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, secret_bearing, env_keys
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, secret_bearing, env_keys, egress_allow
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sb.ID, tenantOf(ctx), sb.TemplateName, nullString(sb.SnapshotID), sb.Lifecycle, sb.State,
 		nullIntPtr(sb.TTLSeconds), sb.IdleSeconds, sb.LastActiveAt.Unix(),
 		nullString(sb.TapName), nullIntPtr(cid), nullInt(sb.PID), sb.Metadata, sb.CreatedAt.Unix(),
-		boolInt(sb.SecretBearing), envKeys,
+		boolInt(sb.SecretBearing), envKeys, egress,
 	); err != nil {
 		return Sandbox{}, err
 	}
@@ -611,7 +622,7 @@ func (s *sqliteStore) GetSandbox(ctx context.Context, id string) (Sandbox, error
 	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT
 		id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
-		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing, env_keys
+		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing, env_keys, egress_allow
 	FROM sandboxes WHERE id = ?`+clause, append([]any{id}, args...)...)
 	sb, err := scanSandbox(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -624,7 +635,7 @@ func (s *sqliteStore) ListSandboxes(ctx context.Context) ([]Sandbox, error) {
 	clause, args := scope(ctx, "tenant_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
-		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing, env_keys
+		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing, env_keys, egress_allow
 	FROM sandboxes WHERE 1 = 1`+clause+` ORDER BY created_at, id`, args...)
 	if err != nil {
 		return nil, err
@@ -718,15 +729,20 @@ func scanSandbox(row sandboxScanner) (Sandbox, error) {
 		destroyed sql.NullInt64
 		bearing   int
 		envKeys   string
+		egress    sql.NullString
 	)
-	if err := row.Scan(
+	var err error
+	if err = row.Scan(
 		&sb.ID, &sb.TemplateName, &snapshot, &sb.Lifecycle, &sb.State, &ttl, &sb.IdleSeconds,
-		&active, &tap, &cid, &pid, &sb.Metadata, &created, &destroyed, &bearing, &envKeys,
+		&active, &tap, &cid, &pid, &sb.Metadata, &created, &destroyed, &bearing, &envKeys, &egress,
 	); err != nil {
 		return Sandbox{}, err
 	}
 	if err := json.Unmarshal([]byte(envKeys), &sb.EnvKeys); err != nil {
 		return Sandbox{}, fmt.Errorf("store: env_keys of %s: %w", sb.ID, err)
+	}
+	if sb.EgressAllow, err = decodeOptionalEgress(egress); err != nil {
+		return Sandbox{}, fmt.Errorf("store: egress_allow of %s: %w", sb.ID, err)
 	}
 	sb.SnapshotID = snapshot.String
 	sb.LastActiveAt = time.Unix(active, 0).UTC()
@@ -757,13 +773,63 @@ func boolInt(v bool) int {
 	return 0
 }
 
+// SetSandboxEgress replaces the egress policy of one live sandbox.
+func (s *sqliteStore) SetSandboxEgress(ctx context.Context, id string, allow []string) error {
+	encoded, err := encodeOptionalEgress(allow)
+	if err != nil {
+		return err
+	}
+	clause, args := scope(ctx, "tenant_id")
+	res, err := s.db.ExecContext(ctx, `UPDATE sandboxes SET egress_allow = ?
+		WHERE id = ? AND destroyed_at IS NULL`+clause, append([]any{encoded, id}, args...)...)
+	if err != nil {
+		return err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// encodeOptionalEgress stores nil as NULL, which means the template policy,
+// and an empty list as an empty list, which means no egress.
+func encodeOptionalEgress(allow []string) (any, error) {
+	if allow == nil {
+		return nil, nil
+	}
+	b, err := json.Marshal(allow)
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
+}
+
+func decodeOptionalEgress(raw sql.NullString) ([]string, error) {
+	if !raw.Valid {
+		return nil, nil
+	}
+	allow := []string{}
+	if err := json.Unmarshal([]byte(raw.String), &allow); err != nil {
+		return nil, err
+	}
+	return allow, nil
+}
+
 func (s *sqliteStore) CreateSnapshot(ctx context.Context, sn Snapshot) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO snapshots (
+	egress, err := encodeOptionalEgress(sn.EgressAllow)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO snapshots (
 		id, tenant_id, template_name, parent_id, size_bytes, created_at,
-		secret_bearing, listed, origin_sandbox_id
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		secret_bearing, listed, origin_sandbox_id, egress_allow
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sn.ID, tenantOf(ctx), sn.TemplateName, nullString(sn.ParentID), sn.SizeBytes, sn.CreatedAt.Unix(),
-		boolInt(sn.SecretBearing), boolInt(sn.Listed), nullString(sn.OriginSandboxID),
+		boolInt(sn.SecretBearing), boolInt(sn.Listed), nullString(sn.OriginSandboxID), egress,
 	)
 	return err
 }
@@ -772,7 +838,7 @@ func (s *sqliteStore) GetSnapshot(ctx context.Context, id string) (Snapshot, err
 	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT
 		id, template_name, parent_id, size_bytes, created_at,
-		secret_bearing, listed, origin_sandbox_id
+		secret_bearing, listed, origin_sandbox_id, egress_allow
 	FROM snapshots WHERE id = ?`+clause, append([]any{id}, args...)...)
 	sn, err := scanSnapshot(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -785,7 +851,7 @@ func (s *sqliteStore) ListSnapshots(ctx context.Context) ([]Snapshot, error) {
 	clause, args := scope(ctx, "tenant_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, template_name, parent_id, size_bytes, created_at,
-		secret_bearing, listed, origin_sandbox_id
+		secret_bearing, listed, origin_sandbox_id, egress_allow
 	FROM snapshots WHERE listed = 1`+clause+` ORDER BY created_at, id`, args...)
 	if err != nil {
 		return nil, err
@@ -1027,10 +1093,12 @@ func scanSnapshot(row sandboxScanner) (Snapshot, error) {
 		secret  int
 		listed  int
 		origin  sql.NullString
+		egress  sql.NullString
 	)
 	if err := row.Scan(
 		&sn.ID, &sn.TemplateName, &parent, &sn.SizeBytes, &created,
 		&secret, &listed, &origin,
+		&egress,
 	); err != nil {
 		return Snapshot{}, err
 	}
@@ -1039,6 +1107,10 @@ func scanSnapshot(row sandboxScanner) (Snapshot, error) {
 	sn.SecretBearing = secret != 0
 	sn.Listed = listed != 0
 	sn.OriginSandboxID = origin.String
+	var err error
+	if sn.EgressAllow, err = decodeOptionalEgress(egress); err != nil {
+		return Snapshot{}, fmt.Errorf("store: egress_allow of %s: %w", sn.ID, err)
+	}
 	return sn, nil
 }
 
@@ -1160,7 +1232,7 @@ func scanTenant(row scanner) (Tenant, error) {
 func (s *sqliteStore) ListTemplatesPastTTL(ctx context.Context, now time.Time) ([]Template, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port
+		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as
 	FROM templates
 	WHERE ttl_seconds IS NOT NULL AND created_at + ttl_seconds <= ?
 	ORDER BY tenant_id, name`, now.Unix())

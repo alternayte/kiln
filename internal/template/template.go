@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"time"
 
 	"github.com/regclient/regclient"
 	"github.com/regclient/regclient/config"
@@ -47,6 +48,8 @@ type ImportSpec struct {
 	Ref        string
 	RootfsPath string
 	SizeMB     int
+	// Phase hears how long each step took, and how it ended. It may be nil.
+	Phase func(name string, began time.Time, err error)
 }
 
 // Imported reports what was pulled.
@@ -75,26 +78,64 @@ func (b *Builder) Import(ctx context.Context, spec ImportSpec) (Imported, error)
 	}
 	defer os.RemoveAll(tree)
 
+	report := func(name string, began time.Time, err error) {
+		if spec.Phase != nil {
+			spec.Phase(name, began, err)
+		}
+	}
+	began := time.Now()
 	digest, err := b.pull(ctx, spec.Ref, tree)
+	report("layers", began, err)
 	if err != nil {
 		return Imported{}, err
 	}
-	if err := injectKilninit(tree, b.KilninitPath); err != nil {
+	began = time.Now()
+	if err := b.writeRootfs(ctx, tree, spec.RootfsPath, size); err != nil {
+		report("rootfs", began, err)
 		return Imported{}, err
+	}
+	report("rootfs", began, nil)
+	return Imported{Digest: digest}, nil
+}
+
+// writeRootfs injects what the guest needs and writes the ext4 image.
+func (b *Builder) writeRootfs(ctx context.Context, tree, rootfsPath string, size int) error {
+	if err := injectKilninit(tree, b.KilninitPath); err != nil {
+		return err
 	}
 	if err := writeResolvConf(tree); err != nil {
-		return Imported{}, err
+		return err
 	}
 	if err := ensureMountpoints(tree); err != nil {
-		return Imported{}, err
+		return err
 	}
 	cmd := exec.CommandContext(ctx, "mke2fs",
 		"-q", "-F", "-t", "ext4", "-d", tree, "-L", "kiln",
-		spec.RootfsPath, fmt.Sprintf("%dM", size))
+		rootfsPath, fmt.Sprintf("%dM", size))
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return Imported{}, fmt.Errorf("template: mke2fs: %w: %s", err, out)
+		return fmt.Errorf("template: mke2fs: %w: %s", err, out)
 	}
-	return Imported{Digest: digest}, nil
+	return nil
+}
+
+// withBuildCredential returns the credentials of one build: the one the caller
+// sent for this build on the registry of the image, and the stored ones on
+// every other registry. A job token must not reach another registry.
+func withBuildCredential(stored []RegistryCredential, image string, cred *Credential) ([]RegistryCredential, error) {
+	if cred == nil {
+		return stored, nil
+	}
+	r, err := ref.New(image)
+	if err != nil {
+		return nil, fmt.Errorf("template: %s: %w", image, err)
+	}
+	out := make([]RegistryCredential, 0, len(stored)+1)
+	for _, c := range stored {
+		if c.Host != r.Registry {
+			out = append(out, c)
+		}
+	}
+	return append(out, RegistryCredential{Host: r.Registry, Username: cred.Username, Token: cred.Token}), nil
 }
 
 // hosts turns this build's credentials into regclient host settings.

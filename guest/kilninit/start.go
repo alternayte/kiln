@@ -45,10 +45,10 @@ func runStart(conn net.Conn, req *guestproto.Request) {
 
 	cmd := exec.Command(req.Cmd[0], req.Cmd[1:]...)
 	cmd.Dir = cwd
-	cmd.Env = guestproto.ExecEnv(injectedSecrets(), req.Env)
+	cmd.Env = processEnv(req.Env)
 	// Setsid detaches it from this connection, so the shutdown of one agent
 	// request never reaches the application.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = withUser(&syscall.SysProcAttr{Setsid: true})
 	tail := &ring{limit: startOutput}
 	cmd.Stdout = tail
 	cmd.Stderr = tail

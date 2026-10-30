@@ -6,7 +6,7 @@ import (
 )
 
 // Version is the semver of this contract. It rises with the binary.
-const Version = "0.8.0"
+const Version = "0.9.0"
 
 // OpenAPI returns the OpenAPI 3.1 document of the tenant API. The operator
 // routes stay out: a tenant never reaches them, and the SDKs never call them.
@@ -65,7 +65,7 @@ func operationObject(op Operation) map[string]any {
 		"summary":     op.Summary,
 		"responses":   responses(op),
 	}
-	if len(op.Params) > 0 {
+	if len(op.Params)+len(op.Query) > 0 {
 		var params []any
 		for _, p := range op.Params {
 			params = append(params, map[string]any{
@@ -74,6 +74,14 @@ func operationObject(op Operation) map[string]any {
 				"required":    true,
 				"description": p.Doc,
 				"schema":      fieldSchema(p),
+			})
+		}
+		for _, q := range op.Query {
+			params = append(params, map[string]any{
+				"name":        q.Name,
+				"in":          "query",
+				"description": q.Doc,
+				"schema":      fieldSchema(q),
 			})
 		}
 		out["parameters"] = params
@@ -179,8 +187,9 @@ func schemas() map[string]any {
 	sandbox := object(map[string]any{
 		"id": str, "template": str, "state": str, "lifecycle": str,
 		"created_at": str, "published": list("Published"),
-		"metadata": map[string]any{"type": "object"},
-		"env_keys": map[string]any{"type": "array", "items": str},
+		"metadata":     map[string]any{"type": "object"},
+		"env_keys":     map[string]any{"type": "array", "items": str},
+		"egress_allow": map[string]any{"type": "array", "items": str},
 	})
 	return map[string]any{
 		"Error": object(map[string]any{
@@ -189,7 +198,7 @@ func schemas() map[string]any {
 		"Health": object(map[string]any{"ok": map[string]any{"type": "boolean"}, "kvm": map[string]any{"type": "boolean"}, "firecracker": str, "sandboxes": num}),
 		"Template": object(map[string]any{
 			"name": str, "image": str, "image_digest": str, "state": str, "error": str,
-			"vcpus": num, "memory_mb": num, "disk_mb": num, "ttl_seconds": num,
+			"vcpus": num, "memory_mb": num, "disk_mb": num, "ttl_seconds": num, "user": str,
 			"start": map[string]any{"type": "array", "items": str}, "port": num,
 			"egress_allow":   map[string]any{"type": "array", "items": str},
 			"snapshot_bytes": num, "sandboxes": num, "created_at": str,
@@ -202,11 +211,18 @@ func schemas() map[string]any {
 			"exit_code": num, "stdout": str, "stderr": str,
 			"truncated": map[string]any{"type": "boolean"}, "timed_out": map[string]any{"type": "boolean"},
 		}),
+		"ProcessCreated": object(map[string]any{"id": str}),
+		"Process": object(map[string]any{
+			"id": str, "running": map[string]any{"type": "boolean"},
+			"exit_code": map[string]any{"type": []any{"integer", "null"}},
+			"stdout":    str, "stderr": str, "stdout_offset": num, "stderr_offset": num,
+			"stdout_lost": num, "stderr_lost": num, "more": map[string]any{"type": "boolean"},
+		}),
 		"SnapshotCreated": object(map[string]any{"snapshot_id": str}),
 		"Snapshot":        object(map[string]any{"id": str, "template": str, "size_bytes": num, "created_at": str}),
 		"SnapshotList":    list("Snapshot"),
 		"Published":       object(map[string]any{"port": num, "url": str, "visibility": str}),
-		"Event":           object(map[string]any{"id": num, "sandbox_id": str, "from_state": str, "to_state": str, "reason": str, "at": str}),
+		"Event":           object(map[string]any{"id": num, "sandbox_id": str, "from_state": str, "to_state": str, "reason": str, "at": str, "template": str, "phase": str, "duration_ms": num}),
 		"EventList":       list("Event"),
 		"FileBody":        map[string]any{"type": "string", "format": "binary"},
 		"Tenant": object(map[string]any{

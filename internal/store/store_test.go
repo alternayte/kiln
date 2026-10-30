@@ -656,3 +656,54 @@ func TestUnsealPassesThroughPlainValues(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// Nil means the template policy and an empty list means no egress. Mixing
+// them up widens a sandbox after a wake.
+func TestSandboxEgressKeepsNilApartFromEmpty(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "kiln.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Now().UTC()
+	if err := st.StartTemplateBuild(ctx, Template{Name: "t", ImageRef: "i", VCPUs: 1, MemoryMB: 1, DiskMB: 1,
+		EgressAllow: []string{"pypi.org"}, State: TemplateReady, CreatedAt: now, User: "agent"}); err != nil {
+		t.Fatal(err)
+	}
+	tpl, err := st.GetTemplate(ctx, "t")
+	if err != nil || tpl.User != "agent" {
+		t.Fatalf("template user %q: %v", tpl.User, err)
+	}
+	row, err := st.CreateSandbox(ctx, Sandbox{ID: "s", TemplateName: "t", Lifecycle: LifecyclePersistent,
+		State: SandboxRunning, IdleSeconds: 1, LastActiveAt: now, Metadata: "{}", CreatedAt: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetSandbox(ctx, row.ID)
+	if err != nil || got.EgressAllow != nil || len(got.Egress(tpl)) != 1 {
+		t.Fatalf("new sandbox egress %v, %v", got.EgressAllow, err)
+	}
+	if err := st.SetSandboxEgress(ctx, row.ID, []string{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetSandbox(ctx, row.ID)
+	if err != nil || got.EgressAllow == nil || len(got.Egress(tpl)) != 0 {
+		t.Fatalf("emptied sandbox egress %v, %v", got.EgressAllow, err)
+	}
+	if err := st.CreateSnapshot(ctx, Snapshot{ID: "n", TemplateName: "t", CreatedAt: now, Listed: true,
+		OriginSandboxID: "s", EgressAllow: []string{"a.example.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := st.GetSnapshot(ctx, "n")
+	if err != nil || len(snap.EgressAllow) != 1 {
+		t.Fatalf("snapshot egress %v, %v", snap.EgressAllow, err)
+	}
+	if err := st.AppendEvent(ctx, Event{Template: "t", Phase: "layers", DurationMS: 7, At: now}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := st.ListEventsSince(ctx, 0, 0)
+	if err != nil || len(events) != 1 || events[0].Template != "t" || events[0].Phase != "layers" || events[0].DurationMS != 7 {
+		t.Fatalf("events %+v, %v", events, err)
+	}
+}

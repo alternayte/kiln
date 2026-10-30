@@ -72,6 +72,8 @@ type Template struct {
 	// port it listens on. They travel together or not at all.
 	Start     []string
 	StartPort int
+	// User is who everything a caller asks for runs as. Empty is root.
+	User string
 }
 
 // Registry is one tenant's credential for one image registry. The token is
@@ -92,6 +94,12 @@ type Event struct {
 	ToState   string
 	Reason    string
 	At        time.Time
+	// Template names the template of a build event.
+	Template string
+	// Phase names one step of a build or a restore, and DurationMS says how
+	// long it took. Reason holds the error of a phase that failed.
+	Phase      string
+	DurationMS int64
 }
 
 // Sandbox is one row of the sandboxes table.
@@ -115,6 +123,17 @@ type Sandbox struct {
 	// EnvKeys names the env keys the sandbox was created with, sorted. The
 	// values live only in guest memory.
 	EnvKeys []string
+	// EgressAllow replaces the policy of the template. Nil means the template
+	// policy applies.
+	EgressAllow []string
+}
+
+// Egress returns the policy in force on this sandbox.
+func (s Sandbox) Egress(t Template) []string {
+	if s.EgressAllow != nil {
+		return s.EgressAllow
+	}
+	return t.EgressAllow
 }
 
 // Snapshot is one row of the snapshots table. Listed is false for an image a
@@ -128,6 +147,9 @@ type Snapshot struct {
 	SecretBearing   bool
 	Listed          bool
 	OriginSandboxID string
+	// EgressAllow is the policy in force when the snapshot was taken. Nil
+	// means the template policy applied, and a copy starts with it.
+	EgressAllow []string
 }
 
 // Published is one hostname a sandbox port is served on.
@@ -195,6 +217,8 @@ type Store interface {
 	SetSandboxState(ctx context.Context, id, state string) error
 	SetSandboxRuntime(ctx context.Context, id, tapName string, vsockCID *int, pid int) error
 	TouchSandbox(ctx context.Context, id string, at time.Time) error
+	// SetSandboxEgress replaces the egress policy of one sandbox.
+	SetSandboxEgress(ctx context.Context, id string, allow []string) error
 	DestroySandbox(ctx context.Context, id string, at time.Time) error
 
 	CreateSnapshot(ctx context.Context, s Snapshot) error

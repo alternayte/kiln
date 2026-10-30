@@ -39,8 +39,20 @@ func fileError(err error, missing bool) *guestproto.Error {
 	return &guestproto.Error{Code: guestproto.CodeInvalid, Message: err.Error()}
 }
 
+// writeFailure is a failed write. A permission refusal is the caller's to fix.
+func writeFailure(err error) *guestproto.Error {
+	if errors.Is(err, fs.ErrPermission) {
+		return &guestproto.Error{Code: guestproto.CodeInvalid, Message: err.Error()}
+	}
+	return &guestproto.Error{Code: guestproto.CodeInternal, Message: err.Error()}
+}
+
 // serveReadFile streams one regular file as stdout frames.
 func serveReadFile(conn net.Conn, req *guestproto.Request) {
+	if err := dropFilesystemIdentity(); err != nil {
+		writeResult(conn, guestproto.Result{Error: writeFailure(err)})
+		return
+	}
 	p, err := guestPath(req.Path)
 	if err != nil {
 		writeResult(conn, guestproto.Result{Error: fileError(err, false)})
@@ -83,6 +95,10 @@ func serveReadFile(conn net.Conn, req *guestproto.Request) {
 // serveWriteFile reads data frames until a zero-length frame, writes a
 // temporary file in the target directory, and renames it over the path.
 func serveWriteFile(conn net.Conn, req *guestproto.Request) {
+	if err := dropFilesystemIdentity(); err != nil {
+		writeResult(conn, guestproto.Result{Error: writeFailure(err)})
+		return
+	}
 	p, err := guestPath(req.Path)
 	if err != nil {
 		writeResult(conn, guestproto.Result{Error: fileError(err, false)})
@@ -92,6 +108,19 @@ func serveWriteFile(conn net.Conn, req *guestproto.Request) {
 		writeResult(conn, guestproto.Result{Error: &guestproto.Error{Code: guestproto.CodeInvalid, Message: "not a regular file"}})
 		return
 	}
+	// The rename below replaces a symlink and never touches its target. A
+	// template user who may not write the target gets a refusal, not a file
+	// that silently stopped being a link.
+	if currentUser() != nil {
+		if fi, err := os.Lstat(p); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
+			target, err := os.OpenFile(p, os.O_WRONLY, 0)
+			if err != nil {
+				writeResult(conn, guestproto.Result{Error: writeFailure(err)})
+				return
+			}
+			target.Close()
+		}
+	}
 	dir := path.Dir(p)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		writeResult(conn, guestproto.Result{Error: &guestproto.Error{Code: guestproto.CodeInvalid, Message: err.Error()}})
@@ -100,7 +129,7 @@ func serveWriteFile(conn net.Conn, req *guestproto.Request) {
 	tmp := path.Join(dir, "."+path.Base(p)+".kiln-tmp")
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
-		writeResult(conn, guestproto.Result{Error: &guestproto.Error{Code: guestproto.CodeInternal, Message: err.Error()}})
+		writeResult(conn, guestproto.Result{Error: writeFailure(err)})
 		return
 	}
 	for {
@@ -133,7 +162,7 @@ func serveWriteFile(conn net.Conn, req *guestproto.Request) {
 	}
 	if err := os.Rename(tmp, p); err != nil {
 		os.Remove(tmp)
-		writeResult(conn, guestproto.Result{Error: &guestproto.Error{Code: guestproto.CodeInternal, Message: err.Error()}})
+		writeResult(conn, guestproto.Result{Error: writeFailure(err)})
 		return
 	}
 	writeResult(conn, guestproto.Result{OK: true})

@@ -474,3 +474,42 @@ green on the commit before this one, P0 to P5 and sec. Not verified here:
 the two registry publishes, which need the registrations; and the live
 host, which keeps the old unit path until its binary is installed at
 `/usr/local/bin/kiln`.
+
+## 2026-10-30 — v0.9.0, build timing, a credential per build, agent controls and deployments
+
+Done: the four specs from issues #15, #16 and #17.
+
+- `docs/specs/template-build-phases.md`: the host records one event per phase
+  of a build and a restore, with `phase` and `duration_ms`, and a template
+  event now names its template. The Action polls every 2 seconds and prints
+  the phases.
+- `docs/specs/template-build-credential.md`: `POST /v1/templates` takes
+  `credential`, which lives in memory for the build. The Action takes
+  `registry-token`. The audit row records its presence.
+- `docs/specs/agent-sandbox-controls.md`: a template names a `user`.
+  `PUT /v1/sandboxes/{id}/egress` replaces the policy, persists it on the row
+  and on later snapshots, and cuts what the guest opened. `*.example.com` is
+  valid. Detached processes live in guest memory, and the idle deadline asks
+  the guest before it sleeps or destroys a sandbox.
+- `docs/specs/preview-deployments.md`: the Action reports a GitHub deployment.
+
+Things the build taught:
+
+- `pull` streams each blob straight into the tree, so `layers` is one phase.
+- The host needs `conntrack`, a new package, to cut a connection. nftables can
+  drop a packet and cannot end a flow, and every guest shares one source
+  address, so the firewall mark names the sandbox.
+- A rename replaces a symlink and leaves its target alone, so a write through
+  a planted link silently destroyed the link. With a template user the write
+  now checks the target first and refuses.
+- `reader` is not enforced per route by the gateway today, so the new routes
+  have the same access as exec without any new code.
+
+Verified before tagging: `just check`, and the kvm workflow green on the same
+tree, P0 to P5 and sec. `TestSecAgentControls` in the sec gate drives the user,
+the egress change and the processes on real microVMs. The same address can
+serve a removed host and an allowed one on a CDN, and the policy cannot tell
+them apart once the allowed name resolves. Not verified: a real preview on
+c-dash, the deployment calls against GitHub, and two private repositories
+building together, because they need the live host on this version. The live
+host needs `conntrack` installed before it takes an egress change.

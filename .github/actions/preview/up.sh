@@ -22,6 +22,9 @@ payload() { sed '$d' <<< "$1"; }
 # Caller errors fail before the template builds. This also masks every env
 # value, so no later line of the log shows one.
 python3 "$here/payload.py" check
+if [ -n "${REGISTRY_TOKEN:-}" ]; then
+  echo "::add-mask::$REGISTRY_TOKEN"
+fi
 
 if [ "$FORK" = "true" ] && [ -n "$(tr -d '[:space:]' <<< "$ENV_LINES")" ]; then
   echo "this pull request comes from a fork, so env is not sent to its preview"
@@ -41,8 +44,8 @@ fi
 # Wait for the build. A failure prints the events: a silent preview failure
 # wastes the reviewer's time, not the author's.
 state=building
-for _ in $(seq 1 180); do
-  sleep 10
+for _ in $(seq 1 900); do
+  sleep 2
   out="$(api GET "/v1/templates/$name")"
   [ "$(status "$out")" = "200" ] || continue
   state="$(payload "$out" | python3 "$here/payload.py" get state)"
@@ -86,6 +89,11 @@ urls="$(python3 "$here/payload.py" urls <<< "$published")"
 echo "url=$url" >> "$GITHUB_OUTPUT"
 echo "urls=$urls" >> "$GITHUB_OUTPUT"
 echo "preview at $url"
+
+# Where the time went. The stream never ends, so the time limit closes it, and
+# a preview that is already live does not fail over its own timing.
+curl -sS --max-time 5 -H "Authorization: Bearer $KILN_API_KEY" "$KILN_URL/v1/events?after=0" \
+  | NAME="$name" SANDBOX="$sandbox" python3 "$here/payload.py" phases || true
 
 # The previous preview of this pull request goes last, so the comment never
 # names a hostname that has already been retired.

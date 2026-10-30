@@ -26,6 +26,8 @@ type Operation struct {
 	Summary string
 	// Params are the path parameters, in path order.
 	Params []Field
+	// Query holds the optional query parameters.
+	Query []Field
 	// Body holds the request fields. It is empty for a call with no body.
 	Body []Field
 	// Returns names the shape of the answer.
@@ -80,13 +82,17 @@ func Operations() []Operation {
 				{Name: "disk_mb", Type: "integer", Required: true, Doc: "Disk of every sandbox from this template."},
 				{Name: "setup", Type: "array", Items: "string", Doc: "Commands that run once while the template builds."},
 				{Name: "egress_allow", Type: "array", Items: "string", Required: true,
-					Doc: "Hostnames a sandbox may reach. An empty list allows no egress."},
+					Doc: "Hostnames a sandbox may reach. *.example.com matches every subdomain and not example.com. An empty list allows no egress."},
 				{Name: "ttl_seconds", Type: "integer",
 					Doc: "Seconds until the host deletes this template with its snapshot and its sandboxes. A preview environment sets one, because nothing comes back to delete it."},
 				{Name: "start", Type: "array", Items: "string",
 					Doc: "Command that runs the application. Kiln ignores what the image says to run, so a template that serves an application names this. It runs once, when a sandbox restores from this template."},
 				{Name: "port", Type: "integer",
 					Doc: "Port the start command listens on. Creating a sandbox answers only once the guest accepts a connection there. Required with start."},
+				{Name: "user", Type: "string",
+					Doc: "User from the image, by name or numeric id. Exec, detached processes, files, the terminal and the start command run as this user, and setup runs as root. Empty runs everything as root. The build fails when the image has no such user."},
+				{Name: "credential", Type: "object",
+					Doc: "Registry login for this build only: username and token. It pulls from the registry of the image, the host keeps it in memory for the build, and it is never returned. Without it the build uses the stored credentials of this tenant."},
 			},
 			Returns: "TemplateState",
 		},
@@ -151,6 +157,47 @@ func Operations() []Operation {
 				{Name: "cols", Type: "integer", Doc: "Terminal width at the moment the shell opens."},
 				{Name: "rows", Type: "integer", Doc: "Terminal height at the moment the shell opens."},
 			},
+		},
+		{
+			ID: "setEgress", Method: "PUT", Path: "/v1/sandboxes/{id}/egress", Status: 200,
+			Summary: "Replace the egress policy of one sandbox. The answer comes after the host swaps the list and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it.",
+			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
+			Body: []Field{{Name: "egress_allow", Type: "array", Items: "string", Required: true,
+				Doc: "Hostnames the sandbox may reach. *.example.com matches every subdomain and not example.com. An empty list allows no egress."}},
+			Returns: "Sandbox",
+		},
+		{
+			ID: "startProcess", Method: "POST", Path: "/v1/sandboxes/{id}/processes", Status: 201,
+			Summary: "Start a detached process and answer once it runs. It has no deadline, it outlives this request, and the sandbox does not sleep while it runs.",
+			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
+			Body: []Field{
+				{Name: "cmd", Type: "array", Items: "string", Required: true, Doc: "Command and its arguments."},
+				{Name: "cwd", Type: "string", Doc: "Directory the command runs in."},
+				{Name: "env", Type: "object", Doc: "Extra environment variables."},
+			},
+			Returns: "ProcessCreated",
+		},
+		{
+			ID: "readProcess", Method: "GET", Path: "/v1/sandboxes/{id}/processes/{pid}", Status: 200,
+			Summary: "Read the state of a detached process and its output after each offset. One answer holds at most 1 MiB of each stream, the guest keeps the last 8 MiB, and the answer names the next offsets and the bytes lost.",
+			Params: []Field{
+				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
+				{Name: "pid", Type: "string", Required: true, Doc: "Process id from startProcess."},
+			},
+			Query: []Field{
+				{Name: "stdout_offset", Type: "integer", Doc: "Byte of stdout to read from. Default 0."},
+				{Name: "stderr_offset", Type: "integer", Doc: "Byte of stderr to read from. Default 0."},
+			},
+			Returns: "Process",
+		},
+		{
+			ID: "signalProcess", Method: "DELETE", Path: "/v1/sandboxes/{id}/processes/{pid}", Status: 204,
+			Summary: "Send a signal to the process group of a detached process. A process that has ended takes no signal, and the call still succeeds.",
+			Params: []Field{
+				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
+				{Name: "pid", Type: "string", Required: true, Doc: "Process id from startProcess."},
+			},
+			Query: []Field{{Name: "signal", Type: "string", Doc: "TERM, KILL, INT, HUP, QUIT, USR1 or USR2. Default TERM."}},
 		},
 		{
 			ID: "snapshot", Method: "POST", Path: "/v1/sandboxes/{id}/snapshot", Status: 201,

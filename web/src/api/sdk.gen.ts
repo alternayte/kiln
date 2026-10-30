@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, CreateTemplateData, CreateTemplateErrors, CreateTemplateResponses, CreateViewerData, CreateViewerErrors, CreateViewerResponses, DeleteRegistryData, DeleteRegistryErrors, DeleteRegistryResponses, DeleteSandboxData, DeleteSandboxErrors, DeleteSandboxResponses, DeleteSnapshotData, DeleteSnapshotErrors, DeleteSnapshotResponses, DeleteTemplateData, DeleteTemplateErrors, DeleteTemplateResponses, DeleteViewerData, DeleteViewerErrors, DeleteViewerResponses, EventsData, EventsErrors, EventsResponse, EventsResponses, ExecData, ExecErrors, ExecResponses, ForkData, ForkErrors, ForkResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, GetSnapshotData, GetSnapshotErrors, GetSnapshotResponses, GetTemplateData, GetTemplateErrors, GetTemplateResponses, HealthData, HealthErrors, HealthResponses, ListRegistriesData, ListRegistriesErrors, ListRegistriesResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, ListSnapshotsData, ListSnapshotsErrors, ListSnapshotsResponses, ListTemplatesData, ListTemplatesErrors, ListTemplatesResponses, ListViewersData, ListViewersErrors, ListViewersResponses, PublishData, PublishErrors, PublishResponses, PutRegistryData, PutRegistryErrors, PutRegistryResponses, ReadFileData, ReadFileErrors, ReadFileResponses, RestoreData, RestoreErrors, RestoreResponses, RetireData, RetireErrors, RetireResponses, SnapshotData, SnapshotErrors, SnapshotResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
+import type { CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, CreateTemplateData, CreateTemplateErrors, CreateTemplateResponses, CreateViewerData, CreateViewerErrors, CreateViewerResponses, DeleteRegistryData, DeleteRegistryErrors, DeleteRegistryResponses, DeleteSandboxData, DeleteSandboxErrors, DeleteSandboxResponses, DeleteSnapshotData, DeleteSnapshotErrors, DeleteSnapshotResponses, DeleteTemplateData, DeleteTemplateErrors, DeleteTemplateResponses, DeleteViewerData, DeleteViewerErrors, DeleteViewerResponses, EventsData, EventsErrors, EventsResponse, EventsResponses, ExecData, ExecErrors, ExecResponses, ForkData, ForkErrors, ForkResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, GetSnapshotData, GetSnapshotErrors, GetSnapshotResponses, GetTemplateData, GetTemplateErrors, GetTemplateResponses, HealthData, HealthErrors, HealthResponses, ListRegistriesData, ListRegistriesErrors, ListRegistriesResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, ListSnapshotsData, ListSnapshotsErrors, ListSnapshotsResponses, ListTemplatesData, ListTemplatesErrors, ListTemplatesResponses, ListViewersData, ListViewersErrors, ListViewersResponses, PublishData, PublishErrors, PublishResponses, PutRegistryData, PutRegistryErrors, PutRegistryResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadProcessData, ReadProcessErrors, ReadProcessResponses, RestoreData, RestoreErrors, RestoreResponses, RetireData, RetireErrors, RetireResponses, SetEgressData, SetEgressErrors, SetEgressResponses, SignalProcessData, SignalProcessErrors, SignalProcessResponses, SnapshotData, SnapshotErrors, SnapshotResponses, StartProcessData, StartProcessErrors, StartProcessResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -108,6 +108,19 @@ export const getSandbox = <ThrowOnError extends boolean = false>(options: Option
 });
 
 /**
+ * Replace the egress policy of one sandbox. The answer comes after the host swaps the list and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it.
+ */
+export const setEgress = <ThrowOnError extends boolean = false>(options: Options<SetEgressData, ThrowOnError>) => (options.client ?? client).put<SetEgressResponses, SetEgressErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
+    url: '/v1/sandboxes/{id}/egress',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * Run a command inside a sandbox. Accept text/event-stream to read the output as it runs.
  */
 export const exec = <ThrowOnError extends boolean = false>(options: Options<ExecData, ThrowOnError>) => (options.client ?? client).post<ExecResponses, ExecErrors, ThrowOnError>({
@@ -154,6 +167,37 @@ export const fork = <ThrowOnError extends boolean = false>(options: Options<Fork
         'Content-Type': 'application/json',
         ...options.headers
     }
+});
+
+/**
+ * Start a detached process and answer once it runs. It has no deadline, it outlives this request, and the sandbox does not sleep while it runs.
+ */
+export const startProcess = <ThrowOnError extends boolean = false>(options: Options<StartProcessData, ThrowOnError>) => (options.client ?? client).post<StartProcessResponses, StartProcessErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
+    url: '/v1/sandboxes/{id}/processes',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Send a signal to the process group of a detached process. A process that has ended takes no signal, and the call still succeeds.
+ */
+export const signalProcess = <ThrowOnError extends boolean = false>(options: Options<SignalProcessData, ThrowOnError>) => (options.client ?? client).delete<SignalProcessResponses, SignalProcessErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
+    url: '/v1/sandboxes/{id}/processes/{pid}',
+    ...options
+});
+
+/**
+ * Read the state of a detached process and its output after each offset. One answer holds at most 1 MiB of each stream, the guest keeps the last 8 MiB, and the answer names the next offsets and the bytes lost.
+ */
+export const readProcess = <ThrowOnError extends boolean = false>(options: Options<ReadProcessData, ThrowOnError>) => (options.client ?? client).get<ReadProcessResponses, ReadProcessErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
+    url: '/v1/sandboxes/{id}/processes/{pid}',
+    ...options
 });
 
 /**

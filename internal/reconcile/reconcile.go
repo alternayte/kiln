@@ -165,7 +165,7 @@ func (r *Reconciler) adopt(ctx context.Context, row store.Sandbox, host *hostSta
 		if err != nil {
 			return err
 		}
-		att, err = r.Network.Adopt(ctx, row.ID, row.TapName, tpl.EgressAllow)
+		att, err = r.Network.Adopt(ctx, row.ID, row.TapName, row.Egress(tpl))
 		if err != nil {
 			return err
 		}

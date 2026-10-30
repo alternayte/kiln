@@ -46,6 +46,16 @@ func serve(conn net.Conn) {
 		runAwait(conn, &req)
 	case guestproto.OpTerminal:
 		runTerminal(conn, &req)
+	case guestproto.OpCheckUser:
+		runCheckUser(conn, &req)
+	case guestproto.OpProcessStart:
+		runProcessStart(conn, &req)
+	case guestproto.OpProcessRead:
+		runProcessRead(conn, &req)
+	case guestproto.OpProcessSignal:
+		runProcessSignal(conn, &req)
+	case guestproto.OpProcessCount:
+		runProcessCount(conn)
 	case guestproto.OpReadFile:
 		serveReadFile(conn, &req)
 	case guestproto.OpWriteFile:
@@ -120,8 +130,8 @@ func runExec(conn net.Conn, req *guestproto.Request) {
 
 	cmd := exec.Command(req.Cmd[0], req.Cmd[1:]...)
 	cmd.Dir = req.Cwd
-	cmd.Env = guestproto.ExecEnv(injectedSecrets(), req.Env)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Env = processEnv(req.Env)
+	cmd.SysProcAttr = withUser(&syscall.SysProcAttr{Setpgid: true})
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		writeResult(conn, guestproto.Result{Error: &guestproto.Error{Code: guestproto.CodeInternal, Message: err.Error()}})

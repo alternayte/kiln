@@ -45,11 +45,19 @@ func runTerminal(conn net.Conn, req *guestproto.Request) {
 	cmd := exec.Command(terminalShell(), "-l")
 	cmd.Dir = cwd
 	// TERM makes a curses program usable. Without it the shell assumes dumb.
-	cmd.Env = append(guestproto.ExecEnv(injectedSecrets(), req.Env), "TERM=xterm-256color")
+	cmd.Env = append(processEnv(req.Env), "TERM=xterm-256color")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = pts, pts, pts
 	// Setsid plus Setctty makes the shell the session leader of the pty, so
 	// job control, Ctrl-C and a resize signal reach it.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+	cmd.SysProcAttr = withUser(&syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0})
+	// The shell owns its terminal, or tools that reopen it fail.
+	if u := currentUser(); u != nil {
+		if err := pts.Chown(int(u.uid), int(u.gid)); err != nil {
+			pts.Close()
+			writeResult(conn, guestproto.Result{Error: &guestproto.Error{Code: guestproto.CodeInternal, Message: err.Error()}})
+			return
+		}
+	}
 	if err := cmd.Start(); err != nil {
 		pts.Close()
 		writeResult(conn, guestproto.Result{Error: &guestproto.Error{Code: guestproto.CodeInternal, Message: err.Error()}})

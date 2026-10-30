@@ -71,8 +71,20 @@ inputs:
     description: Seconds of inactivity until the preview sleeps. It wakes on the next request.
     required: false
     default: "900"
+  registry-token:
+    description: >
+      The token that pulls the image, for this build only. The host holds it
+      in memory for the build and stores nothing. Pass github.token for an
+      image on ghcr.io. Empty uses the credentials stored for this tenant,
+      which a public image does not need.
+    required: false
+    default: ""
+  registry-username:
+    description: The username that goes with registry-token.
+    required: false
+    default: ${{ github.actor }}
   github-token:
-    description: The token that writes the comment.
+    description: The token that writes the comment and the deployment.
     required: false
     default: ${{ github.token }}
 
@@ -102,6 +114,18 @@ runs:
         LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
       run: ${{ github.action_path }}/fork.sh
 
+    - name: Create the deployment
+      id: deployment
+      if: github.event.action != 'closed'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+        SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        LOG_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: ${{ github.action_path }}/deployment.sh start
+
     - name: Create or replace the preview
       id: up
       if: github.event.action != 'closed'
@@ -110,6 +134,8 @@ runs:
         KILN_URL: ${{ inputs.url }}
         KILN_API_KEY: ${{ inputs.api-key }}
         IMAGE: ${{ inputs.image }}
+        REGISTRY_TOKEN: ${{ inputs.registry-token }}
+        REGISTRY_USERNAME: ${{ inputs.registry-username }}
         PORT: ${{ inputs.port }}
         PUBLISH: ${{ inputs.publish }}
         ENV_LINES: ${{ inputs.env }}
@@ -126,6 +152,18 @@ runs:
         SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         REPO: ${{ github.repository }}
       run: ${{ github.action_path }}/up.sh
+
+    - name: Report the deployment
+      if: github.event.action != 'closed'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+        DEPLOYMENT: ${{ steps.deployment.outputs.id }}
+        URL: ${{ steps.up.outputs.url }}
+        LOG_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: ${{ github.action_path }}/deployment.sh success
 
     - name: Comment the preview URL
       if: github.event.action != 'closed'
@@ -148,3 +186,23 @@ runs:
         PR: ${{ github.event.pull_request.number }}
         REPO: ${{ github.repository }}
       run: ${{ github.action_path }}/down.sh
+
+    - name: Retire the deployments
+      if: github.event.action == 'closed'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+      run: ${{ github.action_path }}/deployment.sh retire
+
+    # up.sh exits at many points, so the failure status lives outside it.
+    - name: Report the failed deployment
+      if: failure() && steps.deployment.outputs.id != '' && steps.up.outcome == 'failure'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        DEPLOYMENT: ${{ steps.deployment.outputs.id }}
+        LOG_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: ${{ github.action_path }}/deployment.sh failure

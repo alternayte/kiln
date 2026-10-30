@@ -24,3 +24,37 @@ func TestBuilderHostsCarryOnlyItsOwnCredentials(t *testing.T) {
 		t.Fatalf("a build with no credentials offers %d hosts, want none", n)
 	}
 }
+
+// A build's own login replaces the stored one on its registry only, so a job
+// token never reaches another registry.
+func TestBuildCredentialReplacesOnlyItsRegistry(t *testing.T) {
+	stored := []RegistryCredential{
+		{Host: "ghcr.io", Username: "bot", Token: "stored"},
+		{Host: "registry.example.com", Username: "other", Token: "other"},
+	}
+	got, err := withBuildCredential(stored, "ghcr.io/acme/app:1", &Credential{Username: "job", Token: "job-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %+v", got)
+	}
+	for _, c := range got {
+		switch c.Host {
+		case "ghcr.io":
+			if c.Token != "job-token" {
+				t.Errorf("ghcr.io uses %q", c.Token)
+			}
+		case "registry.example.com":
+			if c.Token != "other" {
+				t.Errorf("the other registry uses %q", c.Token)
+			}
+		default:
+			t.Errorf("unexpected host %q", c.Host)
+		}
+	}
+	same, err := withBuildCredential(stored, "ghcr.io/acme/app:1", nil)
+	if err != nil || len(same) != 2 || same[0].Token != "stored" {
+		t.Fatalf("no credential changed the stored ones: %+v, %v", same, err)
+	}
+}

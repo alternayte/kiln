@@ -39,8 +39,8 @@ record and is older than the code in places; the specs win where they differ.
 - An x86_64 Linux host with `/dev/kvm`. Bare metal, or a VM with nested
   virtualization. A CPU without XSAVE cannot run Firecracker.
 - Root. `jailer` needs it; it drops each microVM to its own uid.
-- Ubuntu 24.04 or Debian 12 with `iproute2`, `nftables`, `e2fsprogs` and
-  `curl`. `scripts/dev-env.sh` installs them.
+- Ubuntu 24.04 or Debian 12 with `iproute2`, `nftables`, `conntrack`,
+  `e2fsprogs` and `curl`. `scripts/dev-env.sh` installs them.
 - For public hostnames: a zone whose DNS is on Cloudflare, with a wildcard
   record that points at the host, and port 443 open. See
   [`infra/README.md`](infra/README.md#preview-setup-p6).
@@ -196,7 +196,7 @@ builds a template from it, runs one sandbox, publishes the port, and deletes
 everything when the pull request closes.
 
 ```yaml
-- uses: alternayte/kiln/.github/actions/preview@v0.8.0
+- uses: alternayte/kiln/.github/actions/preview@v0.9.0
   with:
     url: ${{ vars.KILN_URL }}
     api-key: ${{ secrets.KILN_API_KEY }}

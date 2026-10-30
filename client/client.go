@@ -140,6 +140,16 @@ type TemplateRequest struct {
 	DiskMB      int      `json:"disk_mb"`
 	Setup       []string `json:"setup"`
 	EgressAllow []string `json:"egress_allow"`
+	// User is who everything a caller asks for runs as. Empty is root.
+	User string `json:"user,omitempty"`
+	// Credential pulls the images of this build and goes no further.
+	Credential *TemplateCredential `json:"credential,omitempty"`
+}
+
+// TemplateCredential is the registry login of one build.
+type TemplateCredential struct {
+	Username string `json:"username"`
+	Token    string `json:"token"`
 }
 
 // Template is one template row.
@@ -156,6 +166,7 @@ type Template struct {
 	SnapshotBytes int64     `json:"snapshot_bytes"`
 	Sandboxes     int       `json:"sandboxes"`
 	CreatedAt     time.Time `json:"created_at"`
+	User          string    `json:"user,omitempty"`
 }
 
 // CreateTemplate starts a build and returns before it runs.
@@ -212,6 +223,69 @@ type Sandbox struct {
 	DestroyedAt  *time.Time      `json:"destroyed_at,omitempty"`
 	Published    []Published     `json:"published"`
 	EnvKeys      []string        `json:"env_keys"`
+	EgressAllow  []string        `json:"egress_allow"`
+}
+
+// SetEgress replaces the egress policy of one sandbox. It returns after the
+// host cuts every connection the guest opened.
+func (c *Client) SetEgress(ctx context.Context, id string, allow []string) (Sandbox, error) {
+	if allow == nil {
+		allow = []string{}
+	}
+	var out Sandbox
+	err := c.do(ctx, http.MethodPut, "/v1/sandboxes/"+url.PathEscape(id)+"/egress",
+		map[string][]string{"egress_allow": allow}, &out)
+	return out, err
+}
+
+// ProcessRequest is one detached process to start.
+type ProcessRequest struct {
+	Cmd []string          `json:"cmd"`
+	Cwd string            `json:"cwd,omitempty"`
+	Env map[string]string `json:"env,omitempty"`
+}
+
+// Process is one read of a detached process. ExitCode is nil while it runs.
+type Process struct {
+	ID           string `json:"id"`
+	Running      bool   `json:"running"`
+	ExitCode     *int   `json:"exit_code"`
+	Stdout       string `json:"stdout"`
+	Stderr       string `json:"stderr"`
+	StdoutOffset int64  `json:"stdout_offset"`
+	StderrOffset int64  `json:"stderr_offset"`
+	StdoutLost   int64  `json:"stdout_lost"`
+	StderrLost   int64  `json:"stderr_lost"`
+	More         bool   `json:"more"`
+}
+
+// StartProcess starts a detached process and returns its id.
+func (c *Client) StartProcess(ctx context.Context, id string, req ProcessRequest) (string, error) {
+	var out struct {
+		ID string `json:"id"`
+	}
+	err := c.do(ctx, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/processes", req, &out)
+	return out.ID, err
+}
+
+// ReadProcess reads a detached process and its output after each offset.
+func (c *Client) ReadProcess(ctx context.Context, id, pid string, stdoutOffset, stderrOffset int64) (Process, error) {
+	query := url.Values{}
+	query.Set("stdout_offset", strconv.FormatInt(stdoutOffset, 10))
+	query.Set("stderr_offset", strconv.FormatInt(stderrOffset, 10))
+	var out Process
+	err := c.do(ctx, http.MethodGet, "/v1/sandboxes/"+url.PathEscape(id)+"/processes/"+url.PathEscape(pid)+"?"+query.Encode(), nil, &out)
+	return out, err
+}
+
+// SignalProcess signals the process group of a detached process. An empty
+// signal is TERM.
+func (c *Client) SignalProcess(ctx context.Context, id, pid, signal string) error {
+	path := "/v1/sandboxes/" + url.PathEscape(id) + "/processes/" + url.PathEscape(pid)
+	if signal != "" {
+		path += "?signal=" + url.QueryEscape(signal)
+	}
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
 // Published is one preview of a sandbox port.
@@ -454,6 +528,11 @@ type Event struct {
 	ToState   string    `json:"to_state,omitempty"`
 	Reason    string    `json:"reason,omitempty"`
 	At        time.Time `json:"at"`
+	// Template names the template of a build event. Phase and DurationMS say
+	// how long one step of a build or a restore took.
+	Template   string `json:"template,omitempty"`
+	Phase      string `json:"phase,omitempty"`
+	DurationMS *int64 `json:"duration_ms,omitempty"`
 }
 
 // Events calls fn for every state transition until ctx ends. A zero after

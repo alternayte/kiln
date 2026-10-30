@@ -25,6 +25,7 @@ func TestGateP0(t *testing.T) {
 			"jailer":      "#!/bin/sh\nexit 0\n",
 			"nft":         "#!/bin/sh\nexit 0\n",
 			"mke2fs":      "#!/bin/sh\nexit 0\n",
+			"conntrack":   "#!/bin/sh\nexit 0\n",
 		})
 		r := run(t, root, preflightEnv(t, bin, kvmFile(t)), "bash", "scripts/preflight.sh")
 		if r.code != 0 {
@@ -39,6 +40,7 @@ func TestGateP0(t *testing.T) {
 			"jailer":      "#!/bin/sh\nexit 0\n",
 			"nft":         "#!/bin/sh\nexit 0\n",
 			"mke2fs":      "#!/bin/sh\nexit 0\n",
+			"conntrack":   "#!/bin/sh\nexit 0\n",
 		})
 		r := run(t, root, preflightEnv(t, bin, filepath.Join(t.TempDir(), "no-kvm")), "bash", "scripts/preflight.sh")
 		if r.code == 0 {
@@ -55,6 +57,7 @@ func TestGateP0(t *testing.T) {
 			"firecracker": "#!/bin/sh\necho \"Firecracker " + v["FIRECRACKER_VERSION"] + "\"\n",
 			"jailer":      "#!/bin/sh\nexit 0\n",
 			"mke2fs":      "#!/bin/sh\nexit 0\n",
+			"conntrack":   "#!/bin/sh\nexit 0\n",
 		})
 		r := run(t, root, preflightEnv(t, bin, kvmFile(t)), "bash", "scripts/preflight.sh")
 		if r.code == 0 {
@@ -71,6 +74,7 @@ func TestGateP0(t *testing.T) {
 			"jailer":      "#!/bin/sh\nexit 0\n",
 			"nft":         "#!/bin/sh\nexit 0\n",
 			"mke2fs":      "#!/bin/sh\nexit 0\n",
+			"conntrack":   "#!/bin/sh\nexit 0\n",
 		})
 		r := run(t, root, preflightEnv(t, bin, kvmFile(t)), "bash", "scripts/preflight.sh")
 		if r.code == 0 {

@@ -484,3 +484,54 @@ func TestUIDoesNotShadowTheAPI(t *testing.T) {
 		}
 	}
 }
+
+// The host still receives the whole body, and the audit row records only that
+// a credential was present.
+func TestAuditRecordsACredentialAndNotItsValue(t *testing.T) {
+	bodies := make(chan string, 2)
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies <- string(b)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer host.Close()
+	srv, key, tenantID := newTestGateway(t, host.URL)
+	public := httptest.NewServer(srv.Handler())
+	defer public.Close()
+
+	const token = "audit-test-token"
+	for _, body := range []string{
+		`{"name":"a","credential":{"username":"u","token":"` + token + `"}}`,
+		`{"name":"b"}`,
+	} {
+		req, _ := http.NewRequest(http.MethodPost, public.URL+"/v1/templates", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+key)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if got := <-bodies; got != body {
+			t.Fatalf("the host received %q, want %q", got, body)
+		}
+	}
+
+	var with, without int
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		row := srv.Audit.DB.QueryRow(`SELECT
+			coalesce(sum(CASE WHEN credential = 1 THEN 1 ELSE 0 END), 0),
+			coalesce(sum(CASE WHEN credential = 0 THEN 1 ELSE 0 END), 0)
+			FROM kiln_audit WHERE tenant_id = ? AND path = '/v1/templates'`, tenantID)
+		if err := row.Scan(&with, &without); err != nil {
+			t.Fatal(err)
+		}
+		if with+without == 2 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if with != 1 || without != 1 {
+		t.Fatalf("audit rows: %d with a credential, %d without", with, without)
+	}
+}

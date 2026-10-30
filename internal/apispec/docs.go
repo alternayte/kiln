@@ -63,6 +63,12 @@ func LLMsFullTXT(baseURL string) string {
 				fmt.Fprintf(&b, "- `%s` (%s): %s\n", p.Name, p.Type, p.Doc)
 			}
 		}
+		if len(op.Query) > 0 {
+			b.WriteString("\nQuery:\n\n")
+			for _, q := range op.Query {
+				fmt.Fprintf(&b, "- `%s` (%s): %s\n", q.Name, q.Type, q.Doc)
+			}
+		}
 		if len(op.Body) > 0 {
 			b.WriteString("\nBody:\n\n")
 			for _, f := range op.Body {

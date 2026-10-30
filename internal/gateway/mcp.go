@@ -109,6 +109,9 @@ func tools() []any {
 				required = append(required, f.Name)
 			}
 		}
+		for _, q := range op.Query {
+			props[q.Name] = fieldJSON(q)
+		}
 		switch op.ID {
 		case toolWriteFile:
 			props["content"] = map[string]any{"type": "string", "description": "The file's content, as text."}
@@ -179,6 +182,21 @@ func (s *Server) callTool(r *http.Request, w http.ResponseWriter, req rpcRequest
 		path = strings.ReplaceAll(path, "{"+p.Name+"...}", fmt.Sprint(value))
 		path = strings.ReplaceAll(path, "{"+p.Name+"}", fmt.Sprint(value))
 		delete(params.Arguments, p.Name)
+	}
+	query := url.Values{}
+	for _, q := range op.Query {
+		if value, ok := params.Arguments[q.Name]; ok {
+			// A JSON number decodes as a float, which would print an offset
+			// with an exponent.
+			if n, isNumber := value.(float64); isNumber {
+				value = strconv.FormatFloat(n, 'f', -1, 64)
+			}
+			query.Set(q.Name, fmt.Sprint(value))
+			delete(params.Arguments, q.Name)
+		}
+	}
+	if len(query) > 0 {
+		path += "?" + query.Encode()
 	}
 	var out []byte
 	var err error

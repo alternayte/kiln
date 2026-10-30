@@ -26,7 +26,7 @@ find_bin() {
   command -v "$1" 2>/dev/null
 }
 
-for b in firecracker jailer nft mke2fs; do
+for b in firecracker jailer nft conntrack mke2fs; do
   if [ -z "$(find_bin "$b")" ]; then
     miss "binary: $b is not on PATH and not at $ROOT/bin/$b"
   fi

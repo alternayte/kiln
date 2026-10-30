@@ -51,6 +51,9 @@ func applyResume(req *guestproto.Request) error {
 		secrets = req.Secrets
 		resumeMu.Unlock()
 	}
+	if err := applyUser(req.User); err != nil {
+		return fmt.Errorf("user: %w", err)
+	}
 	return nil
 }
 

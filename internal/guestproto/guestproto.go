@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 )
 
@@ -45,7 +46,32 @@ const (
 	OpTerminal  = "terminal"
 	OpStart     = "start"
 	OpAwait     = "await"
+	// OpCheckUser asks whether the image holds a user, while a template builds.
+	OpCheckUser = "check_user"
+	// The detached process operations.
+	OpProcessStart  = "process_start"
+	OpProcessRead   = "process_read"
+	OpProcessSignal = "process_signal"
+	OpProcessCount  = "process_count"
 )
+
+// Detached process bounds.
+const (
+	// ProcessOutputLimit is how much of each stream the guest keeps.
+	ProcessOutputLimit = 8 << 20
+	// ProcessReadLimit is how much of each stream one read returns.
+	ProcessReadLimit = 1 << 20
+	// ProcessRecordLimit is how many processes the guest remembers.
+	ProcessRecordLimit = 256
+)
+
+// ProcessSignals names the signals a caller may send to a detached process.
+var ProcessSignals = []string{"TERM", "KILL", "INT", "HUP", "QUIT", "USR1", "USR2"}
+
+// ValidProcessSignal reports whether a caller may send this signal.
+func ValidProcessSignal(name string) bool {
+	return slices.Contains(ProcessSignals, name)
+}
 
 // StartDeadlineSeconds is how long the host waits for a started application
 // to accept a connection on its port. A runtime that boots and binds fits; a
@@ -107,6 +133,16 @@ type Request struct {
 	UnixNanos int64             `json:"unix_nanos,omitempty"`
 	Hostname  string            `json:"hostname,omitempty"`
 	Secrets   map[string]string `json:"secrets,omitempty"`
+	// User is the template user. A resume carries it on every restore, and
+	// the guest runs everything a caller asks for as this user.
+	User string `json:"user,omitempty"`
+	// Process names a detached process.
+	Process string `json:"process,omitempty"`
+	// StdoutOffset and StderrOffset are where a process read starts.
+	StdoutOffset int64 `json:"stdout_offset,omitempty"`
+	StderrOffset int64 `json:"stderr_offset,omitempty"`
+	// Signal is the name a process signal sends.
+	Signal string `json:"signal,omitempty"`
 }
 
 // Error is a stable error from the agent.
@@ -123,6 +159,27 @@ type Result struct {
 	ExitCode int    `json:"exit_code"`
 	TimedOut bool   `json:"timed_out,omitempty"`
 	Error    *Error `json:"error,omitempty"`
+	// Process reports one detached process. The output of a read comes first,
+	// as stdout and stderr frames.
+	Process *ProcessState `json:"process,omitempty"`
+	// Running is how many detached processes run now.
+	Running int `json:"running,omitempty"`
+}
+
+// ProcessState is what the guest knows about one detached process.
+type ProcessState struct {
+	ID       string `json:"id"`
+	Running  bool   `json:"running"`
+	ExitCode int    `json:"exit_code"`
+	// StdoutOffset and StderrOffset are where the next read starts.
+	StdoutOffset int64 `json:"stdout_offset"`
+	StderrOffset int64 `json:"stderr_offset"`
+	// StdoutLost and StderrLost count the bytes a read asked for that the
+	// guest no longer holds.
+	StdoutLost int64 `json:"stdout_lost"`
+	StderrLost int64 `json:"stderr_lost"`
+	// More is true when a read stopped at its limit with output left.
+	More bool `json:"more"`
 }
 
 // NormalizeExec applies the exec defaults and rejects values outside the

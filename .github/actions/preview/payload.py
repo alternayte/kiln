@@ -64,7 +64,7 @@ def main(argv):
     env = os.environ
 
     if what == "template":
-        print(json.dumps({
+        body = {
             "name": env["NAME"],
             "image": env["IMAGE"],
             "vcpus": int(env["VCPUS"]),
@@ -77,7 +77,34 @@ def main(argv):
             # sandbox holds the application's files and serves nothing.
             "start": shlex.split(env["START"]),
             "port": int(env["PORT"]),
-        }))
+        }
+        # This build's own login. It pulls from the registry of the image, and
+        # the host holds it in memory for the build.
+        if env.get("REGISTRY_TOKEN"):
+            body["credential"] = {
+                "username": env.get("REGISTRY_USERNAME", ""),
+                "token": env["REGISTRY_TOKEN"],
+            }
+        print(json.dumps(body))
+        return 0
+
+    if what == "phases":
+        # One line per phase of this template and this sandbox, oldest first.
+        total = 0
+        for line in sys.stdin:
+            if not line.startswith("data:"):
+                continue
+            try:
+                event = json.loads(line[5:])
+            except ValueError:
+                continue
+            if "phase" not in event:
+                continue
+            if event.get("template") != env["NAME"] and event.get("sandbox_id") != env["SANDBOX"]:
+                continue
+            total += event.get("duration_ms", 0)
+            print(f"phase {event['phase']}: {event.get('duration_ms', 0)} ms")
+        print(f"phases total: {total} ms")
         return 0
 
     if what == "check":

@@ -524,3 +524,12 @@ that had gone while its other threads still held the TAP. A zombie with other
 threads now counts as alive, and a stop that cannot see the exit says so. The
 bug is old, and this is the first time it was seen in the kept CI logs. The
 timing fits a slow shutdown; the failure was not reproduced on demand.
+
+## 2026-10-30 — CI spends less on repeat work
+
+`kvm` no longer runs on a tag, because the release workflow runs the same
+gates. A push that changes only `docs/`, `web/`, `sdk/`, `*.md` or
+`.github/actions/preview/` runs `check` and skips the gates. The kvm jobs use
+the Go cache. `gh workflow run kvm -f gate=sec` runs one gate. The release
+workflow is unchanged, so every release still runs every gate from a clean
+build.

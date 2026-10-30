@@ -533,3 +533,5 @@ gates. A push that changes only `docs/`, `web/`, `sdk/`, `*.md` or
 the Go cache. `gh workflow run kvm -f gate=sec` runs one gate. The release
 workflow is unchanged, so every release still runs every gate from a clean
 build.
+One run per ref is kept, so a hand-run gate cancels a run in progress on the
+same branch.

@@ -61,7 +61,7 @@ docker run -d --name kiln-gateway --network host \
   -e KILN_HOST_TOKEN="$(sudo jq -r .bearer_token /var/lib/kiln/config.json)" \
   -e KILN_OPERATOR_EMAIL=you@example.com \
   -e KILN_OPERATOR_PASSWORD='at least eight characters' \
-  ghcr.io/alternayte/kiln-gateway:v0.9.0
+  ghcr.io/alternayte/kiln-gateway:v0.9.1
 ```
 
 `--network host` is what lets it reach `127.0.0.1:8080`. Put a TLS

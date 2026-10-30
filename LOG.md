@@ -513,3 +513,14 @@ them apart once the allowed name resolves. Not verified: a real preview on
 c-dash, the deployment calls against GitHub, and two private repositories
 building together, because they need the live host on this version. The live
 host needs `conntrack` installed before it takes an egress change.
+
+## 2026-10-30 — v0.9.1, a stop waits for the process to release its TAP
+
+v0.9.0 is a tag with no release: its gates failed, so nothing published. Two
+gates failed with `Resource busy` on the TAP at the snapshot boot of a build.
+The two boots of a build share one TAP. When a guest overran the shutdown grace
+the host killed it, and `processAlive` read a zombie main thread as a process
+that had gone while its other threads still held the TAP. A zombie with other
+threads now counts as alive, and a stop that cannot see the exit says so. The
+bug is old, and this is the first time it was seen in the kept CI logs. The
+timing fits a slow shutdown; the failure was not reproduced on demand.

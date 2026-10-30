@@ -219,6 +219,11 @@ func (f *Firecracker) Stop(ctx context.Context, vm *VM) error {
 	}
 	if !vm.waitExit(ctx, stopGrace) {
 		_ = KillProcess(vm.PID)
+		// A VM started next may need this TAP, so the stop ends only when the
+		// process has released it. Saying so beats the EBUSY that follows.
+		if !vm.waitExit(ctx, stopGrace) {
+			return errors.Join(fmt.Errorf("runtime: %s did not exit after SIGKILL", vm.ID), vm.cleanup(true))
+		}
 	}
 	return vm.cleanup(true)
 }
@@ -664,7 +669,15 @@ func processAlive(pid int) bool {
 		return true
 	}
 	fields := strings.Fields(string(b)[i+1:])
-	return len(fields) == 0 || fields[0] != "Z"
+	if len(fields) == 0 || fields[0] != "Z" {
+		return true
+	}
+	// A zombie main thread does not mean the process is gone. Its other
+	// threads can still be exiting, and until the last one ends the process
+	// holds its files, and so its TAP device. The next VM on that TAP fails
+	// with EBUSY.
+	tasks, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", pid))
+	return err == nil && len(tasks) > 1
 }
 
 func removeCgroup(id string) error {

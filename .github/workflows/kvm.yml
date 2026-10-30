@@ -1,9 +1,16 @@
 name: kvm
 
 on:
+  # A tag runs the gates in the release workflow, so it does not run them here.
   push:
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      gate:
+        description: One gate to run, such as sec. Empty runs them all.
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,12 +22,32 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
+    outputs:
+      gates: ${{ steps.changes.outputs.gates }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # A push that changes no host or guest code cannot change what a gate
+      # proves, and every release still runs them all. A base this job cannot
+      # read, such as a new branch, runs the gates.
+      - id: changes
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          gates=true
+          if [ "$EVENT" != workflow_dispatch ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            if ! git diff --name-only "$BASE" "$GITHUB_SHA" \
+              | grep -Eqv '^(docs/|web/|sdk/|\.github/actions/preview/)|\.md$'; then
+              gates=false
+            fi
+          fi
+          echo "gates=$gates" | tee -a "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
       - uses: extractions/setup-just@v2
       # The gateway embeds the web UI, so the check builds it. Without bun
       # checks/web.sh fails, which is the point: a broken UI must not merge.
@@ -31,28 +58,33 @@ jobs:
 
   gate:
     needs: check
+    if: needs.check.outputs.gates == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        gate: [P0, P1, P2, P3, P4, P5, sec]
+        gate: ${{ fromJSON(inputs.gate && format('["{0}"]', inputs.gate) || '["P0","P1","P2","P3","P4","P5","sec"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
       - uses: extractions/setup-just@v2
+      # The gates run as root, so root must use the cache setup-go restored.
+      - run: |
+          echo "GOCACHE=$(go env GOCACHE)" >> "$GITHUB_ENV"
+          echo "GOMODCACHE=$(go env GOMODCACHE)" >> "$GITHUB_ENV"
       - run: sudo env "PATH=$PATH" bash scripts/dev-env.sh
       # kiln init writes the guest agent the binary carries, so the agent
       # is built first.
       - run: bash scripts/build-kilninit.sh
-      - run: sudo env "PATH=$PATH" go run ./cmd/kiln init
+      - run: sudo env "PATH=$PATH" "GOCACHE=$GOCACHE" "GOMODCACHE=$GOMODCACHE" go run ./cmd/kiln init
       # Docker sets the FORWARD policy to DROP. Kiln's chains are in the inet
       # family at the same priority and are registered later, so Docker's
       # policy would drop guest traffic before Kiln's chain sees it. The reply
       # arrives on the uplink, so both directions need a rule.
       - run: sudo iptables -I FORWARD 1 -i 'kiln-+' -j ACCEPT
       - run: sudo iptables -I FORWARD 1 -o 'kiln-+' -j ACCEPT
-      - run: sudo env "PATH=$PATH" just gate ${{ matrix.gate }}
+      - run: sudo env "PATH=$PATH" "GOCACHE=$GOCACHE" "GOMODCACHE=$GOMODCACHE" just gate ${{ matrix.gate }}

@@ -41,6 +41,10 @@ record and is older than the code in places; the specs win where they differ.
 - Root. `jailer` needs it; it drops each microVM to its own uid.
 - Ubuntu 24.04 or Debian 12 with `iproute2`, `nftables`, `conntrack`,
   `e2fsprogs` and `curl`. `scripts/dev-env.sh` installs them.
+- Disk under `/var/lib/kiln`: 50 GB or more. A template takes up to 2 GB per
+  1 GB of memory, a new sandbox needs its `disk_mb` free, and each tenant's
+  layer cache holds up to 4 GiB. See
+  [`infra/README.md`](infra/README.md#put-the-data-on-a-large-disk).
 - For public hostnames: a zone whose DNS is on Cloudflare, with a wildcard
   record that points at the host, and port 443 open. See
   [`infra/README.md`](infra/README.md#preview-setup-p6).
@@ -196,7 +200,7 @@ builds a template from it, runs one sandbox, publishes the port, and deletes
 everything when the pull request closes.
 
 ```yaml
-- uses: alternayte/kiln/.github/actions/preview@v0.9.3
+- uses: alternayte/kiln/.github/actions/preview@v0.9.4
   with:
     url: ${{ vars.KILN_URL }}
     api-key: ${{ secrets.KILN_API_KEY }}

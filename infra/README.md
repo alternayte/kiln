@@ -171,6 +171,31 @@ ports. After a code change, build and install the binary again, then
 `/var/lib/kiln/bin/kiln` keeps working; install the binary at the new path
 before you copy the new unit file.
 
+## Put the data on a large disk
+
+Everything Kiln stores lives under `/var/lib/kiln`. If the root partition is
+small and a larger disk is mounted elsewhere, bind-mount it, so no path changes.
+A sandbox that cannot find its `disk_mb` free is refused with `exhausted`. Stop
+every sandbox first, because a running microVM holds files open at the old path.
+
+```sh
+sudo systemctl stop kiln
+sudo mkdir -p /data/kiln
+sudo cp -a --sparse=always /var/lib/kiln/. /data/kiln/
+sudo mv /var/lib/kiln /var/lib/kiln.old
+sudo mkdir /var/lib/kiln
+echo '/data/kiln /var/lib/kiln none bind,x-systemd.requires-mounts-for=/data 0 0' | sudo tee -a /etc/fstab
+sudo systemctl daemon-reload
+sudo mount /var/lib/kiln
+sudo mkdir -p /etc/systemd/system/kiln.service.d
+printf '[Unit]\nRequiresMountsFor=/var/lib/kiln\n' | sudo tee /etc/systemd/system/kiln.service.d/data.conf
+sudo systemctl daemon-reload
+sudo systemctl start kiln
+```
+
+`--sparse=always` matters: a rootfs is a mostly empty file of its full size.
+Remove `/var/lib/kiln.old` once previews work.
+
 ## The gateway listener
 
 A gateway on another machine reaches the host over mTLS. `kiln init` has no

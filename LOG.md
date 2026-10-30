@@ -555,3 +555,12 @@ cost is decompression, not the download: on the Dedibox one 53 MB layer takes
 14 s to gunzip and 2.4 s to untar on tmpfs. tmpfs itself saves almost nothing.
 The cache now holds each layer decompressed. The file name carries the digest
 of the tar, because the layer digest covers bytes the cache no longer holds.
+
+## 2026-10-30 — v0.9.4, a failed run removes its template, and the data disk
+
+With the plain-tar cache, `layers` fell from about 90 s to 51 s, and a preview
+from about 140 s to 100 s. The third test commit then failed with `exhausted`:
+`/var/lib/kiln` was on the 20 GB root partition, and a run that failed at the
+sandbox step left its 1.6 GB template behind, invisible to `prune.sh`. The
+Action now removes the template of a failed run. On the Dedibox the data moved
+to the 213 GB `/data` by bind mount, and `infra/README.md` says how.

@@ -30,6 +30,13 @@ if [ "$FORK" = "true" ] && [ -n "$(tr -d '[:space:]' <<< "$ENV_LINES")" ]; then
   echo "this pull request comes from a fork, so env is not sent to its preview"
 fi
 
+# A template with no sandbox is invisible to prune.sh, which finds templates
+# through their sandboxes, so a failed run removes its own. Otherwise each one
+# holds its disk until its TTL.
+discard_template() {
+  api DELETE "/v1/templates/$name" > /dev/null || true
+}
+
 short="${SHA:0:7}"
 name="pr-${PR}-${short}"
 
@@ -58,6 +65,7 @@ if [ "$state" != "ready" ]; then
   # The event stream never ends, and it starts at the latest event. after=0
   # replays the tenant's history, and the time limit closes the stream.
   curl -sS --max-time 5 -H "Authorization: Bearer $KILN_API_KEY" "$KILN_URL/v1/events?after=0" >&2 || true
+  discard_template
   exit 1
 fi
 
@@ -65,6 +73,7 @@ body="$(NAME="$name" python3 "$here/payload.py" sandbox)"
 out="$(api POST /v1/sandboxes "$body")"
 if [ "$(status "$out")" != "201" ]; then
   echo "the sandbox was refused: $(payload "$out")" >&2
+  discard_template
   exit 1
 fi
 sandbox="$(payload "$out" | python3 "$here/payload.py" get id)"

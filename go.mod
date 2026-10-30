@@ -5,8 +5,10 @@ go 1.26.2
 require (
 	github.com/alternayte/auth-all v0.5.1
 	github.com/caddyserver/certmagic v0.25.4
+	github.com/coder/websocket v1.8.15
 	github.com/libdns/cloudflare v0.2.2
 	github.com/mdlayher/vsock v1.3.0
+	github.com/opencontainers/go-digest v1.0.0
 	github.com/regclient/regclient v0.11.6
 	golang.org/x/sys v0.48.0
 	modernc.org/sqlite v1.58.0
@@ -14,7 +16,6 @@ require (
 
 require (
 	github.com/caddyserver/zerossl v0.1.5 // indirect
-	github.com/coder/websocket v1.8.15 // indirect
 	github.com/docker/libtrust v0.0.0-20160708172513-aabc10ec26b7 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -30,7 +31,6 @@ require (
 	github.com/mholt/acmez/v3 v3.1.6 // indirect
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/ulikunitz/xz v0.5.16 // indirect

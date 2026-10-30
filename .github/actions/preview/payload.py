@@ -103,7 +103,8 @@ def main(argv):
             if event.get("template") != env["NAME"] and event.get("sandbox_id") != env["SANDBOX"]:
                 continue
             total += event.get("duration_ms", 0)
-            print(f"phase {event['phase']}: {event.get('duration_ms', 0)} ms")
+            note = f" ({event['reason']})" if event.get("reason") else ""
+            print(f"phase {event['phase']}: {event.get('duration_ms', 0)} ms{note}")
         print(f"phases total: {total} ms")
         return 0
 

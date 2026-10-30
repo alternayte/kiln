@@ -161,6 +161,10 @@ func (s *Server) deleteTenant(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
+	if err := s.Templates.RemoveLayerCache(id); err != nil {
+		s.writeErr(w, err)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

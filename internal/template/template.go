@@ -14,6 +14,8 @@ import (
 
 	"github.com/regclient/regclient"
 	"github.com/regclient/regclient/config"
+	"github.com/regclient/regclient/types/blob"
+	"github.com/regclient/regclient/types/descriptor"
 	"github.com/regclient/regclient/types/manifest"
 	"github.com/regclient/regclient/types/platform"
 	"github.com/regclient/regclient/types/ref"
@@ -34,6 +36,9 @@ type Builder struct {
 	Arch string
 	// OS selects the image platform. Defaults to linux.
 	OS string
+	// LayerCacheDir keeps the layers this tenant has pulled. Empty keeps them
+	// only for this import.
+	LayerCacheDir string
 }
 
 // RegistryCredential is one registry this build may authenticate to.
@@ -48,8 +53,9 @@ type ImportSpec struct {
 	Ref        string
 	RootfsPath string
 	SizeMB     int
-	// Phase hears how long each step took, and how it ended. It may be nil.
-	Phase func(name string, began time.Time, err error)
+	// Phase hears how long each step took, how it ended, and anything worth
+	// saying about it. It may be nil.
+	Phase func(name string, began time.Time, err error, note string)
 }
 
 // Imported reports what was pulled.
@@ -78,23 +84,33 @@ func (b *Builder) Import(ctx context.Context, spec ImportSpec) (Imported, error)
 	}
 	defer os.RemoveAll(tree)
 
-	report := func(name string, began time.Time, err error) {
+	report := func(name string, began time.Time, err error, note string) {
 		if spec.Phase != nil {
-			spec.Phase(name, began, err)
+			spec.Phase(name, began, err, note)
 		}
 	}
+	cacheDir := b.LayerCacheDir
+	if cacheDir == "" {
+		// One path for every build: a layer is always a file first.
+		cacheDir = tree + ".layers"
+		defer os.RemoveAll(cacheDir)
+	}
+	cache, err := newLayerCache(cacheDir, layerCacheLimit)
+	if err != nil {
+		return Imported{}, err
+	}
 	began := time.Now()
-	digest, err := b.pull(ctx, spec.Ref, tree)
-	report("layers", began, err)
+	digest, note, err := b.pull(ctx, spec.Ref, tree, cache)
+	report("layers", began, err, note)
 	if err != nil {
 		return Imported{}, err
 	}
 	began = time.Now()
 	if err := b.writeRootfs(ctx, tree, spec.RootfsPath, size); err != nil {
-		report("rootfs", began, err)
+		report("rootfs", began, err, "")
 		return Imported{}, err
 	}
-	report("rootfs", began, nil)
+	report("rootfs", began, nil, "")
 	return Imported{Digest: digest}, nil
 }
 
@@ -150,11 +166,23 @@ func (b *Builder) hosts() []config.Host {
 	return out
 }
 
-// pull resolves the platform image and applies its layers to root.
-func (b *Builder) pull(ctx context.Context, imageRef, root string) (string, error) {
+// pull resolves the platform image and applies its layers to root. The manifest
+// always comes from the registry, so a tenant that lost access to an image
+// fails here even when the cache holds every layer. It returns the digest and
+// a line that says how much the cache saved.
+func (b *Builder) pull(ctx context.Context, imageRef, root string, cache *layerCache) (string, string, error) {
+	digest, cached, total, err := b.pullLayers(ctx, imageRef, root, cache)
+	if err != nil {
+		return "", "", err
+	}
+	cache.evict()
+	return digest, fmt.Sprintf("%d of %d layers cached", cached, total), nil
+}
+
+func (b *Builder) pullLayers(ctx context.Context, imageRef, root string, cache *layerCache) (string, int, int, error) {
 	r, err := ref.New(imageRef)
 	if err != nil {
-		return "", fmt.Errorf("template: %s: %w", imageRef, err)
+		return "", 0, 0, fmt.Errorf("template: %s: %w", imageRef, err)
 	}
 	// The operator's own Docker credentials are deliberately not loaded: a
 	// tenant must not borrow them to reach a registry the operator can
@@ -164,51 +192,77 @@ func (b *Builder) pull(ctx context.Context, imageRef, root string) (string, erro
 
 	m, err := rc.ManifestGet(ctx, r)
 	if err != nil {
-		return "", fmt.Errorf("template: pull %s: %w", imageRef, err)
+		return "", 0, 0, fmt.Errorf("template: pull %s: %w", imageRef, err)
 	}
 	if m.IsList() {
 		desc, err := manifest.GetPlatformDesc(m, &platform.Platform{OS: b.os(), Architecture: b.arch()})
 		if err != nil {
-			return "", fmt.Errorf("template: %s: %w", imageRef, err)
+			return "", 0, 0, fmt.Errorf("template: %s: %w", imageRef, err)
 		}
 		r = r.SetDigest(desc.Digest.String())
 		m, err = rc.ManifestGet(ctx, r)
 		if err != nil {
-			return "", fmt.Errorf("template: pull %s: %w", imageRef, err)
+			return "", 0, 0, fmt.Errorf("template: pull %s: %w", imageRef, err)
 		}
 	}
 	img, ok := m.(manifest.Imager)
 	if !ok {
-		return "", fmt.Errorf("template: %s: manifest has no layers", imageRef)
+		return "", 0, 0, fmt.Errorf("template: %s: manifest has no layers", imageRef)
 	}
 	layers, err := img.GetLayers()
 	if err != nil {
-		return "", fmt.Errorf("template: %s: %w", imageRef, err)
+		return "", 0, 0, fmt.Errorf("template: %s: %w", imageRef, err)
 	}
+	cached := 0
 	for _, layer := range layers {
+		hit, err := applyCachedLayer(ctx, rc, r, layer, root, cache)
+		if err != nil {
+			return "", 0, 0, fmt.Errorf("template: %s: layer %s: %w", imageRef, layer.Digest, err)
+		}
+		if hit {
+			cached++
+		}
+	}
+	return m.GetDescriptor().Digest.String(), cached, len(layers), nil
+}
+
+// applyCachedLayer applies one layer from its file, pulling it first when the
+// cache does not hold it. It reports whether the cache held it.
+func applyCachedLayer(ctx context.Context, rc *regclient.RegClient, r ref.Ref, layer descriptor.Descriptor, root string, cache *layerCache) (bool, error) {
+	file, hit, err := cache.open(layer.Digest)
+	if err != nil {
+		return false, err
+	}
+	if !hit {
 		br, err := rc.BlobGet(ctx, r, layer)
 		if err != nil {
-			return "", fmt.Errorf("template: %s: layer %s: %w", imageRef, layer.Digest, err)
+			return false, err
 		}
-		tr, err := br.ToTarReader()
-		if err != nil {
-			br.Close()
-			return "", fmt.Errorf("template: %s: layer %s: %w", imageRef, layer.Digest, err)
-		}
-		tarReader, err := tr.GetTarReader()
-		if err == nil {
-			err = applyLayer(root, tarReader)
-		}
-		// Close the blob reader, not the tar reader: the tar reader wraps the
-		// response body, and only the blob reader releases the registry slot.
+		err = cache.add(layer.Digest, br)
+		// Only the blob reader releases the registry slot.
 		if closeErr := br.Close(); err == nil {
 			err = closeErr
 		}
 		if err != nil {
-			return "", fmt.Errorf("template: %s: layer %s: %w", imageRef, layer.Digest, err)
+			return false, err
+		}
+		if file, _, err = cache.open(layer.Digest); err != nil {
+			return false, err
+		}
+		if file == nil {
+			return false, fmt.Errorf("the pulled layer left the cache")
 		}
 	}
-	return m.GetDescriptor().Digest.String(), nil
+	defer file.Close()
+	tr, err := blob.NewReader(blob.WithReader(file), blob.WithDesc(layer)).ToTarReader()
+	if err != nil {
+		return hit, err
+	}
+	tarReader, err := tr.GetTarReader()
+	if err != nil {
+		return hit, err
+	}
+	return hit, applyLayer(root, tarReader)
 }
 
 func (b *Builder) arch() string {

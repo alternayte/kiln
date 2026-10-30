@@ -148,6 +148,17 @@ func TestSecAgentControls(t *testing.T) {
 			}
 		}
 	})
+	t.Run("GuestEndsWithoutAKill", func(t *testing.T) {
+		events, err := st.ListEventsSince(ctx, lastEvent, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range events {
+			if e.Template == agentTemplate && e.Phase == "setup" && e.DurationMS >= 4500 {
+				t.Errorf("setup took %d ms, which is the shutdown grace", e.DurationMS)
+			}
+		}
+	})
 	t.Run("User", func(t *testing.T) { checkUser(t, ctx, sbx, source) })
 	t.Run("Egress", func(t *testing.T) { checkEgressChange(t, ctx, st, sbx, source) })
 	t.Run("Processes", func(t *testing.T) { checkProcesses(t, ctx, st, sbx) })
@@ -226,6 +237,11 @@ func checkBuildFailures(t *testing.T, ctx context.Context, st store.Store, tmgr 
 		t.Error("the setup phase carries no error")
 	}
 
+	// The first build pulled every layer, so this one pulls none.
+	second, err := st.LastEventID(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	missing := base
 	missing.Name = "sec-agent-nouser"
 	missing.User = "no-such-user"
@@ -233,6 +249,25 @@ func checkBuildFailures(t *testing.T, ctx context.Context, st store.Store, tmgr 
 	t.Cleanup(func() { _ = tmgr.Delete(context.WithoutCancel(ctx), missing.Name) })
 	if !strings.Contains(info.Error, "no-such-user") {
 		t.Errorf("the missing user failed with %q", info.Error)
+	}
+	reused, err := st.ListEventsSince(ctx, second, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cachedAll := false
+	for _, e := range reused {
+		if e.Template != missing.Name || e.Phase != "layers" {
+			continue
+		}
+		var hit, total int
+		if _, err := fmt.Sscanf(e.Reason, "%d of %d layers cached", &hit, &total); err == nil && total > 0 && hit == total {
+			cachedAll = true
+		} else {
+			t.Errorf("the second build reports %q", e.Reason)
+		}
+	}
+	if !cachedAll {
+		t.Error("the second build reports no cached layers")
 	}
 
 	const token = "sec-gate-wrong-token-5d1e"

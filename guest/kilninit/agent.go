@@ -72,16 +72,17 @@ func writeResult(conn net.Conn, res guestproto.Result) {
 	_ = guestproto.WriteJSON(conn, guestproto.FrameResult, res)
 }
 
-// powerOff asks the kernel to power the guest off. Firecracker exits when the
-// guest does. The sync flushes every mounted filesystem first, so a stopped
+// powerOff ends the guest. Firecracker exits on the keyboard controller reset
+// that reboot=k sends, and it does not exit on a power off, which left the host
+// to wait out its grace and kill the VM. The sync flushes every mounted filesystem first, so a stopped
 // sandbox leaves a consistent image behind.
 func powerOff() {
 	unix.Sync()
 	// Leave a clean image behind. An overlay root may refuse the remount.
 	_ = unix.Mount("", "/", "", unix.MS_REMOUNT|unix.MS_RDONLY, "")
 	unix.Sync()
-	if err := unix.Reboot(unix.LINUX_REBOOT_CMD_POWER_OFF); err != nil {
-		log.Printf("poweroff: %v", err)
+	if err := unix.Reboot(unix.LINUX_REBOOT_CMD_RESTART); err != nil {
+		log.Printf("restart: %v", err)
 	}
 }
 

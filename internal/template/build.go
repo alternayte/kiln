@@ -173,6 +173,21 @@ func (m *Manager) dirOf(ctx context.Context, name string) string {
 	return m.TemplateDir(tenant, name)
 }
 
+// layerCacheDir is the directory of the layers one tenant has pulled.
+func (m *Manager) layerCacheDir(ctx context.Context) string {
+	tenant, ok := store.TenantFrom(ctx)
+	if !ok {
+		tenant = store.DefaultTenant
+	}
+	return filepath.Join(m.Root, "layers", tenant)
+}
+
+// RemoveLayerCache deletes the layers of one tenant. They are its data, so they
+// go with it.
+func (m *Manager) RemoveLayerCache(tenant string) error {
+	return os.RemoveAll(filepath.Join(m.Root, "layers", tenant))
+}
+
 // buildKey names one build of one tenant, because two tenants may build one
 // template name at the same time.
 func buildKey(ctx context.Context, name string) string {
@@ -356,8 +371,14 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 	if builder.Credentials, err = withBuildCredential(creds, req.Image, req.Credential); err != nil {
 		return err
 	}
-	phase := func(name string, began time.Time, err error) { m.phaseEvent(ctx, req.Name, name, began, err) }
-	imported, err := builder.Import(ctx, ImportSpec{Ref: req.Image, RootfsPath: rootfs, SizeMB: req.DiskMB, Phase: phase})
+	phase := func(name string, began time.Time, err error) { m.phaseEvent(ctx, req.Name, name, began, err, "") }
+	builder.LayerCacheDir = m.layerCacheDir(ctx)
+	imported, err := builder.Import(ctx, ImportSpec{
+		Ref: req.Image, RootfsPath: rootfs, SizeMB: req.DiskMB,
+		Phase: func(name string, began time.Time, err error, note string) {
+			m.phaseEvent(ctx, req.Name, name, began, err, note)
+		},
+	})
 	if err != nil {
 		return err
 	}
@@ -501,12 +522,13 @@ func (m *Manager) bootForSnapshot(ctx context.Context, req BuildRequest, rootfs,
 
 // phaseEvent records how long one step of a build took. A failed step carries
 // its error, so a failed build shows where it stopped.
-func (m *Manager) phaseEvent(ctx context.Context, name, phase string, began time.Time, failure error) {
+func (m *Manager) phaseEvent(ctx context.Context, name, phase string, began time.Time, failure error, note string) {
 	event := store.Event{
 		Template:   name,
 		Phase:      phase,
 		DurationMS: time.Since(began).Milliseconds(),
 		At:         m.now(),
+		Reason:     note,
 	}
 	if failure != nil {
 		event.Reason = failure.Error()

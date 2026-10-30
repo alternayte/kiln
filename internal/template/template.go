@@ -3,6 +3,7 @@
 package template
 
 import (
+	"archive/tar"
 	"context"
 	"fmt"
 	"io"
@@ -14,7 +15,6 @@ import (
 
 	"github.com/regclient/regclient"
 	"github.com/regclient/regclient/config"
-	"github.com/regclient/regclient/types/blob"
 	"github.com/regclient/regclient/types/descriptor"
 	"github.com/regclient/regclient/types/manifest"
 	"github.com/regclient/regclient/types/platform"
@@ -254,15 +254,7 @@ func applyCachedLayer(ctx context.Context, rc *regclient.RegClient, r ref.Ref, l
 		}
 	}
 	defer file.Close()
-	tr, err := blob.NewReader(blob.WithReader(file), blob.WithDesc(layer)).ToTarReader()
-	if err != nil {
-		return hit, err
-	}
-	tarReader, err := tr.GetTarReader()
-	if err != nil {
-		return hit, err
-	}
-	return hit, applyLayer(root, tarReader)
+	return hit, applyLayer(root, tar.NewReader(file))
 }
 
 func (b *Builder) arch() string {

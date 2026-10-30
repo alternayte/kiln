@@ -546,3 +546,12 @@ every build was killed. `kilninit` now restarts the guest, and Firecracker exits
 on that reset. This is also the likely source of the v0.9.0 `Resource busy`
 failure, because it made the kill path the normal path. The kvm workflow went
 from about 8 minutes to about 4.
+
+## 2026-10-30 — v0.9.3, the layer cache holds plain tars
+
+The v0.9.2 cache missed its goal. With the Docker build cache on, 8 of 9 layers
+were cached and `layers` still took 89 s, against 105 s with none cached. The
+cost is decompression, not the download: on the Dedibox one 53 MB layer takes
+14 s to gunzip and 2.4 s to untar on tmpfs. tmpfs itself saves almost nothing.
+The cache now holds each layer decompressed. The file name carries the digest
+of the tar, because the layer digest covers bytes the cache no longer holds.

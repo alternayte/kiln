@@ -6,16 +6,20 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	digest "github.com/opencontainers/go-digest"
+	"github.com/regclient/regclient/pkg/archive"
 )
 
 // layerCacheLimit is how much one tenant's cache holds after a pull.
 const layerCacheLimit = 4 << 30
 
-// layerCache keeps pulled layers as files named by their digest. The host
-// checks the digest before it keeps a file, so the name proves the content.
+// layerCache keeps pulled layers as plain tar files. Decompression is most of
+// what a layer costs: on the Dedibox one 53 MB layer takes 14 s to gunzip and
+// 2.4 s to untar. A file is named by the layer digest and the digest of its tar,
+// because the layer digest covers the compressed bytes the cache no longer holds.
 type layerCache struct {
 	dir   string
 	limit int64
@@ -28,22 +32,31 @@ func newLayerCache(dir string, limit int64) (*layerCache, error) {
 	return &layerCache{dir: dir, limit: limit}, nil
 }
 
-// path refuses a digest that is not one, because the name becomes a file name
+// prefix refuses a digest that is not one, because the name becomes a file name
 // and the manifest comes from a registry.
-func (c *layerCache) path(d digest.Digest) (string, error) {
+func (c *layerCache) prefix(d digest.Digest) (string, error) {
 	if err := d.Validate(); err != nil {
 		return "", fmt.Errorf("layer digest %q: %w", d, err)
 	}
 	return filepath.Join(c.dir, d.Algorithm().String()+"-"+d.Encoded()), nil
 }
 
-// open returns the file of one layer and marks it as recently used. A file
-// that no longer matches its digest is removed and counts as a miss, so a
-// corrupt cache pulls again.
+// open returns the tar of one layer and marks it as recently used. A file that
+// no longer matches its name is removed and counts as a miss, so a corrupt cache
+// pulls again.
 func (c *layerCache) open(d digest.Digest) (*os.File, bool, error) {
-	path, err := c.path(d)
+	prefix, err := c.prefix(d)
 	if err != nil {
 		return nil, false, err
+	}
+	matches, err := filepath.Glob(prefix + ".*")
+	if err != nil || len(matches) == 0 {
+		return nil, false, err
+	}
+	path := matches[0]
+	want, err := digest.Parse("sha256:" + strings.TrimPrefix(filepath.Ext(path), "."))
+	if err != nil {
+		return nil, false, os.Remove(path)
 	}
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
@@ -52,7 +65,7 @@ func (c *layerCache) open(d digest.Digest) (*os.File, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	verifier := d.Verifier()
+	verifier := want.Verifier()
 	if _, err := io.Copy(verifier, f); err != nil {
 		f.Close()
 		return nil, false, err
@@ -73,10 +86,11 @@ func (c *layerCache) open(d digest.Digest) (*os.File, bool, error) {
 	return f, true, nil
 }
 
-// add writes one layer and keeps it only when it matches its digest. The rename
-// means a concurrent build reads a whole file or none.
+// add decompresses one layer and keeps it only when the compressed bytes match
+// the layer digest. The rename means a concurrent build reads a whole file or
+// none.
 func (c *layerCache) add(d digest.Digest, src io.Reader) error {
-	path, err := c.path(d)
+	prefix, err := c.prefix(d)
 	if err != nil {
 		return err
 	}
@@ -86,7 +100,20 @@ func (c *layerCache) add(d digest.Digest, src io.Reader) error {
 	}
 	defer os.Remove(tmp.Name())
 	verifier := d.Verifier()
-	if _, err := io.Copy(io.MultiWriter(tmp, verifier), src); err != nil {
+	compressed := io.TeeReader(src, verifier)
+	plain, err := archive.Decompress(compressed)
+	if err != nil {
+		tmp.Close()
+		return err
+	}
+	sum := digest.SHA256.Digester()
+	if _, err := io.Copy(io.MultiWriter(tmp, sum.Hash()), plain); err != nil {
+		tmp.Close()
+		return err
+	}
+	// A decompressor may stop before the last bytes of its input, and the
+	// digest covers them.
+	if _, err := io.Copy(io.Discard, compressed); err != nil {
 		tmp.Close()
 		return err
 	}
@@ -96,7 +123,7 @@ func (c *layerCache) add(d digest.Digest, src io.Reader) error {
 	if !verifier.Verified() {
 		return fmt.Errorf("the registry sent bytes that do not match %s", d)
 	}
-	return os.Rename(tmp.Name(), path)
+	return os.Rename(tmp.Name(), prefix+"."+sum.Digest().Encoded())
 }
 
 // evict removes the least recently used layers until the cache fits. A build

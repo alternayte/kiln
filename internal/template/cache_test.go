@@ -32,7 +32,12 @@ func TestLayerCacheKeepsOnlyWhatMatchesItsDigest(t *testing.T) {
 	f.Close()
 
 	// A file corrupted on disk counts as a miss, and goes.
-	path, _ := c.path(good)
+	prefix, _ := c.prefix(good)
+	matches, _ := filepath.Glob(prefix + ".*")
+	if len(matches) != 1 {
+		t.Fatalf("the cache holds %v", matches)
+	}
+	path := matches[0]
 	if err := os.WriteFile(path, []byte("rotten"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -70,16 +75,17 @@ func TestLayerCacheEvictsTheLeastRecentlyUsed(t *testing.T) {
 		if err := c.add(l.d, strings.NewReader(l.content)); err != nil {
 			t.Fatal(err)
 		}
-		path, _ := c.path(l.d)
+		prefix, _ := c.prefix(l.d)
+		matches, _ := filepath.Glob(prefix + ".*")
 		at := time.Now().Add(-l.age)
-		if err := os.Chtimes(path, at, at); err != nil {
+		if err := os.Chtimes(matches[0], at, at); err != nil {
 			t.Fatal(err)
 		}
 	}
 	c.evict()
 	names, _ := filepath.Glob(filepath.Join(dir, "*"))
-	recentPath, _ := c.path(recent)
-	if len(names) != 1 || names[0] != recentPath {
-		t.Fatalf("the cache holds %v, want only %s", names, recentPath)
+	recentPrefix, _ := c.prefix(recent)
+	if len(names) != 1 || !strings.HasPrefix(names[0], recentPrefix) {
+		t.Fatalf("the cache holds %v, want only %s", names, recentPrefix)
 	}
 }

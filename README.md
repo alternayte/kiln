@@ -196,7 +196,7 @@ builds a template from it, runs one sandbox, publishes the port, and deletes
 everything when the pull request closes.
 
 ```yaml
-- uses: alternayte/kiln/.github/actions/preview@v0.9.1
+- uses: alternayte/kiln/.github/actions/preview@v0.9.2
   with:
     url: ${{ vars.KILN_URL }}
     api-key: ${{ secrets.KILN_API_KEY }}

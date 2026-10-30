@@ -535,3 +535,14 @@ workflow is unchanged, so every release still runs every gate from a clean
 build.
 One run per ref is kept, so a hand-run gate cancels a run in progress on the
 same branch.
+
+## 2026-10-30 — v0.9.2, a layer cache and a guest that ends without a kill
+
+Done: `docs/specs/template-layer-cache.md`. The first c-dash preview with phase
+timing spent 70 s of 130 s in `layers`, so each tenant now keeps its layers, up
+to 4 GiB. It also spent 5.1 s in a `setup` phase with no commands, which was the
+shutdown grace: Firecracker does not exit on a guest power off, so every boot of
+every build was killed. `kilninit` now restarts the guest, and Firecracker exits
+on that reset. This is also the likely source of the v0.9.0 `Resource busy`
+failure, because it made the kill path the normal path. The kvm workflow went
+from about 8 minutes to about 4.

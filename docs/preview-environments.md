@@ -5,7 +5,7 @@ reviewer clicks a link instead of reading a diff and imagining the result.
 
 Two things reach for this, and they use the same API.
 
-- **CI**, on every pull request. See [the Action](../.github/actions/preview/README.md), which a workflow pins by tag: `alternayte/kiln/.github/actions/preview@v0.9.1`. The workflow needs `deployments: write`, because the preview reports a GitHub deployment with its URL.
+- **CI**, on every pull request. See [the Action](../.github/actions/preview/README.md), which a workflow pins by tag: `alternayte/kiln/.github/actions/preview@v0.9.2`. The workflow needs `deployments: write`, because the preview reports a GitHub deployment with its URL.
 - **A coding agent**, which has finished a feature and wants to prove it runs.
   That is this page.
 

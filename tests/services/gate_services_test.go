@@ -191,7 +191,9 @@ func TestGateServices(t *testing.T) {
 		found := false
 		eventCtx, stop := context.WithTimeout(ctx, 5*time.Second)
 		defer stop()
-		_ = cli.Events(eventCtx, 0, origin, func(e client.Event) error {
+		// The client sends no after for zero, and the stream then starts at the
+		// latest event. One replays the history that matters here.
+		_ = cli.Events(eventCtx, 1, origin, func(e client.Event) error {
 			found = found || strings.Contains(e.Reason, "service postgres exited with")
 			return nil
 		})

@@ -267,6 +267,7 @@ func (m *Manager) sleepLocked(ctx context.Context, id string) error {
 		return err
 	}
 	dir := filepath.Join(runtime.SandboxDir(m.cfg.Root, id), "sleep")
+	m.fillPages(id)
 	if err := m.cfg.Runtime.Pause(ctx, vm); err != nil {
 		return err
 	}

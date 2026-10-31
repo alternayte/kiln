@@ -64,6 +64,8 @@ func (p *pageFactory) arm(failAt int) {
 
 type failingPages struct{}
 
+func (f *failingPages) Fill() error { return nil }
+
 func (f *failingPages) Start(context.Context, string, string) error {
 	return errors.New("gate: injected page-source failure")
 }

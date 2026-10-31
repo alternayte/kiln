@@ -426,6 +426,7 @@ func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Sna
 	}
 	dir := filepath.Join(m.cfg.Root, "snapshots", snapID)
 	var files runtime.SnapshotFiles
+	m.fillPages(id)
 	if stop {
 		if err := m.cfg.Runtime.Pause(ctx, vm); err != nil {
 			return store.Snapshot{}, err
@@ -512,6 +513,7 @@ func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bo
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, err
 	}
+	m.fillPages(id)
 	files, err := m.cfg.Runtime.Snapshot(ctx, vm, dir)
 	if err != nil {
 		_ = os.RemoveAll(dir)
@@ -805,6 +807,20 @@ func (m *Manager) running(ctx context.Context, id string) (*runtime.VM, error) {
 }
 
 // vmFor returns the in-memory VM handle of one sandbox row.
+// fillPages asks the page fault source to load the pages a snapshot is about to
+// read. A failure costs only time: the snapshot faults those pages one by one.
+func (m *Manager) fillPages(id string) {
+	m.mu.Lock()
+	pages := m.pages[id]
+	m.mu.Unlock()
+	if pages == nil {
+		return
+	}
+	if err := pages.Fill(); err != nil {
+		log.Printf("sandbox: %s: fill: %v", id, err)
+	}
+}
+
 func (m *Manager) vmFor(row store.Sandbox) (*runtime.VM, error) {
 	m.mu.Lock()
 	vm := m.vms[row.ID]

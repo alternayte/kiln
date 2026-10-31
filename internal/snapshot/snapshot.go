@@ -21,6 +21,10 @@ type PageFaultSource interface {
 	// Start serves memPath at socketPath and returns once that socket is
 	// ready for Firecracker to connect.
 	Start(ctx context.Context, memPath, socketPath string) error
+	// Fill asks the source to load every page the guest has not touched. A
+	// snapshot reads all of guest memory, and one fault per page is the slow
+	// part of that. The call does not wait for the fill to end.
+	Fill() error
 	// Stop stops the source. It is idempotent.
 	Stop() error
 }
@@ -88,6 +92,19 @@ func (p *Process) Start(ctx context.Context, memPath, socketPath string) error {
 			return fmt.Errorf("snapshot: snapfault did not listen on %s", socketPath)
 		}
 	}
+}
+
+// Fill signals the process. A page fault that arrives during the fill is still
+// served, so the caller can start its snapshot at once.
+func (p *Process) Fill() error {
+	pid := p.PID
+	if pid == 0 && p.cmd != nil && p.cmd.Process != nil {
+		pid = p.cmd.Process.Pid
+	}
+	if pid == 0 {
+		return errors.New("snapshot: no snapfault process")
+	}
+	return syscall.Kill(pid, syscall.SIGUSR1)
 }
 
 // Stop stops the process. It is idempotent.

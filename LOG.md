@@ -573,3 +573,11 @@ get 2 minutes plus 120 ms per MiB of guest memory. Firecracker cannot abandon a
 write, so a client that leaves no longer cancels the snapshot, and a resume no
 longer depends on the context of that client. Before this, a cancel left the VM
 paused.
+
+## 2026-10-31 — v0.9.6, a snapshot loads its pages in blocks
+
+A snapshot of a 4096 MB restored sandbox took 138 s. Firecracker reads all of
+guest memory, and that caused 1,048,649 faults, one per 4 KiB page, at about
+31 MB/s. `snapfault` now takes a SIGUSR1 just before a snapshot, a fork or a
+sleep, and copies the untouched pages in 2 MiB blocks between faults. Restores
+stay lazy. A `snapfault` from an older binary ignores the signal.

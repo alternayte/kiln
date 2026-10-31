@@ -10,6 +10,9 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -32,6 +35,9 @@ const (
 	// 64-bit Linux: _IOWR(0xAA, number, 40 or 32 bytes).
 	uffdioCopyNumber     = 0xc028aa03
 	uffdioZeropageNumber = 0xc020aa04
+	// fillBlock is how much one step of a fill copies between two looks at the
+	// fault queue.
+	fillBlock = 2 << 20
 )
 
 type uffdioCopyArgs struct {
@@ -51,7 +57,8 @@ type uffdioZeropageArgs struct {
 
 // Serve listens on sockPath, takes the UFFD descriptor and the guest memory
 // layout from Firecracker, and serves pages from memPath on demand. Pages are
-// read from the file one at a time, never preloaded.
+// read from the file one at a time, and preloaded only when a SIGUSR1 asks for
+// a fill before a snapshot.
 func Serve(ctx context.Context, memPath, sockPath string, ready func()) error {
 	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
 		return err
@@ -162,12 +169,45 @@ func servePages(ctx context.Context, memPath string, mappings []mapping, uffd in
 	}
 	page := make([]byte, maxPage)
 	events := make([]byte, uffdMsgSize*16)
+	fillAsked := make(chan os.Signal, 1)
+	signal.Notify(fillAsked, syscall.SIGUSR1)
+	defer signal.Stop(fillAsked)
+	var active *fill
+	filled := false
+	// The fill runs on this one thread, between faults, so a fault never waits
+	// for more than one block and a removed page cannot race with a copy.
+	step := func() {
+		if active == nil {
+			return
+		}
+		done, err := active.next(mem, mappings, uffd)
+		if err != nil {
+			// Faults still serve what the fill did not reach.
+			log.Printf("snapshot: fill stopped: %v", err)
+			active = nil
+		} else if done {
+			log.Printf("snapshot: fill done in %s", time.Since(active.began))
+			active = nil
+			filled = true
+		}
+	}
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		select {
+		case <-fillAsked:
+			if active == nil && !filled {
+				active = &fill{began: time.Now(), buf: make([]byte, fillBlock)}
+			}
+		default:
+		}
+		timeout := 200
+		if active != nil {
+			timeout = 0
+		}
 		pfds := []unix.PollFd{{Fd: int32(uffd), Events: unix.POLLIN}}
-		n, err := unix.Poll(pfds, 200)
+		n, err := unix.Poll(pfds, timeout)
 		if err != nil && err != unix.EINTR {
 			return fmt.Errorf("snapshot: poll uffd: %w", err)
 		}
@@ -175,6 +215,7 @@ func servePages(ctx context.Context, memPath string, mappings []mapping, uffd in
 			if pfds[0].Revents&(unix.POLLHUP|unix.POLLERR) != 0 {
 				return nil
 			}
+			step()
 			continue
 		}
 		rn, err := unix.Read(uffd, events)
@@ -203,7 +244,76 @@ func servePages(ctx context.Context, memPath string, mappings []mapping, uffd in
 				}
 			}
 		}
+		step()
 	}
+}
+
+// fill walks guest memory and copies every page the guest has not touched.
+type fill struct {
+	began  time.Time
+	buf    []byte
+	region int
+	offset uint64
+}
+
+// next copies one block and reports whether the walk reached the end.
+func (f *fill) next(mem *os.File, mappings []mapping, uffd int) (bool, error) {
+	if f.region >= len(mappings) {
+		return true, nil
+	}
+	m := mappings[f.region]
+	pageSize := m.PageSize
+	if pageSize == 0 {
+		pageSize = 4096
+	}
+	size := uint64(len(f.buf)) &^ (pageSize - 1)
+	if size == 0 {
+		size = pageSize
+		f.buf = make([]byte, size)
+	}
+	if rest := m.Size - f.offset; rest < size {
+		size = rest
+	}
+	buf := f.buf[:size]
+	clear(buf)
+	if _, err := mem.ReadAt(buf, int64(m.Offset+f.offset)); err != nil && err != io.EOF {
+		return false, fmt.Errorf("read memory file: %w", err)
+	}
+	if err := copyRange(uffd, m.BaseHostVirtAddr+f.offset, buf, pageSize); err != nil {
+		return false, err
+	}
+	f.offset += size
+	if f.offset >= m.Size {
+		f.region++
+		f.offset = 0
+	}
+	return f.region >= len(mappings), nil
+}
+
+// copyRange copies buf to dst and steps over each page already in place. The
+// kernel stops a copy at the first such page and reports how far it got.
+func copyRange(uffd int, dst uint64, buf []byte, pageSize uint64) error {
+	for done := uint64(0); done < uint64(len(buf)); {
+		args := uffdioCopyArgs{
+			Dst: dst + done,
+			Src: uint64(uintptr(unsafe.Pointer(&buf[done]))),
+			Len: uint64(len(buf)) - done,
+		}
+		_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(uffd), uffdioCopyNumber, uintptr(unsafe.Pointer(&args)))
+		switch {
+		case errno == 0:
+			return nil
+		case errno == unix.EEXIST:
+			done += pageSize
+		case errno == unix.EAGAIN:
+			if args.Copy > 0 {
+				done += uint64(args.Copy)
+			}
+		default:
+			return fmt.Errorf("uffdio_copy %#x: %w", args.Dst, errno)
+		}
+	}
+	return nil
 }
 
 // servePage copies one page from the memory file into the faulting address.

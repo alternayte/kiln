@@ -4,7 +4,7 @@
 Creates a sandbox by restoring a template snapshot, and serves the sandbox API. A create never boots a kernel. The resume hooks correct the clock, the entropy pool, the hostname and the vsock channel before user processes run.
 
 ## Decisions
-- `kiln snapfault` is a separate process, one per restoring VM. It serves guest memory pages from the template memory file through userfaultfd and keeps written pages private to that VM. Pages are faulted on demand, never preloaded. The separate process keeps Go garbage collection out of the page-fault path.
+- `kiln snapfault` is a separate process, one per restoring VM. It serves guest memory pages from the template memory file through userfaultfd and keeps written pages private to that VM. Pages are faulted on demand. They are preloaded only just before a snapshot of that VM, which reads every page anyway. The separate process keeps Go garbage collection out of the page-fault path.
 - Create allocates a sparse overlay of the template's `disk_mb` as the writable drive, opens the template memory file read-only, starts `snapfault`, launches Firecracker under jailer, loads the snapshot, and resumes.
 - `kilninit` mounts an overlay with the template rootfs as lower and the overlay as upper, then pivots into it. Create copies no rootfs.
 - On resume, before user processes run, `kilninit` writes host-supplied entropy with `RNDADDENTROPY`, sets the clock from the host, sets the hostname to the sandbox ID, and reconnects vsock. The sandbox reports `running` only after a fresh vsock hello.

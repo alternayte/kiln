@@ -115,6 +115,16 @@ func prepareRoot(root string) error {
 	if err := unix.Mount("tmpfs", "/dev/shm", "tmpfs", 0, ""); err != nil && !errors.Is(err, unix.EBUSY) {
 		return fmt.Errorf("/dev/shm: %w", err)
 	}
+	// devtmpfs has none of these links, and a stock image's scripts read them:
+	// bash process substitution opens /dev/fd/63.
+	for link, target := range map[string]string{
+		"/dev/fd": "/proc/self/fd", "/dev/stdin": "/proc/self/fd/0",
+		"/dev/stdout": "/proc/self/fd/1", "/dev/stderr": "/proc/self/fd/2",
+	} {
+		if err := os.Symlink(target, link); err != nil && !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("%s: %w", link, err)
+		}
+	}
 	for _, target := range []string{"proc", "sys", "dev"} {
 		if err := unix.Mount("/"+target, filepath.Join(root, target), "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
 			return fmt.Errorf("bind %s: %w", target, err)

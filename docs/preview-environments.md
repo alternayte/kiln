@@ -23,6 +23,51 @@ kiln preview up --image ghcr.io/acme/shop:a1b2c3d --port 8000 --start '/app/serv
 kiln preview down
 ```
 
+## A stack with services
+
+A template names service images beside its application image. They all run in
+one microVM, and each service name resolves to `127.0.0.1`. The services start
+and the seed commands run before the template snapshot, so every sandbox
+restores with the database running and its data loaded.
+
+```yaml
+# services.yaml
+- name: postgres
+  image: postgres:16
+  port: 5432
+  ready: ["pg_isready"]
+  env:
+    POSTGRES_HOST_AUTH_METHOD: trust
+```
+
+```sh
+kiln preview up --image ghcr.io/acme/shop:a1b2c3d --port 8000 \
+  --services-file services.yaml --seed 'npm run migrate' --seed 'npm run seed'
+```
+
+No service gets a hostname unless you publish its port. Nothing restarts a
+service: `GET /v1/events` and `kiln logs <id>` report how it ended. A template
+with `port` and no `start` runs the command its image names.
+
+Two services cannot share a port, because they share one network. A service's
+`env` comes from the template only, because it runs before any sandbox exists.
+Do not put a production credential in it: the value is in the template snapshot.
+
+## One test shard per fork
+
+A fork holds the running stack and its own copy of the data, so one seeded stack
+serves every shard of a test suite. Run one fork per shard, and let your test
+runner split the tests. For isolation per test, a per-test copy of a Postgres
+template database is faster than a fork.
+
+```sh
+kiln preview up --image ghcr.io/acme/shop:a1b2c3d --port 8000 \
+  --services-file services.yaml --seed 'npm run seed' --fork-count 3 --json | jq -r '.forks[]'
+```
+
+The Action takes the same as `services`, `seed` and `fork-count`, and outputs
+`fork-ids`.
+
 ## Once per tenant: the registry credential
 
 The host pulls your image. The sandbox never does, because the sandbox runs

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/alternayte/kiln/internal/apispec"
 )
 
@@ -28,9 +30,12 @@ var (
 // the preview Action, which calls this command.
 type previewOptions struct {
 	name, image, start, registryUsername, envFile, visibility string
+	servicesFile, seedFile                                    string
+	noServiceEnv                                              bool
 	port, vcpus, memoryMB, diskMB, ttlSeconds, idleSeconds    int
+	forkCount                                                 int
 	publish                                                   []int
-	egress, setup                                             []string
+	egress, setup, seed                                       []string
 	metadata, group                                           map[string]string
 	timeout                                                   time.Duration
 }
@@ -48,7 +53,7 @@ func (c *cli) cmdPreview(args []string) error {
 	return usagef("kiln preview up --image X --port N", "unknown command %q", "preview "+args[0])
 }
 
-const previewUsage = "kiln preview up --image X --port N [--start CMD] [--name NAME] [--publish PORT] [--env-file FILE|-] [--egress-allow HOST] [--setup CMD] [--vcpus N] [--memory-mb N] [--disk-mb N] [--ttl-seconds N] [--idle-seconds N] [--visibility public|team] [--metadata K=V] [--group K=V] [--registry-username NAME] [--timeout D]"
+const previewUsage = "kiln preview up --image X --port N [--start CMD] [--name NAME] [--publish PORT] [--env-file FILE|-] [--egress-allow HOST] [--setup CMD] [--vcpus N] [--memory-mb N] [--disk-mb N] [--ttl-seconds N] [--idle-seconds N] [--visibility public|team] [--metadata K=V] [--group K=V] [--registry-username NAME] [--services-file FILE] [--no-service-env] [--seed-file FILE] [--seed CMD] [--fork-count N] [--timeout D]"
 
 // parsePreview reads the flags of preview up and preview down.
 func parsePreview(args []string) (*previewOptions, error) {
@@ -63,6 +68,10 @@ func parsePreview(args []string) (*previewOptions, error) {
 			return nil, usagef(previewUsage, "unexpected argument %q", args[i])
 		}
 		if name == "json" {
+			continue
+		}
+		if name == "no-service-env" {
+			o.noServiceEnv = true
 			continue
 		}
 		if !hasValue {
@@ -106,6 +115,14 @@ func parsePreview(args []string) (*previewOptions, error) {
 			o.egress = append(o.egress, strings.Fields(value)...)
 		case "setup":
 			o.setup = append(o.setup, value)
+		case "seed":
+			o.seed = append(o.seed, value)
+		case "services-file":
+			o.servicesFile = value
+		case "seed-file":
+			o.seedFile = value
+		case "fork-count":
+			err = number(&o.forkCount)
 		case "publish":
 			for _, word := range strings.Fields(value) {
 				port, perr := strconv.Atoi(word)
@@ -178,6 +195,14 @@ func (c *cli) previewUp(args []string) error {
 	if err != nil {
 		return err
 	}
+	services, err := readServices(o.servicesFile, o.noServiceEnv)
+	if err != nil {
+		return err
+	}
+	seed, err := readSeed(o.seedFile, o.seed)
+	if err != nil {
+		return err
+	}
 	if o.name == "" {
 		o.name = previewName(o.group)
 	}
@@ -191,6 +216,12 @@ func (c *cli) previewUp(args []string) error {
 	}
 	if len(start) > 0 {
 		template["start"] = start
+	}
+	if len(services) > 0 {
+		template["services"] = services
+	}
+	if len(seed) > 0 {
+		template["seed"] = seed
 	}
 	// The token comes from the environment, so it reaches no command line.
 	if token := os.Getenv("KILN_REGISTRY_TOKEN"); token != "" {
@@ -245,6 +276,25 @@ func (c *cli) previewUp(args []string) error {
 	}
 	c.printEvents(o.name, sandbox.ID)
 
+	// One sandbox id per fork, for one test shard each. The caller named these
+	// values and asked for the copies.
+	forks := []string{}
+	if o.forkCount > 0 {
+		var made struct {
+			Sandboxes []struct {
+				ID string `json:"id"`
+			} `json:"sandboxes"`
+		}
+		path := "/v1/sandboxes/" + url.PathEscape(sandbox.ID) + "/fork"
+		if _, err := c.call(c.ctx, "POST", path, map[string]any{"count": o.forkCount, "allow_secret_fork": len(env) > 0}, &made); err != nil {
+			c.discardSandbox(sandbox.ID, o.name)
+			return err
+		}
+		for _, fork := range made.Sandboxes {
+			forks = append(forks, fork.ID)
+		}
+	}
+
 	// The previous preview goes last, so no caller is left with a hostname
 	// that has already been retired.
 	if _, err := c.pruneGroup(o.group, o.name); err != nil {
@@ -253,14 +303,18 @@ func (c *cli) previewUp(args []string) error {
 
 	next := "kiln logs " + sandbox.ID
 	if c.json {
-		printJSON(c.out, map[string]any{"url": first, "urls": urls, "sandbox_id": sandbox.ID, "template": o.name, "next": next})
+		printJSON(c.out, map[string]any{"url": first, "urls": urls, "sandbox_id": sandbox.ID, "forks": forks, "template": o.name, "next": next})
 		return nil
 	}
 	fmt.Fprintln(c.out, first)
 	for _, port := range o.publish {
 		fmt.Fprintf(c.errOut, "port %d: %s\n", port, urls[strconv.Itoa(port)])
 	}
-	fmt.Fprintf(c.errOut, "sandbox: %s\nnext: %s\n", sandbox.ID, next)
+	fmt.Fprintf(c.errOut, "sandbox: %s\n", sandbox.ID)
+	for _, fork := range forks {
+		fmt.Fprintf(c.errOut, "fork: %s\n", fork)
+	}
+	fmt.Fprintf(c.errOut, "next: %s\n", next)
 	return nil
 }
 
@@ -294,6 +348,10 @@ func (c *cli) pruneGroup(group map[string]string, keep string) ([]string, error)
 		return nil, err
 	}
 	removed := []string{}
+	// Every sandbox goes before any template: a template with a live fork
+	// refuses the delete.
+	templates := []string{}
+	seen := map[string]bool{}
 	for _, row := range rows {
 		if row.DestroyedAt != "" || (keep != "" && row.Template == keep) || !inGroup(row.Metadata, group) {
 			continue
@@ -303,15 +361,55 @@ func (c *cli) pruneGroup(group map[string]string, keep string) ([]string, error)
 			return removed, err
 		}
 		removed = append(removed, row.ID)
-		if row.Template == "" {
-			continue
+		if row.Template != "" && !seen[row.Template] {
+			seen[row.Template] = true
+			templates = append(templates, row.Template)
 		}
-		// The template holds the snapshot, so it goes once its sandbox has.
-		if _, err := c.call(c.ctx, "DELETE", "/v1/templates/"+url.PathEscape(row.Template), nil, nil); err != nil && !isNotFound(err) {
+	}
+	for _, name := range templates {
+		// The template holds the snapshot, so it goes once its sandboxes have.
+		if _, err := c.call(c.ctx, "DELETE", "/v1/templates/"+url.PathEscape(name), nil, nil); err != nil && !isNotFound(err) {
 			return removed, err
 		}
 	}
 	return removed, nil
+}
+
+// readServices reads a YAML or JSON list of services. Without env strips every
+// service env, for a preview from a fork.
+func readServices(path string, withoutEnv bool) ([]map[string]any, error) {
+	if path == "" {
+		return nil, nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, usagef(previewUsage, "--services-file: %v", err)
+	}
+	var services []map[string]any
+	if err := yaml.Unmarshal(b, &services); err != nil {
+		return nil, usagef(previewUsage, "--services-file: %v", err)
+	}
+	if withoutEnv {
+		for _, service := range services {
+			delete(service, "env")
+		}
+	}
+	return services, nil
+}
+
+// readSeed reads a YAML or JSON list of commands, then adds the --seed flags.
+func readSeed(path string, flags []string) ([]string, error) {
+	var seed []string
+	if path != "" {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil, usagef(previewUsage, "--seed-file: %v", err)
+		}
+		if err := yaml.Unmarshal(b, &seed); err != nil {
+			return nil, usagef(previewUsage, "--seed-file: %v", err)
+		}
+	}
+	return append(seed, flags...), nil
 }
 
 func inGroup(metadata map[string]any, group map[string]string) bool {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -247,28 +248,47 @@ func TestBuildAttachesUnderTheProtectedID(t *testing.T) {
 // A start with no port has no readiness, and a port with no start never
 // listens. A template that names one without the other would build, and the
 // sandbox from it would answer nothing.
-func TestBuildRequestRefusesHalfAStartCommand(t *testing.T) {
-	base := BuildRequest{
-		Name: "app", Image: "docker.io/library/python:3.12-slim",
-		VCPUs: 1, MemoryMB: 512, DiskMB: 2048, EgressAllow: []string{},
+func TestBuildRequestRefusesAStartWithNoPort(t *testing.T) {
+	base := BuildRequest{Name: "a", Image: "i", VCPUs: 1, MemoryMB: 1, DiskMB: 1, EgressAllow: []string{}}
+	refused := base
+	refused.Start = []string{"run"}
+	if err := refused.Validate(); !IsInvalid(err) {
+		t.Fatalf("a start with no port: %v", err)
 	}
-	only := base
-	only.Start = []string{"/app/server"}
-	if err := only.Validate(); err == nil {
-		t.Error("a start with no port was accepted")
+	accepted := base
+	accepted.StartPort = 80
+	if err := accepted.Validate(); err != nil {
+		t.Fatalf("a port with no start runs the image command: %v", err)
 	}
-	port := base
-	port.StartPort = 8080
-	if err := port.Validate(); err == nil {
-		t.Error("a port with no start was accepted")
+}
+
+func TestBuildRequestChecksServices(t *testing.T) {
+	base := BuildRequest{Name: "a", Image: "i", VCPUs: 1, MemoryMB: 1, DiskMB: 1, EgressAllow: []string{}}
+	cases := []struct {
+		name     string
+		services []ServiceRequest
+		port     int
+		mention  []string
+	}{
+		{"one port twice", []ServiceRequest{{Name: "one", Image: "i", Port: 5432}, {Name: "two", Image: "i", Port: 5432}}, 0, []string{"one", "two", "5432"}},
+		{"the port of the application", []ServiceRequest{{Name: "one", Image: "i", Port: 80}}, 80, []string{"one", "application"}},
+		{"a name that escapes", []ServiceRequest{{Name: "../x", Image: "i"}}, 0, []string{"../x"}},
+		{"one name twice", []ServiceRequest{{Name: "one", Image: "i"}, {Name: "one", Image: "i"}}, 0, []string{"one"}},
+		{"no image", []ServiceRequest{{Name: "one"}}, 0, []string{"one"}},
 	}
-	both := base
-	both.Start = []string{"/app/server"}
-	both.StartPort = 8080
-	if err := both.Validate(); err != nil {
-		t.Errorf("a start with its port was refused: %v", err)
-	}
-	if err := base.Validate(); err != nil {
-		t.Errorf("a template with neither was refused: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := base
+			req.Services, req.StartPort = tc.services, tc.port
+			err := req.Validate()
+			if !IsInvalid(err) {
+				t.Fatalf("got %v", err)
+			}
+			for _, word := range tc.mention {
+				if !strings.Contains(err.Error(), word) {
+					t.Errorf("%q does not name %q", err, word)
+				}
+			}
+		})
 	}
 }

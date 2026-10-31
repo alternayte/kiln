@@ -231,6 +231,26 @@
           "note": {
             "type": "string"
           },
+          "services": {
+            "items": {
+              "properties": {
+                "exit_code": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "output": {
+                  "type": "string"
+                },
+                "running": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
           "start": {
             "type": "object"
           }
@@ -302,6 +322,23 @@
           },
           "sandboxes": {
             "type": "integer"
+          },
+          "services": {
+            "items": {
+              "properties": {
+                "image": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "port": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
           },
           "snapshot_bytes": {
             "type": "integer"
@@ -2699,6 +2736,18 @@
                   },
                   "port": {
                     "type": "integer"
+                  },
+                  "seed": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "services": {
+                    "items": {
+                      "type": "object"
+                    },
+                    "type": "array"
                   },
                   "setup": {
                     "items": {

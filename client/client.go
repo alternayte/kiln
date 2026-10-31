@@ -142,8 +142,25 @@ type TemplateRequest struct {
 	EgressAllow []string `json:"egress_allow"`
 	// User is who everything a caller asks for runs as. Empty is root.
 	User string `json:"user,omitempty"`
+	// Start and Port run the application. A port with no start runs the
+	// command the image names.
+	Start []string `json:"start,omitempty"`
+	Port  int      `json:"port,omitempty"`
+	// Services run beside the application, and Seed runs once they are ready.
+	Services []TemplateService `json:"services,omitempty"`
+	Seed     []string          `json:"seed,omitempty"`
 	// Credential pulls the images of this build and goes no further.
 	Credential *TemplateCredential `json:"credential,omitempty"`
+}
+
+// TemplateService is one image that runs beside the application.
+type TemplateService struct {
+	Name  string            `json:"name"`
+	Image string            `json:"image"`
+	Env   map[string]string `json:"env,omitempty"`
+	Port  int               `json:"port,omitempty"`
+	Start []string          `json:"start,omitempty"`
+	Ready []string          `json:"ready,omitempty"`
 }
 
 // TemplateCredential is the registry login of one build.
@@ -534,6 +551,28 @@ func (c *Client) Health(ctx context.Context) (Health, error) {
 	var out Health
 	if err := c.do(ctx, http.MethodGet, "/v1/health", nil, &out); err != nil {
 		return Health{}, err
+	}
+	return out, nil
+}
+
+// ServiceLog is what the guest kept of one service.
+type ServiceLog struct {
+	Name     string `json:"name"`
+	Running  bool   `json:"running"`
+	ExitCode int    `json:"exit_code"`
+	Output   string `json:"output"`
+}
+
+// SandboxLogs is the answer of Logs.
+type SandboxLogs struct {
+	Services []ServiceLog `json:"services"`
+}
+
+// Logs reads what the guest kept of one sandbox.
+func (c *Client) Logs(ctx context.Context, id string) (SandboxLogs, error) {
+	var out SandboxLogs
+	if err := c.do(ctx, http.MethodGet, "/v1/sandboxes/"+id+"/logs", nil, &out); err != nil {
+		return SandboxLogs{}, err
 	}
 	return out, nil
 }

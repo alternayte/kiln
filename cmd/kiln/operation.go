@@ -176,7 +176,19 @@ func setField(body map[string]any, f apispec.Field, v string) error {
 		}
 		// An empty value names an empty list, which egress_allow needs.
 		if v != "" {
-			if f.Items == "integer" {
+			if f.Items == "object" {
+				// One JSON object per flag, or one JSON list of them.
+				var many []any
+				if err := json.Unmarshal([]byte(v), &many); err == nil {
+					list = append(list, many...)
+				} else {
+					var one map[string]any
+					if err := json.Unmarshal([]byte(v), &one); err != nil {
+						return fmt.Errorf("want a JSON object or a list of them: %v", err)
+					}
+					list = append(list, one)
+				}
+			} else if f.Items == "integer" {
 				n, err := strconv.Atoi(v)
 				if err != nil {
 					return err
@@ -433,6 +445,23 @@ func (c *cli) printLogs(decoded any) {
 	if note, _ := obj["note"].(string); note != "" {
 		fmt.Fprintln(c.out, note)
 	}
+	services, _ := obj["services"].([]any)
+	defer func() {
+		for _, entry := range services {
+			service, _ := entry.(map[string]any)
+			if running, _ := service["running"].(bool); running {
+				fmt.Fprintf(c.out, "service %v: running\n", service["name"])
+			} else {
+				fmt.Fprintf(c.out, "service %v: exited with code %v\n", service["name"], cell(service["exit_code"]))
+			}
+			if output, _ := service["output"].(string); output != "" {
+				fmt.Fprint(c.out, output)
+				if !strings.HasSuffix(output, "\n") {
+					fmt.Fprintln(c.out)
+				}
+			}
+		}
+	}()
 	start, ok := obj["start"].(map[string]any)
 	if !ok {
 		return

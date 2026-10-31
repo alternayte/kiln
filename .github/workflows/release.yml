@@ -33,7 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gate: [P0, P1, P2, P3, P4, P5, sec, upgrade]
+        gate: [P0, P1, P2, P3, P4, P5, sec, upgrade, services]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

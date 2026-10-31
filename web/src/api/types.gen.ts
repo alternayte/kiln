@@ -94,6 +94,12 @@ export type SandboxLogs = {
         [key: string]: unknown;
     };
     note?: string;
+    services?: Array<{
+        exit_code?: number;
+        name?: string;
+        output?: string;
+        running?: boolean;
+    }>;
     start?: {
         [key: string]: unknown;
     };
@@ -123,6 +129,11 @@ export type Template = {
     name?: string;
     port?: number;
     sandboxes?: number;
+    services?: Array<{
+        image?: string;
+        name?: string;
+        port?: number;
+    }>;
     snapshot_bytes?: number;
     start?: Array<string>;
     state?: string;
@@ -1418,6 +1429,10 @@ export type CreateTemplateData = {
         memory_mb: number;
         name: string;
         port?: number;
+        seed?: Array<string>;
+        services?: Array<{
+            [key: string]: unknown;
+        }>;
         setup?: Array<string>;
         start?: Array<string>;
         ttl_seconds?: number;

@@ -197,7 +197,7 @@ class GeneratedClient:
         """List the templates of this tenant."""
         return self._json("GET", "/v1/templates")
 
-    def create_template(self, name: str, image: str, vcpus: int, memory_mb: int, disk_mb: int, egress_allow: list[str], setup: Optional[list[str]] = None, ttl_seconds: Optional[int] = None, start: Optional[list[str]] = None, port: Optional[int] = None, user: Optional[str] = None, credential: Optional[dict[str, Any]] = None) -> Any:
+    def create_template(self, name: str, image: str, vcpus: int, memory_mb: int, disk_mb: int, egress_allow: list[str], setup: Optional[list[str]] = None, ttl_seconds: Optional[int] = None, start: Optional[list[str]] = None, port: Optional[int] = None, services: Optional[list[dict[str, Any]]] = None, seed: Optional[list[str]] = None, user: Optional[str] = None, credential: Optional[dict[str, Any]] = None) -> Any:
         """Build a template from an OCI image. The build runs after the answer."""
         body = {k: v for k, v in {
             "name": name,
@@ -210,6 +210,8 @@ class GeneratedClient:
             "ttl_seconds": ttl_seconds,
             "start": start,
             "port": port,
+            "services": services,
+            "seed": seed,
             "user": user,
             "credential": credential,
         }.items() if v is not None}

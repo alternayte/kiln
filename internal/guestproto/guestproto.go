@@ -46,6 +46,10 @@ const (
 	OpTerminal  = "terminal"
 	OpStart     = "start"
 	OpAwait     = "await"
+	// OpServiceStart runs one service in its own root and answers once it is
+	// ready. OpServiceAwait answers when that service ends.
+	OpServiceStart = "service_start"
+	OpServiceAwait = "service_await"
 	// OpStartOutput reads the output the guest keeps of the start command.
 	OpStartOutput = "start_output"
 	// OpCheckUser asks whether the image holds a user, while a template builds.
@@ -143,6 +147,9 @@ type Request struct {
 	// StdoutOffset and StderrOffset are where a process read starts.
 	StdoutOffset int64 `json:"stdout_offset,omitempty"`
 	StderrOffset int64 `json:"stderr_offset,omitempty"`
+	// Service names a service, and Ready is the command that says it answers.
+	Service string   `json:"service,omitempty"`
+	Ready   []string `json:"ready,omitempty"`
 	// Signal is the name a process signal sends.
 	Signal string `json:"signal,omitempty"`
 }
@@ -170,7 +177,42 @@ type Result struct {
 	// that command has ended. ExitCode then holds how it ended.
 	Output string `json:"output,omitempty"`
 	Exited bool   `json:"exited,omitempty"`
+	// Services reports each service of this guest.
+	Services []ServiceState `json:"services,omitempty"`
 }
+
+// ServiceState is what the guest knows about one service.
+type ServiceState struct {
+	Name     string `json:"name"`
+	Running  bool   `json:"running"`
+	ExitCode int    `json:"exit_code"`
+	Output   string `json:"output"`
+}
+
+// ImageConfig is what one image says about how it runs. The host writes it
+// into the rootfs while a template builds, and the guest reads it.
+type ImageConfig struct {
+	Env        []string `json:"env,omitempty"`
+	WorkingDir string   `json:"working_dir,omitempty"`
+	User       string   `json:"user,omitempty"`
+	Prefix     []string `json:"prefix,omitempty"`
+	Cmd        []string `json:"cmd,omitempty"`
+}
+
+// Command is the command the image names.
+func (c ImageConfig) Command() []string {
+	return append(append([]string{}, c.Prefix...), c.Cmd...)
+}
+
+// The paths a template build writes for the guest.
+const (
+	// AppImageConfig is the image config of the application.
+	AppImageConfig = "/.kiln/app.json"
+	// ServiceRoots holds one root per service.
+	ServiceRoots = "/.kiln/roots"
+	// ServiceImageConfigs holds one config file per service.
+	ServiceImageConfigs = "/.kiln/images"
+)
 
 // ProcessState is what the guest knows about one detached process.
 type ProcessState struct {

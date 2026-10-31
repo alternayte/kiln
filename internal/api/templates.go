@@ -21,8 +21,21 @@ type createTemplateRequest struct {
 	Start       []string  `json:"start"`
 	Port        int       `json:"port"`
 	User        string    `json:"user"`
+	// Services run beside the application, and Seed runs once they are ready.
+	Services []templateServiceRequest `json:"services"`
+	Seed     []string                 `json:"seed"`
 	// Credential pulls the images of this build and goes no further.
 	Credential *templateCredential `json:"credential"`
+}
+
+// templateServiceRequest is one service of a template.
+type templateServiceRequest struct {
+	Name  string            `json:"name"`
+	Image string            `json:"image"`
+	Env   map[string]string `json:"env"`
+	Port  int               `json:"port"`
+	Start []string          `json:"start"`
+	Ready []string          `json:"ready"`
 }
 
 // templateCredential is the registry login of one build.
@@ -49,6 +62,8 @@ type templateResponse struct {
 	Start         []string  `json:"start,omitempty"`
 	Port          int       `json:"port,omitempty"`
 	User          string    `json:"user,omitempty"`
+	// Services holds each name, image and port, and never the env.
+	Services []store.TemplateService `json:"services,omitempty"`
 }
 
 func templateJSON(info template.Info) templateResponse {
@@ -73,6 +88,7 @@ func templateJSON(info template.Info) templateResponse {
 		Start:         info.Start,
 		Port:          info.StartPort,
 		User:          info.User,
+		Services:      info.Services,
 	}
 }
 
@@ -103,6 +119,13 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 		Start:       req.Start,
 		StartPort:   req.Port,
 		User:        req.User,
+		Seed:        req.Seed,
+	}
+	for _, service := range req.Services {
+		build.Services = append(build.Services, template.ServiceRequest{
+			Name: service.Name, Image: service.Image, Env: service.Env,
+			Port: service.Port, Start: service.Start, Ready: service.Ready,
+		})
 	}
 	if req.Credential != nil {
 		build.Credential = &template.Credential{Username: req.Credential.Username, Token: req.Credential.Token}

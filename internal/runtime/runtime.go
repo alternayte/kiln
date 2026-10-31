@@ -60,6 +60,8 @@ type AdoptSpec struct {
 type SnapshotFiles struct {
 	StatePath string
 	MemPath   string
+	// OverlayPath is the copy of the writable drive, when the snapshot took one.
+	OverlayPath string
 }
 
 // Runtime starts, pauses, resumes, snapshots and stops microVMs. A sleep
@@ -74,6 +76,8 @@ type Runtime interface {
 	Resume(ctx context.Context, vm *VM) error
 	// Snapshot pauses the VM, writes a full snapshot into dir, and resumes it.
 	Snapshot(ctx context.Context, vm *VM, dir string) (SnapshotFiles, error)
+	// SnapshotWithDisk is Snapshot with a copy of the writable drive in dir.
+	SnapshotWithDisk(ctx context.Context, vm *VM, dir string) (SnapshotFiles, error)
 	// SnapshotPaused writes a full snapshot of an already paused VM and leaves
 	// it paused. The caller resumes or stops it.
 	SnapshotPaused(ctx context.Context, vm *VM, dir string) (SnapshotFiles, error)

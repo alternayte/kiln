@@ -87,6 +87,7 @@ type StartOutput struct {
 	Output   string
 	Exited   bool
 	ExitCode int
+	Services []guestproto.ServiceState
 }
 
 // StartOutput reads the kept output of the start command. A guest from an
@@ -96,5 +97,33 @@ func (vm *VM) StartOutput(ctx context.Context) (StartOutput, error) {
 	if err != nil {
 		return StartOutput{}, err
 	}
-	return StartOutput{Output: res.Output, Exited: res.Exited, ExitCode: res.ExitCode}, nil
+	return StartOutput{Output: res.Output, Exited: res.Exited, ExitCode: res.ExitCode, Services: res.Services}, nil
+}
+
+// ServiceRequest runs one service in the snapshot boot.
+type ServiceRequest struct {
+	Name  string
+	Cmd   []string
+	Env   map[string]string
+	Port  int
+	Ready []string
+}
+
+// StartService runs one service and returns once it is ready.
+func (vm *VM) StartService(ctx context.Context, req ServiceRequest, deadlineSeconds int) error {
+	_, _, _, err := vm.ask(ctx, guestproto.Request{
+		Op: guestproto.OpServiceStart, Service: req.Name, Cmd: req.Cmd, Env: req.Env,
+		Port: req.Port, Ready: req.Ready, TimeoutSeconds: deadlineSeconds,
+	})
+	return err
+}
+
+// AwaitService blocks until one service ends. The caller runs it in its own
+// goroutine for the life of the sandbox.
+func (vm *VM) AwaitService(ctx context.Context, name string) (StartResult, error) {
+	res, _, _, err := vm.ask(ctx, guestproto.Request{Op: guestproto.OpServiceAwait, Service: name})
+	if err != nil {
+		return StartResult{}, err
+	}
+	return StartResult{ExitCode: res.ExitCode, Output: res.Output}, nil
 }

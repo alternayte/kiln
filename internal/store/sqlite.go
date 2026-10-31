@@ -178,11 +178,11 @@ func (s *sqliteStore) StartTemplateBuild(ctx context.Context, t Template) error 
 	case errors.Is(err, sql.ErrNoRows):
 		if _, err := tx.ExecContext(ctx, `INSERT INTO templates (
 			tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-			egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			tenantOf(ctx), t.Name, t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
 			encoded, t.State, nullString(t.Error), t.CreatedAt.Unix(), nullIntPtr(t.TTLSeconds),
-			nullString(encodeStart(t.Start)), nullInt(t.StartPort), nullString(t.User),
+			nullString(encodeStart(t.Start)), nullInt(t.StartPort), nullString(t.User), nullString(encodeServices(t.Services)),
 		); err != nil {
 			return err
 		}
@@ -194,11 +194,11 @@ func (s *sqliteStore) StartTemplateBuild(ctx context.Context, t Template) error 
 		if _, err := tx.ExecContext(ctx, `UPDATE templates SET
 			image_ref = ?, image_digest = ?, vcpus = ?, memory_mb = ?, disk_mb = ?,
 			egress_allow = ?, state = ?, error = NULL, created_at = ?, ttl_seconds = ?,
-			start_cmd = ?, start_port = ?, run_as = ?
+			start_cmd = ?, start_port = ?, run_as = ?, services = ?
 		WHERE tenant_id = ? AND name = ?`,
 			t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
 			encoded, t.State, t.CreatedAt.Unix(), nullIntPtr(t.TTLSeconds),
-			nullString(encodeStart(t.Start)), nullInt(t.StartPort), nullString(t.User), tenantOf(ctx), t.Name,
+			nullString(encodeStart(t.Start)), nullInt(t.StartPort), nullString(t.User), nullString(encodeServices(t.Services)), tenantOf(ctx), t.Name,
 		); err != nil {
 			return err
 		}
@@ -245,7 +245,7 @@ func (s *sqliteStore) GetTemplate(ctx context.Context, name string) (Template, e
 	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as
+		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services
 	FROM templates WHERE name = ?`+clause, append([]any{name}, args...)...)
 	t, err := scanTemplate(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -258,7 +258,7 @@ func (s *sqliteStore) ListTemplates(ctx context.Context) ([]Template, error) {
 	clause, args := scope(ctx, "tenant_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as
+		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services
 	FROM templates WHERE 1 = 1`+clause+` ORDER BY name`, args...)
 	if err != nil {
 		return nil, err
@@ -475,10 +475,11 @@ func scanTemplate(row scanner) (Template, error) {
 		start   sql.NullString
 		port    sql.NullInt64
 		runAs   sql.NullString
+		svc     sql.NullString
 	)
 	if err := row.Scan(
 		&t.TenantID, &t.Name, &t.ImageRef, &t.ImageDigest, &t.VCPUs, &t.MemoryMB, &t.DiskMB,
-		&egress, &t.State, &message, &created, &ttl, &start, &port, &runAs,
+		&egress, &t.State, &message, &created, &ttl, &start, &port, &runAs, &svc,
 	); err != nil {
 		return Template{}, err
 	}
@@ -501,7 +502,24 @@ func scanTemplate(row scanner) (Template, error) {
 	}
 	t.StartPort = int(port.Int64)
 	t.User = runAs.String
+	if svc.Valid && svc.String != "" {
+		if err := json.Unmarshal([]byte(svc.String), &t.Services); err != nil {
+			return Template{}, fmt.Errorf("store: template %s: services: %w", t.Name, err)
+		}
+	}
 	return t, nil
+}
+
+// encodeServices is the services column. No services is NULL.
+func encodeServices(services []TemplateService) string {
+	if len(services) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(services)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 func nullString(s string) any {
@@ -1232,7 +1250,7 @@ func scanTenant(row scanner) (Tenant, error) {
 func (s *sqliteStore) ListTemplatesPastTTL(ctx context.Context, now time.Time) ([]Template, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as
+		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services
 	FROM templates
 	WHERE ttl_seconds IS NOT NULL AND created_at + ttl_seconds <= ?
 	ORDER BY tenant_id, name`, now.Unix())

@@ -607,3 +607,17 @@ The `sdk` workflow has failed on every tag so far. PyPI answers
 registered for `kiln-sdk` or `@alternayte/kiln`. That registration needs the
 maintainer's PyPI and npm accounts.
 
+## 2026-10-31 — template services, and a fork that keeps its disk
+
+Done: `docs/specs/template-services.md`. A template names service images. Each
+unpacks into its own root, kilninit runs it chrooted there, and the template
+snapshot holds the running stack with its seed data.
+
+The spec exposed an older fault. A fork, a restore of a listed snapshot and a
+template all restored onto a blank drive, while a fork's memory had the original
+drive mounted. Files survived only while the page cache held them, which is why
+P4 passed. A snapshot now copies the drive while the guest is paused, and each
+copy restores onto its own copy. A fork therefore pauses its origin for longer,
+and the drive counts toward `max_snapshot_bytes`. Listed snapshots from before
+this have no copy and keep the old fault.
+

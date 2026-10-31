@@ -5,12 +5,14 @@ package template
 import (
 	"archive/tar"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/regclient/regclient"
@@ -20,6 +22,7 @@ import (
 	"github.com/regclient/regclient/types/platform"
 	"github.com/regclient/regclient/types/ref"
 
+	"github.com/alternayte/kiln/internal/guestproto"
 	"github.com/alternayte/kiln/internal/runtime"
 )
 
@@ -53,6 +56,9 @@ type ImportSpec struct {
 	Ref        string
 	RootfsPath string
 	SizeMB     int
+	// Services are the images that unpack beside the application, each into
+	// its own root.
+	Services []ServiceRequest
 	// Phase hears how long each step took, how it ended, and anything worth
 	// saying about it. It may be nil.
 	Phase func(name string, began time.Time, err error, note string)
@@ -63,6 +69,8 @@ type Imported struct {
 	// Digest is the resolved image digest (or the platform manifest digest
 	// for a multi-platform index).
 	Digest string
+	// Config is what the application image says about how it runs.
+	Config guestproto.ImageConfig
 }
 
 // Import pulls the image, applies its layers to a tree, injects kilninit,
@@ -100,10 +108,45 @@ func (b *Builder) Import(ctx context.Context, spec ImportSpec) (Imported, error)
 		return Imported{}, err
 	}
 	began := time.Now()
-	digest, note, err := b.pull(ctx, spec.Ref, tree, cache)
+	digest, config, note, err := b.pull(ctx, spec.Ref, tree, cache)
 	report("layers", began, err, note)
 	if err != nil {
 		return Imported{}, err
+	}
+	if err := writeImageConfig(tree, guestproto.AppImageConfig, config); err != nil {
+		return Imported{}, err
+	}
+	for _, service := range spec.Services {
+		began = time.Now()
+		root := filepath.Join(tree, filepath.FromSlash(guestproto.ServiceRoots), service.Name)
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return Imported{}, err
+		}
+		_, serviceConfig, note, err := b.pull(ctx, service.Image, root, cache)
+		report("layers_"+service.Name, began, err, note)
+		if err != nil {
+			return Imported{}, fmt.Errorf("service %s: %w", service.Name, err)
+		}
+		if len(service.Start) == 0 && len(serviceConfig.Command()) == 0 {
+			return Imported{}, fmt.Errorf("service %s: it has no start, and image %s names no command", service.Name, service.Image)
+		}
+		if err := writeImageConfig(tree, guestproto.ServiceImageConfigs+"/"+service.Name+".json", serviceConfig); err != nil {
+			return Imported{}, err
+		}
+		if err := ensureMountpoints(root); err != nil {
+			return Imported{}, err
+		}
+		if err := writeResolvConf(root); err != nil {
+			return Imported{}, err
+		}
+		if err := writeHosts(root, spec.Services); err != nil {
+			return Imported{}, err
+		}
+	}
+	if len(spec.Services) > 0 {
+		if err := writeHosts(tree, spec.Services); err != nil {
+			return Imported{}, err
+		}
 	}
 	began = time.Now()
 	if err := b.writeRootfs(ctx, tree, spec.RootfsPath, size); err != nil {
@@ -111,7 +154,27 @@ func (b *Builder) Import(ctx context.Context, spec ImportSpec) (Imported, error)
 		return Imported{}, err
 	}
 	report("rootfs", began, nil, "")
-	return Imported{Digest: digest}, nil
+	return Imported{Digest: digest, Config: config}, nil
+}
+
+// writeImageConfig stores what one image says about how it runs, for the guest.
+func writeImageConfig(root, guestPath string, config guestproto.ImageConfig) error {
+	b, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+	return writeTreeFile(root, strings.TrimPrefix(guestPath, "/"), b, 0o644)
+}
+
+// writeHosts names every service on 127.0.0.1, because all of them share one
+// network. A recipe reaches a service by name.
+func writeHosts(root string, services []ServiceRequest) error {
+	names := make([]string, 0, len(services))
+	for _, service := range services {
+		names = append(names, service.Name)
+	}
+	content := "127.0.0.1 localhost " + strings.Join(names, " ") + "\n::1 localhost\n"
+	return writeTreeFile(root, "etc/hosts", []byte(content), 0o644)
 }
 
 // writeRootfs injects what the guest needs and writes the ext4 image.
@@ -170,19 +233,20 @@ func (b *Builder) hosts() []config.Host {
 // always comes from the registry, so a tenant that lost access to an image
 // fails here even when the cache holds every layer. It returns the digest and
 // a line that says how much the cache saved.
-func (b *Builder) pull(ctx context.Context, imageRef, root string, cache *layerCache) (string, string, error) {
-	digest, cached, total, err := b.pullLayers(ctx, imageRef, root, cache)
+func (b *Builder) pull(ctx context.Context, imageRef, root string, cache *layerCache) (string, guestproto.ImageConfig, string, error) {
+	digest, config, cached, total, err := b.pullLayers(ctx, imageRef, root, cache)
 	if err != nil {
-		return "", "", err
+		return "", guestproto.ImageConfig{}, "", err
 	}
 	cache.evict()
-	return digest, fmt.Sprintf("%d of %d layers cached", cached, total), nil
+	return digest, config, fmt.Sprintf("%d of %d layers cached", cached, total), nil
 }
 
-func (b *Builder) pullLayers(ctx context.Context, imageRef, root string, cache *layerCache) (string, int, int, error) {
+func (b *Builder) pullLayers(ctx context.Context, imageRef, root string, cache *layerCache) (string, guestproto.ImageConfig, int, int, error) {
+	var none guestproto.ImageConfig
 	r, err := ref.New(imageRef)
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("template: %s: %w", imageRef, err)
+		return "", none, 0, 0, fmt.Errorf("template: %s: %w", imageRef, err)
 	}
 	// The operator's own Docker credentials are deliberately not loaded: a
 	// tenant must not borrow them to reach a registry the operator can
@@ -192,38 +256,51 @@ func (b *Builder) pullLayers(ctx context.Context, imageRef, root string, cache *
 
 	m, err := rc.ManifestGet(ctx, r)
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("template: pull %s: %w", imageRef, err)
+		return "", none, 0, 0, fmt.Errorf("template: pull %s: %w", imageRef, err)
 	}
 	if m.IsList() {
 		desc, err := manifest.GetPlatformDesc(m, &platform.Platform{OS: b.os(), Architecture: b.arch()})
 		if err != nil {
-			return "", 0, 0, fmt.Errorf("template: %s: %w", imageRef, err)
+			return "", none, 0, 0, fmt.Errorf("template: %s: %w", imageRef, err)
 		}
 		r = r.SetDigest(desc.Digest.String())
 		m, err = rc.ManifestGet(ctx, r)
 		if err != nil {
-			return "", 0, 0, fmt.Errorf("template: pull %s: %w", imageRef, err)
+			return "", none, 0, 0, fmt.Errorf("template: pull %s: %w", imageRef, err)
 		}
 	}
 	img, ok := m.(manifest.Imager)
 	if !ok {
-		return "", 0, 0, fmt.Errorf("template: %s: manifest has no layers", imageRef)
+		return "", none, 0, 0, fmt.Errorf("template: %s: manifest has no layers", imageRef)
 	}
 	layers, err := img.GetLayers()
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("template: %s: %w", imageRef, err)
+		return "", none, 0, 0, fmt.Errorf("template: %s: %w", imageRef, err)
+	}
+	configDesc, err := img.GetConfig()
+	if err != nil {
+		return "", none, 0, 0, fmt.Errorf("template: %s: %w", imageRef, err)
+	}
+	configBlob, err := rc.BlobGetOCIConfig(ctx, r, configDesc)
+	if err != nil {
+		return "", none, 0, 0, fmt.Errorf("template: %s: config: %w", imageRef, err)
+	}
+	runConfig := configBlob.GetConfig().Config
+	config := guestproto.ImageConfig{
+		Env: runConfig.Env, WorkingDir: runConfig.WorkingDir, User: runConfig.User,
+		Prefix: runConfig.Entrypoint, Cmd: runConfig.Cmd,
 	}
 	cached := 0
 	for _, layer := range layers {
 		hit, err := applyCachedLayer(ctx, rc, r, layer, root, cache)
 		if err != nil {
-			return "", 0, 0, fmt.Errorf("template: %s: layer %s: %w", imageRef, layer.Digest, err)
+			return "", none, 0, 0, fmt.Errorf("template: %s: layer %s: %w", imageRef, layer.Digest, err)
 		}
 		if hit {
 			cached++
 		}
 	}
-	return m.GetDescriptor().Digest.String(), cached, len(layers), nil
+	return m.GetDescriptor().Digest.String(), config, cached, len(layers), nil
 }
 
 // applyCachedLayer applies one layer from its file, pulling it first when the

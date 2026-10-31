@@ -292,7 +292,7 @@ and they run on every push in CI. On such a host:
 sudo bash scripts/dev-env.sh
 bash scripts/build-kilninit.sh
 sudo go run ./cmd/kilnd init
-sudo env "PATH=$PATH" just gate P1      # P0..P6, sec, or upgrade
+sudo env "PATH=$PATH" just gate P1      # P0..P6, sec, upgrade, or services
 ```
 
 The order is P0 harness, P1 boot, P2 template, P3 restore, P4 fork and

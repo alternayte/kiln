@@ -429,6 +429,13 @@ func (m *Manager) Active(id string) bool {
 // Adopt installs handles to a sandbox whose process survived a daemon
 // restart. The reconciler has already proved the process and its sockets.
 func (m *Manager) Adopt(ctx context.Context, row store.Sandbox, vm *runtime.VM, pages snapshot.PageFaultSource, att *network.Attachment) {
+	// The watches died with the old daemon, and the guest still holds what they
+	// wait on.
+	if tpl, err := m.cfg.Store.GetTemplate(ctx, row.TemplateName); err == nil {
+		m.watchServices(row.ID, vm, tpl.Services)
+	} else {
+		log.Printf("sandbox: %s: adopt: template: %v", row.ID, err)
+	}
 	unlock := m.lockOps(row.ID)
 	defer unlock()
 	m.mu.Lock()
@@ -509,4 +516,24 @@ func (m *Manager) watchStart(id string, vm *runtime.VM, port int) {
 		}
 		m.event(ctx, id, store.SandboxRunning, store.SandboxRunning, reason, m.now())
 	}()
+}
+
+// watchServices records how each service ended. Nothing restarts a service: a
+// crash the change caused is what a preview exists to show.
+func (m *Manager) watchServices(id string, vm *runtime.VM, services []store.TemplateService) {
+	for _, service := range services {
+		go func(name string) {
+			ctx := context.Background()
+			res, err := vm.AwaitService(ctx, name)
+			if err != nil {
+				// The sandbox slept, forked or was destroyed under the wait.
+				return
+			}
+			reason := fmt.Sprintf("service %s exited with %d", name, res.ExitCode)
+			if tail := strings.TrimSpace(res.Output); tail != "" {
+				reason = reason + ": " + tail
+			}
+			m.event(ctx, id, store.SandboxRunning, store.SandboxRunning, reason, m.now())
+		}(service.Name)
+	}
 }

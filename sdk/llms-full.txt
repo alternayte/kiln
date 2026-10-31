@@ -513,7 +513,9 @@ Body:
 - `egress_allow` (array of string, required): Hostnames a sandbox may reach. *.example.com matches every subdomain and not example.com. An empty list allows no egress.
 - `ttl_seconds` (integer): Seconds until the host deletes this template with its snapshot and its sandboxes. A preview environment sets one, because nothing comes back to delete it.
 - `start` (array of string): Command that runs the application. Kiln ignores what the image says to run, so a template that serves an application names this. It runs once, when a sandbox restores from this template.
-- `port` (integer): Port the start command listens on. Creating a sandbox answers only once the guest accepts a connection there. Required with start.
+- `port` (integer): Port the application listens on. Creating a sandbox answers only once the guest accepts a connection there. Required with start. With no start, the application runs the command its image names.
+- `services` (array of object): Images that run beside the application in one microVM, started in order before the template snapshot, so every sandbox restores with them running. Each has name, image, and optional env, port, start and ready. The name resolves to 127.0.0.1 in every root. port and ready decide when the next service starts. No service is published unless a caller publishes its port.
+- `seed` (array of string): Commands that run in the application root after every service is ready and before the template snapshot, such as migrations.
 - `user` (string): User from the image, by name or numeric id. Exec, detached processes, files, the terminal and the start command run as this user, and setup runs as root. Empty runs everything as root. The build fails when the image has no such user.
 - `credential` (object): Registry login for this build only: username and token. It pulls from the registry of the image, the host keeps it in memory for the build, and it is never returned. Without it the build uses the stored credentials of this tenant.
 

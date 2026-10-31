@@ -49,6 +49,26 @@ inputs:
     description: Commands that run once while the template builds, one per line.
     required: false
     default: ""
+  services:
+    description: >
+      A YAML list of images that run beside the application in one microVM,
+      each with name, image, and optional env, port, start and ready. They
+      start before the template snapshot, so the preview restores with them
+      running. A preview from a fork gets no service env.
+    required: false
+    default: ""
+  seed:
+    description: >
+      A YAML list of commands that run in the application image after every
+      service is ready and before the template snapshot, such as migrations.
+    required: false
+    default: ""
+  fork-count:
+    description: >
+      Copies of the running preview to make, one for each test shard. Each has
+      its own data. The output fork-ids names them.
+    required: false
+    default: "0"
   vcpus:
     description: Virtual CPUs of the preview.
     required: false
@@ -95,6 +115,9 @@ outputs:
   urls:
     description: Every published port with its URL, as a JSON object, empty when the pull request closed.
     value: ${{ steps.up.outputs.urls }}
+  fork-ids:
+    description: The sandbox id of each fork, as a JSON list.
+    value: ${{ steps.up.outputs.fork-ids }}
 
 runs:
   using: composite
@@ -149,6 +172,9 @@ runs:
         START: ${{ inputs.start }}
         EGRESS: ${{ inputs.egress-allow }}
         SETUP: ${{ inputs.setup }}
+        SERVICES: ${{ inputs.services }}
+        SEED: ${{ inputs.seed }}
+        FORK_COUNT: ${{ inputs.fork-count }}
         VCPUS: ${{ inputs.vcpus }}
         MEMORY_MB: ${{ inputs.memory-mb }}
         DISK_MB: ${{ inputs.disk-mb }}

@@ -185,7 +185,7 @@ export class GeneratedClient {
   }
 
   /** Build a template from an OCI image. The build runs after the answer. */
-  createTemplate(body: { name: string; image: string; vcpus: number; memory_mb: number; disk_mb: number; egress_allow: string[]; setup?: string[]; ttl_seconds?: number; start?: string[]; port?: number; user?: string; credential?: Record<string, unknown> }): Promise<unknown> {
+  createTemplate(body: { name: string; image: string; vcpus: number; memory_mb: number; disk_mb: number; egress_allow: string[]; setup?: string[]; ttl_seconds?: number; start?: string[]; port?: number; services?: Record<string, unknown>[]; seed?: string[]; user?: string; credential?: Record<string, unknown> }): Promise<unknown> {
     return this.json("POST", "/v1/templates", body);
   }
 

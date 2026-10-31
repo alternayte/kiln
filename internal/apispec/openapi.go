@@ -202,6 +202,7 @@ func schemas() map[string]any {
 			"start": map[string]any{"type": "array", "items": str}, "port": num,
 			"egress_allow":   map[string]any{"type": "array", "items": str},
 			"snapshot_bytes": num, "sandboxes": num, "created_at": str,
+			"services": map[string]any{"type": "array", "items": object(map[string]any{"name": str, "image": str, "port": num})},
 		}),
 		"TemplateState": object(map[string]any{"name": str, "state": str}),
 		"TemplateList":  list("Template"),
@@ -210,7 +211,10 @@ func schemas() map[string]any {
 		"SandboxLogs": object(map[string]any{
 			"build": map[string]any{"type": "object"},
 			"start": map[string]any{"type": "object"},
-			"note":  str,
+			"services": map[string]any{"type": "array", "items": object(map[string]any{
+				"name": str, "running": map[string]any{"type": "boolean"}, "exit_code": num, "output": str,
+			})},
+			"note": str,
 		}),
 		"ExecResult": object(map[string]any{
 			"exit_code": num, "stdout": str, "stderr": str,

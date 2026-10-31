@@ -308,7 +308,14 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 	}
 	overlay := filepath.Join(dir, "overlay.ext4")
 	if !opts.reuseOverlay {
-		if err := createOverlay(ctx, overlay, int64(img.template.DiskMB)); err != nil {
+		// An image that holds a drive restores onto its own copy of it, because
+		// its memory has that drive mounted. Any other image takes a blank one.
+		held := filepath.Join(img.dir, runtime.OverlayFile)
+		if _, statErr := os.Stat(held); statErr == nil {
+			if err := runtime.CopySparse(ctx, held, overlay); err != nil {
+				return store.Sandbox{}, err
+			}
+		} else if err := createOverlay(ctx, overlay, int64(img.template.DiskMB)); err != nil {
 			return store.Sandbox{}, err
 		}
 	}
@@ -363,7 +370,7 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 	}
 	m.phaseEvent(ctx, row.ID, phase, began, nil)
 	phase = ""
-	if len(img.template.Start) > 0 && img.template.StartPort > 0 {
+	if img.template.StartPort > 0 {
 		// The application starts after the resume hooks, which place the
 		// hostname and the secrets it reads. Only a template snapshot needs
 		// starting: a sleep image and a fork image restore memory that
@@ -383,6 +390,7 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 		// for the rest of its life.
 		m.watchStart(row.ID, vm, img.template.StartPort)
 	}
+	m.watchServices(row.ID, vm, img.template.Services)
 	if err := m.cfg.Store.SetSandboxRuntime(ctx, row.ID, att.TAPName, row.VsockCID, vm.PID); err != nil {
 		return store.Sandbox{}, err
 	}
@@ -429,7 +437,11 @@ func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Sna
 		if err := m.cfg.Runtime.Pause(ctx, vm); err != nil {
 			return store.Snapshot{}, err
 		}
-		if files, err = m.cfg.Runtime.SnapshotPaused(ctx, vm, dir); err != nil {
+		if files, err = m.cfg.Runtime.SnapshotPaused(ctx, vm, dir); err == nil {
+			files.OverlayPath, err = m.cfg.Runtime.CopyOverlay(ctx, vm, dir)
+		}
+		if err != nil {
+			_ = os.RemoveAll(dir)
 			_ = m.cfg.Runtime.Resume(ctx, vm)
 			return store.Snapshot{}, err
 		}
@@ -439,7 +451,7 @@ func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Sna
 			_ = m.cfg.Runtime.Resume(ctx, vm)
 			return store.Snapshot{}, err
 		}
-	} else if files, err = m.cfg.Runtime.Snapshot(ctx, vm, dir); err != nil {
+	} else if files, err = m.cfg.Runtime.SnapshotWithDisk(ctx, vm, dir); err != nil {
 		_ = os.RemoveAll(dir)
 		return store.Snapshot{}, err
 	}
@@ -512,7 +524,7 @@ func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bo
 		return nil, err
 	}
 	m.fillPages(id)
-	files, err := m.cfg.Runtime.Snapshot(ctx, vm, dir)
+	files, err := m.cfg.Runtime.SnapshotWithDisk(ctx, vm, dir)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, err
@@ -897,7 +909,7 @@ func newID() (string, error) {
 // snapshotSize is the size of one memory and state pair on disk.
 func snapshotSize(files runtime.SnapshotFiles) int64 {
 	var total int64
-	for _, path := range []string{files.MemPath, files.StatePath} {
+	for _, path := range []string{files.MemPath, files.StatePath, files.OverlayPath} {
 		if fi, err := os.Stat(path); err == nil {
 			total += fi.Size()
 		}
@@ -999,7 +1011,7 @@ func (m *Manager) Logs(ctx context.Context, id string) (Logs, error) {
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return Logs{}, err
 	}
-	if len(out.Template.Start) == 0 {
+	if out.Template.StartPort == 0 && len(out.Template.Services) == 0 {
 		return out, nil
 	}
 	vm, err := m.vmFor(row)

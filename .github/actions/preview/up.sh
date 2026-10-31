@@ -53,6 +53,25 @@ while IFS= read -r line; do
   fi
 done <<< "$SETUP"
 
+if [ -n "${SERVICES//[[:space:]]/}" ]; then
+  services_file="$RUNNER_TEMP/kiln-services.yaml"
+  printf '%s\n' "$SERVICES" > "$services_file"
+  args+=(--services-file "$services_file")
+  # A label approves the code of a fork, not what that code can reach.
+  if [ "$FORK" = "true" ]; then
+    echo "this pull request comes from a fork, so service env is not sent to its preview"
+    args+=(--no-service-env)
+  fi
+fi
+if [ -n "${SEED//[[:space:]]/}" ]; then
+  seed_file="$RUNNER_TEMP/kiln-seed.yaml"
+  printf '%s\n' "$SEED" > "$seed_file"
+  args+=(--seed-file "$seed_file")
+fi
+if [ "${FORK_COUNT:-0}" != "0" ]; then
+  args+=(--fork-count "$FORK_COUNT")
+fi
+
 # The client reads the token from the environment, so it stays off the command
 # line. With --json, a failure comes back on stdout.
 if ! out="$(printf '%s\n' "$ENV_LINES" | KILN_REGISTRY_TOKEN="${REGISTRY_TOKEN:-}" kiln "${args[@]}")"; then
@@ -63,4 +82,5 @@ fi
 url="$(jq -r .url <<< "$out")"
 echo "url=$url" >> "$GITHUB_OUTPUT"
 echo "urls=$(jq -c .urls <<< "$out")" >> "$GITHUB_OUTPUT"
+echo "fork-ids=$(jq -c .forks <<< "$out")" >> "$GITHUB_OUTPUT"
 echo "preview at $url"

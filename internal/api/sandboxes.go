@@ -294,7 +294,9 @@ func (s *Server) streamExec(w http.ResponseWriter, r *http.Request, id string, r
 type sandboxLogsResponse struct {
 	Build logsBuild  `json:"build"`
 	Start *logsStart `json:"start,omitempty"`
-	Note  string     `json:"note,omitempty"`
+	// Services reports each service with its output and how it ended.
+	Services []guestproto.ServiceState `json:"services,omitempty"`
+	Note     string                    `json:"note,omitempty"`
 }
 
 type logsBuild struct {
@@ -327,6 +329,9 @@ func (s *Server) sandboxLogs(w http.ResponseWriter, r *http.Request) {
 		out.Note = "this sandbox came from a template built before this route; rebuild the template to read its output"
 	}
 	if logs.Start != nil {
+		out.Services = logs.Start.Services
+	}
+	if logs.Start != nil && logs.Template.StartPort > 0 {
 		start := &logsStart{
 			Command: logs.Template.Start,
 			Port:    logs.Template.StartPort,

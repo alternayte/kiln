@@ -12,6 +12,7 @@ require (
 	github.com/regclient/regclient v0.11.6
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.58.0
 )
 
@@ -33,6 +34,7 @@ require (
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/ulikunitz/xz v0.5.16 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect

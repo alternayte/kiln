@@ -26,12 +26,6 @@ const startOutput = 8 << 10
 // The guest waits for the port itself, because it can see a listener on
 // localhost that the host cannot reach until the sandbox is attached.
 func runStart(conn net.Conn, req *guestproto.Request) {
-	if len(req.Cmd) == 0 {
-		writeResult(conn, guestproto.Result{Error: &guestproto.Error{
-			Code: guestproto.CodeInvalid, Message: "cmd is required",
-		}})
-		return
-	}
 	if req.Port <= 0 || req.Port > 65535 {
 		writeResult(conn, guestproto.Result{Error: &guestproto.Error{
 			Code: guestproto.CodeInvalid, Message: "port is required",
@@ -43,12 +37,42 @@ func runStart(conn net.Conn, req *guestproto.Request) {
 		cwd = "/"
 	}
 
-	cmd := exec.Command(req.Cmd[0], req.Cmd[1:]...)
-	cmd.Dir = cwd
-	cmd.Env = processEnv(req.Env)
+	argv := req.Cmd
+	env := processEnv(req.Env)
 	// Setsid detaches it from this connection, so the shutdown of one agent
 	// request never reaches the application.
-	cmd.SysProcAttr = withUser(&syscall.SysProcAttr{Setsid: true})
+	attr := withUser(&syscall.SysProcAttr{Setsid: true})
+	// A template with a port and no start runs the command its image names,
+	// with the environment, directory and user of that image.
+	if len(argv) == 0 {
+		config, err := readImageConfig(guestproto.AppImageConfig)
+		if err == nil && len(config.Command()) == 0 {
+			err = errors.New("the image names no command")
+		}
+		if err == nil {
+			err = applyImageUser(attr, config.User, "")
+		}
+		if err != nil {
+			writeResult(conn, guestproto.Result{Error: &guestproto.Error{Code: guestproto.CodeInvalid, Message: err.Error()}})
+			return
+		}
+		argv = config.Command()
+		// The image's PATH must win over the default, and the sandbox env over
+		// the image.
+		merged := envMap(config.Env)
+		for key, value := range req.Env {
+			merged[key] = value
+		}
+		env = processEnv(merged)
+		if config.WorkingDir != "" && req.Cwd == "" {
+			cwd = config.WorkingDir
+		}
+	}
+
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Dir = cwd
+	cmd.Env = env
+	cmd.SysProcAttr = attr
 	tail := &ring{limit: startOutput}
 	cmd.Stdout = tail
 	cmd.Stderr = tail
@@ -187,10 +211,10 @@ func runAwait(conn net.Conn, req *guestproto.Request) {
 	})
 }
 
-// runStartOutput answers with the kept output of the start command. A guest
-// with no start command answers with no output.
+// runStartOutput answers with the kept output of the start command and of each
+// service. A guest with neither answers with no output.
 func runStartOutput(conn net.Conn) {
-	res := guestproto.Result{OK: true}
+	res := guestproto.Result{OK: true, Services: serviceStates()}
 	for port, app := range started {
 		res.Output = app.tail.String()
 		if done(port) {

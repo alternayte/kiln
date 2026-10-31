@@ -2,12 +2,14 @@ package template
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -46,9 +48,22 @@ type BuildRequest struct {
 	// User is who everything a caller asks for runs as. Setup stays root,
 	// because the image and its setup need it.
 	User string
+	// Services run beside the application, and Seed runs once they are ready.
+	Services []ServiceRequest
+	Seed     []string
 	// Credential pulls the images of this build. It lives in memory for the
 	// build and reaches no row, no manifest, no event and no log.
 	Credential *Credential
+}
+
+// ServiceRequest is one image that runs beside the application.
+type ServiceRequest struct {
+	Name  string
+	Image string
+	Env   map[string]string
+	Port  int
+	Start []string
+	Ready []string
 }
 
 // Credential is the registry login of one build. The registry is the host of
@@ -60,6 +75,12 @@ type Credential struct {
 
 // userPattern is a user name or a numeric id, as an image's passwd file holds
 // it.
+var servicePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+
+// maxServices bounds one template. Each service is an image pull and a process
+// in one microVM.
+const maxServices = 16
+
 var userPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$`)
 
 // InvalidError reports a request that cannot be accepted.
@@ -104,16 +125,24 @@ func (r BuildRequest) Validate() error {
 	if err := network.ValidateAllow(r.EgressAllow); err != nil {
 		return &InvalidError{Message: err.Error()}
 	}
-	// A start with no port has no readiness, and a port with no start never
-	// listens. Either both or neither.
-	if (len(r.Start) == 0) != (r.StartPort == 0) {
-		return invalidf("start and port travel together")
+	// A start with no port has no readiness. A port with no start runs the
+	// command the image names.
+	if len(r.Start) > 0 && r.StartPort == 0 {
+		return invalidf("start needs a port")
 	}
 	if r.StartPort < 0 || r.StartPort > 65535 {
 		return invalidf("port must be between 1 and 65535")
 	}
 	if r.User != "" && !userPattern.MatchString(r.User) {
 		return invalidf("user %q must match %s", r.User, userPattern)
+	}
+	if err := r.validateServices(); err != nil {
+		return err
+	}
+	for i, cmd := range r.Seed {
+		if strings.TrimSpace(cmd) == "" {
+			return invalidf("seed[%d] is empty", i)
+		}
 	}
 	if r.Credential != nil {
 		if r.Credential.Username == "" || r.Credential.Token == "" {
@@ -125,6 +154,52 @@ func (r BuildRequest) Validate() error {
 	}
 	return nil
 }
+
+// validateServices checks the services. They share one network, so one port
+// has one owner.
+func (r BuildRequest) validateServices() error {
+	if len(r.Services) > maxServices {
+		return invalidf("a template holds at most %d services", maxServices)
+	}
+	names := map[string]bool{}
+	ports := map[int]string{}
+	if r.StartPort != 0 {
+		ports[r.StartPort] = "the application"
+	}
+	for i, service := range r.Services {
+		if !servicePattern.MatchString(service.Name) {
+			return invalidf("services[%d].name %q must match %s", i, service.Name, servicePattern)
+		}
+		if names[service.Name] {
+			return invalidf("service %s appears twice", service.Name)
+		}
+		names[service.Name] = true
+		if strings.TrimSpace(service.Image) == "" {
+			return invalidf("service %s needs an image", service.Name)
+		}
+		if service.Port < 0 || service.Port > 65535 {
+			return invalidf("service %s: port must be between 1 and 65535", service.Name)
+		}
+		if holder, taken := ports[service.Port]; taken && service.Port != 0 {
+			return invalidf("service %s and %s both use port %d", service.Name, holder, service.Port)
+		}
+		if service.Port != 0 {
+			ports[service.Port] = "service " + service.Name
+		}
+		for key := range service.Env {
+			if !envKeyPattern.MatchString(key) {
+				return invalidf("service %s: env key %q must match %s", service.Name, key, envKeyPattern)
+			}
+		}
+	}
+	return nil
+}
+
+var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// stateful says whether the snapshot boot runs anything. Such a template keeps
+// the drive of that boot, because its memory has that drive mounted.
+func (r BuildRequest) stateful() bool { return len(r.Services) > 0 || len(r.Seed) > 0 }
 
 // Info is a template row with what the host knows about its files.
 type Info struct {
@@ -219,6 +294,9 @@ func (m *Manager) Start(ctx context.Context, req BuildRequest) error {
 		StartPort:   req.StartPort,
 		User:        req.User,
 	}
+	for _, service := range req.Services {
+		row.Services = append(row.Services, store.TemplateService{Name: service.Name, Image: service.Image, Port: service.Port})
+	}
 	if m.IsBuilding(buildKey(ctx, req.Name)) {
 		return store.ErrConflict
 	}
@@ -284,7 +362,7 @@ func (m *Manager) TemplateInfo(ctx context.Context, name string) (Info, error) {
 		return Info{}, err
 	}
 	info := Info{Template: row}
-	for _, file := range []string{"mem", "state"} {
+	for _, file := range []string{"mem", "state", runtime.OverlayFile} {
 		if fi, err := os.Stat(filepath.Join(m.dirOf(ctx, name), file)); err == nil {
 			info.SnapshotBytes += fi.Size()
 		}
@@ -374,7 +452,7 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 	phase := func(name string, began time.Time, err error) { m.phaseEvent(ctx, req.Name, name, began, err, "") }
 	builder.LayerCacheDir = m.layerCacheDir(ctx)
 	imported, err := builder.Import(ctx, ImportSpec{
-		Ref: req.Image, RootfsPath: rootfs, SizeMB: req.DiskMB,
+		Ref: req.Image, RootfsPath: rootfs, SizeMB: req.DiskMB, Services: req.Services,
 		Phase: func(name string, began time.Time, err error, note string) {
 			m.phaseEvent(ctx, req.Name, name, began, err, note)
 		},
@@ -384,6 +462,11 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 	}
 	if err := m.Store.SetTemplateDigest(ctx, req.Name, imported.Digest); err != nil {
 		return err
+	}
+	// A port with no start runs the image's command, so an image with none
+	// cannot serve anything.
+	if req.StartPort != 0 && len(req.Start) == 0 && len(imported.Config.Command()) == 0 {
+		return fmt.Errorf("port %d has no start, and image %s names no command", req.StartPort, req.Image)
 	}
 
 	began := time.Now()
@@ -429,14 +512,24 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 	// slot for a sandbox overlay. The snapshot then carries both drives, and
 	// the rootfs keeps its read-only feature for every restore.
 	began = time.Now()
-	overlay := filepath.Join(dir, "overlay.ext4")
+	overlay := filepath.Join(dir, "overlay-slot.ext4")
 	snapVM, err := m.bootForSnapshot(ctx, req, rootfs, overlay, att.TAPName)
 	phase("snapshot_boot", began, err)
 	if err != nil {
 		return err
 	}
+	if req.stateful() {
+		if err := m.runStack(ctx, snapVM, req, imported.Config); err != nil {
+			_ = m.stopVM(ctx, snapVM)
+			return err
+		}
+	}
 	began = time.Now()
-	if _, err := m.Runtime.Snapshot(ctx, snapVM, dir); err != nil {
+	takeSnapshot := m.Runtime.Snapshot
+	if req.stateful() {
+		takeSnapshot = m.Runtime.SnapshotWithDisk
+	}
+	if _, err := takeSnapshot(ctx, snapVM, dir); err != nil {
 		phase("snapshot", began, err)
 		_ = m.stopVM(ctx, snapVM)
 		return err
@@ -457,8 +550,66 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 		EgressAllow: req.EgressAllow,
 		Setup:       req.Setup,
 		User:        req.User,
+		Services:    servicesOf(req),
+		Seed:        req.Seed,
 		CreatedAt:   m.now(),
 	})
+}
+
+func servicesOf(req BuildRequest) []store.TemplateService {
+	out := make([]store.TemplateService, 0, len(req.Services))
+	for _, service := range req.Services {
+		out = append(out, store.TemplateService{Name: service.Name, Image: service.Image, Port: service.Port})
+	}
+	return out
+}
+
+// runStack starts the services in order and runs the seed commands, in the
+// boot the template snapshot comes from. The resume hook pivots the guest onto
+// the writable drive first, so everything they write lands there.
+func (m *Manager) runStack(ctx context.Context, vm *runtime.VM, req BuildRequest, app guestproto.ImageConfig) error {
+	entropy := make([]byte, 64)
+	if _, err := rand.Read(entropy); err != nil {
+		return err
+	}
+	if err := vm.ResumeHooks(ctx, entropy, time.Now().UnixNano(), "template", nil, ""); err != nil {
+		return fmt.Errorf("the writable drive: %w", err)
+	}
+	began := time.Now()
+	for _, service := range req.Services {
+		if err := vm.StartService(ctx, runtime.ServiceRequest{
+			Name: service.Name, Cmd: service.Start, Env: service.Env, Port: service.Port, Ready: service.Ready,
+		}, guestproto.StartDeadlineSeconds); err != nil {
+			err = fmt.Errorf("service %s: %w", service.Name, err)
+			m.phaseEvent(ctx, req.Name, "services", began, err, "")
+			return err
+		}
+	}
+	m.phaseEvent(ctx, req.Name, "services", began, nil, "")
+
+	began = time.Now()
+	env := map[string]string{}
+	for _, pair := range app.Env {
+		if key, value, ok := strings.Cut(pair, "="); ok {
+			env[key] = value
+		}
+	}
+	for i, cmd := range req.Seed {
+		res, err := vm.Exec(ctx, runtime.ExecRequest{
+			Cmd: []string{"sh", "-c", cmd}, Cwd: app.WorkingDir, Env: env, TimeoutSeconds: setupTimeoutSeconds,
+		})
+		if err == nil && (res.TimedOut || res.ExitCode != 0) {
+			err = fmt.Errorf("exit %d timed_out=%v: %s", res.ExitCode, res.TimedOut,
+				strings.TrimSpace(strings.Join([]string{res.Stderr, res.Stdout}, "\n")))
+		}
+		if err != nil {
+			err = fmt.Errorf("seed[%d] %q: %w", i, cmd, err)
+			m.phaseEvent(ctx, req.Name, "seed", began, err, "")
+			return err
+		}
+	}
+	m.phaseEvent(ctx, req.Name, "seed", began, nil, "")
+	return nil
 }
 
 // runSetup runs the setup commands as root, checks that the template user
@@ -505,6 +656,11 @@ func (m *Manager) bootForSnapshot(ctx context.Context, req BuildRequest, rootfs,
 	}
 	if err := overlayFile.Close(); err != nil {
 		return nil, err
+	}
+	if req.stateful() {
+		if out, err := exec.CommandContext(ctx, "mke2fs", "-q", "-F", "-t", "ext4", "-L", "kiln-overlay", overlay).CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("template: mke2fs: %w: %s", err, out)
+		}
 	}
 	return m.Runtime.Start(ctx, runtime.Spec{
 		ID:             m.buildVMID(ctx, req.Name, "n"),

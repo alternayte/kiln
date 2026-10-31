@@ -6,20 +6,25 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/alternayte/kiln/internal/store"
 )
 
 // Manifest is the record of one template build, stored beside the snapshot.
 type Manifest struct {
-	Name        string    `json:"name"`
-	ImageRef    string    `json:"image_ref"`
-	ImageDigest string    `json:"image_digest"`
-	VCPUs       int       `json:"vcpus"`
-	MemoryMB    int       `json:"memory_mb"`
-	DiskMB      int       `json:"disk_mb"`
-	EgressAllow []string  `json:"egress_allow"`
-	Setup       []string  `json:"setup,omitempty"`
-	User        string    `json:"user,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	Name        string   `json:"name"`
+	ImageRef    string   `json:"image_ref"`
+	ImageDigest string   `json:"image_digest"`
+	VCPUs       int      `json:"vcpus"`
+	MemoryMB    int      `json:"memory_mb"`
+	DiskMB      int      `json:"disk_mb"`
+	EgressAllow []string `json:"egress_allow"`
+	Setup       []string `json:"setup,omitempty"`
+	User        string   `json:"user,omitempty"`
+	// Services holds no env, because a value must not reach a file on the host.
+	Services  []store.TemplateService `json:"services,omitempty"`
+	Seed      []string                `json:"seed,omitempty"`
+	CreatedAt time.Time               `json:"created_at"`
 }
 
 // ReadManifest reads the manifest of a template directory.

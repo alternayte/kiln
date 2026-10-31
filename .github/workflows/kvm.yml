@@ -64,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gate: ${{ fromJSON(inputs.gate && format('["{0}"]', inputs.gate) || '["P0","P1","P2","P3","P4","P5","sec","upgrade"]') }}
+        gate: ${{ fromJSON(inputs.gate && format('["{0}"]', inputs.gate) || '["P0","P1","P2","P3","P4","P5","sec","upgrade","services"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

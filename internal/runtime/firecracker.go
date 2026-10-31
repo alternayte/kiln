@@ -294,6 +294,46 @@ func (f *Firecracker) SnapshotPaused(ctx context.Context, vm *VM, dir string) (S
 	return out, err
 }
 
+// SnapshotWithDisk pauses a VM, writes its memory and state into dir with a
+// copy of its writable drive, and resumes it. The guest has the drive mounted,
+// and its memory holds that mount, so only a drive from the same moment
+// restores with it.
+func (f *Firecracker) SnapshotWithDisk(ctx context.Context, vm *VM, dir string) (SnapshotFiles, error) {
+	if err := f.Pause(ctx, vm); err != nil {
+		return SnapshotFiles{}, err
+	}
+	files, err := f.SnapshotPaused(ctx, vm, dir)
+	if err == nil {
+		files.OverlayPath, err = f.CopyOverlay(ctx, vm, dir)
+	}
+	if resumeErr := f.Resume(ctx, vm); err == nil {
+		err = resumeErr
+	}
+	return files, err
+}
+
+// CopyOverlay copies the writable drive of a paused VM into dir.
+func (f *Firecracker) CopyOverlay(ctx context.Context, vm *VM, dir string) (string, error) {
+	dst := filepath.Join(dir, OverlayFile)
+	if err := CopySparse(context.WithoutCancel(ctx), filepath.Join(vm.chrootDir(), OverlayFile), dst); err != nil {
+		return "", err
+	}
+	return dst, nil
+}
+
+// OverlayFile is the name of a writable drive, in a jail and beside a snapshot.
+const OverlayFile = "overlay.ext4"
+
+// CopySparse copies a drive and keeps its holes, so a large empty drive stays
+// small. A filesystem with reflinks shares the blocks.
+func CopySparse(ctx context.Context, src, dst string) error {
+	out, err := exec.CommandContext(ctx, "cp", "--sparse=always", "--reflink=auto", src, dst).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("runtime: copy drive: %w: %s", err, out)
+	}
+	return nil
+}
+
 func checkKVM() error {
 	f, err := os.OpenFile(kvmDevice, os.O_RDWR, 0)
 	if err != nil {

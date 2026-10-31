@@ -72,6 +72,9 @@ type Template struct {
 	// port it listens on. They travel together or not at all.
 	Start     []string
 	StartPort int
+	// Services are the images that run beside the application. A service's env
+	// stays out of this row.
+	Services []TemplateService
 	// User is who everything a caller asks for runs as. Empty is root.
 	User string
 }
@@ -100,6 +103,13 @@ type Event struct {
 	// long it took. Reason holds the error of a phase that failed.
 	Phase      string
 	DurationMS int64
+}
+
+// TemplateService is one service as a template row records it.
+type TemplateService struct {
+	Name  string `json:"name"`
+	Image string `json:"image"`
+	Port  int    `json:"port,omitempty"`
 }
 
 // Sandbox is one row of the sandboxes table.

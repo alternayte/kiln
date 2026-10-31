@@ -216,7 +216,7 @@ func kernelPath(t *testing.T, repo, root string) string {
 	}
 	path := filepath.Join(root, "kernel", "vmlinux-"+version)
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("kernel %s: %v (run `kiln init`)", path, err)
+		t.Fatalf("kernel %s: %v (run `kilnd init`)", path, err)
 	}
 	return path
 }

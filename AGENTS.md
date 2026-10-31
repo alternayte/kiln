@@ -36,3 +36,10 @@ The server and the systemd unit: `infra/README.md`.
 - terminal: an interactive PTY session into a running sandbox, carried over a WebSocket. Avoid: shell session, console, SSH.
 - preview environment: one template and one sandbox built from one commit, published on a hostname for a pull request. Avoid: preview deployment, ephemeral environment, review app.
 - start command: the command a template names to run its application, which the host runs once when a sandbox restores from that template snapshot. Avoid: entrypoint, run command.
+- service: an image that runs beside the application in a template's microVM, started before the template snapshot. Avoid: sidecar, dependency.
+- seed: the commands that run after every service is ready and before the template snapshot. Avoid: fixture, bootstrap.
+- egress guard: the per-sandbox host process that reads the TLS hostname of outbound port 443 traffic and enforces the allow list. Avoid: egress proxy, sidecar proxy.
+- egress record: the host's summary of each destination a sandbox reached or was refused. Avoid: network log, flow log.
+- credential binding: one credential tied to one exact host of one sandbox, which the egress guard injects as a header. Avoid: secret mapping, injection rule.
+- timeline point: a marked memory, process and disk state of one sandbox that a caller rewinds to or forks from. Avoid: savepoint.
+- viewer fork: the fork of a published preview environment that belongs to one viewer login. Avoid: visitor copy, session sandbox.

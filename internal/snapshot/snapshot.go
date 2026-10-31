@@ -51,7 +51,7 @@ func Adopt(pid int) *Process {
 // Start launches snapfault and waits until its socket appears.
 func (p *Process) Start(ctx context.Context, memPath, socketPath string) error {
 	if p.Binary == "" {
-		return errors.New("snapshot: no kiln binary")
+		return errors.New("snapshot: no kilnd binary")
 	}
 	if _, err := os.Stat(memPath); err != nil {
 		return fmt.Errorf("snapshot: %w", err)

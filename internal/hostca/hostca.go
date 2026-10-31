@@ -37,7 +37,7 @@ type CA struct{ dir string }
 func New(root string) *CA { return &CA{dir: filepath.Join(root, Dir)} }
 
 // Ensure creates the CA when the root has none. It is idempotent, so a second
-// kiln init keeps the certificates a gateway already holds.
+// kilnd init keeps the certificates a gateway already holds.
 func (c *CA) Ensure() error {
 	if _, err := os.Stat(filepath.Join(c.dir, caCertFile)); err == nil {
 		return nil
@@ -216,11 +216,11 @@ func (c *CA) ServerTLS(hostnames ...string) (*tls.Config, error) {
 func (c *CA) load() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	certPEM, err := os.ReadFile(filepath.Join(c.dir, caCertFile))
 	if err != nil {
-		return nil, nil, fmt.Errorf("hostca: %w; run kiln init", err)
+		return nil, nil, fmt.Errorf("hostca: %w; run kilnd init", err)
 	}
 	keyPEM, err := os.ReadFile(filepath.Join(c.dir, caKeyFile))
 	if err != nil {
-		return nil, nil, fmt.Errorf("hostca: %w; run kiln init", err)
+		return nil, nil, fmt.Errorf("hostca: %w; run kilnd init", err)
 	}
 	block, _ := pem.Decode(certPEM)
 	if block == nil {

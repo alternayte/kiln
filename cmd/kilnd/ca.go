@@ -76,7 +76,7 @@ func cmdGatewayEnv(args []string) error {
 		return err
 	}
 	if cfg.BearerToken == "" {
-		return fmt.Errorf("gateway-env: %s has no bearer_token; run kiln init", filepath.Join(root, "config.json"))
+		return fmt.Errorf("gateway-env: %s has no bearer_token; run kilnd init", filepath.Join(root, "config.json"))
 	}
 	target := *addr
 	if target == "" {

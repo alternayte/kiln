@@ -26,7 +26,7 @@ import (
 // timeout.
 const gateTimeout = 18 * time.Minute
 
-// TestGateP5 drives a real `kiln serve` process: the daemon owns the store,
+// TestGateP5 drives a real `kilnd serve` process: the daemon owns the store,
 // the timers and the reconciler. The gate sleeps a persistent sandbox and
 // wakes it with its files and memory intact, lets an ephemeral one die at its
 // TTL, kills the daemon mid-create and proves the restart converges with no
@@ -40,7 +40,7 @@ func TestGateP5(t *testing.T) {
 	root := kilnRoot()
 	kernelPath(t, repo, root)
 	if _, err := os.Stat(filepath.Join(root, "bin", "kilninit")); err != nil {
-		t.Fatalf("kilninit: %v (run kiln init)", err)
+		t.Fatalf("kilninit: %v (run kilnd init)", err)
 	}
 	cfg := readConfig(t, root)
 	kilnBin := buildKiln(t, repo)
@@ -239,7 +239,7 @@ func TestGateP5(t *testing.T) {
 
 const templateName = "p5-python"
 
-// daemon is one `kiln serve` child process.
+// daemon is one `kilnd serve` child process.
 type daemon struct {
 	cmd  *exec.Cmd
 	log  *os.File
@@ -259,7 +259,7 @@ func startServe(t *testing.T, kilnBin, root string) *daemon {
 	cmd.Stderr = f
 	if err := cmd.Start(); err != nil {
 		f.Close()
-		t.Fatalf("start kiln serve: %v", err)
+		t.Fatalf("start kilnd serve: %v", err)
 	}
 	d := &daemon{cmd: cmd, log: f, done: make(chan struct{})}
 	go func() {
@@ -302,16 +302,16 @@ func (d *daemon) stop(t *testing.T) {
 func (d *daemon) kill(t *testing.T) {
 	t.Helper()
 	if err := d.cmd.Process.Kill(); err != nil {
-		t.Fatalf("kill kiln serve: %v", err)
+		t.Fatalf("kill kilnd serve: %v", err)
 	}
 	select {
 	case <-d.done:
 	case <-time.After(30 * time.Second):
-		t.Fatal("kiln serve did not die")
+		t.Fatal("kilnd serve did not die")
 	}
 	// Read the log before closing it, so a failure reports why it was running.
 	if b, err := os.ReadFile(d.log.Name()); err == nil && len(b) > 0 {
-		t.Logf("kiln serve log:\n%s", b)
+		t.Logf("kilnd serve log:\n%s", b)
 	}
 	d.log.Close()
 }
@@ -327,7 +327,7 @@ func waitHealth(t *testing.T, cli *client.Client, timeout time.Duration) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("kiln serve did not become healthy: %v", err)
+			t.Fatalf("kilnd serve did not become healthy: %v", err)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -558,7 +558,7 @@ func countProcesses(t *testing.T, name string) int {
 	case "firecracker":
 		cmd = exec.Command("pgrep", "-c", "firecracker")
 	case "snapfault":
-		cmd = exec.Command("pgrep", "-c", "-f", "kiln snapfault")
+		cmd = exec.Command("pgrep", "-c", "-f", "kilnd snapfault")
 	default:
 		t.Fatalf("countProcesses: unknown process %q", name)
 	}
@@ -579,8 +579,8 @@ func countProcesses(t *testing.T, name string) int {
 
 func buildKiln(t *testing.T, repo string) string {
 	t.Helper()
-	out := filepath.Join(t.TempDir(), "kiln")
-	cmd := exec.Command("go", "build", "-o", out, "./cmd/kiln")
+	out := filepath.Join(t.TempDir(), "kilnd")
+	cmd := exec.Command("go", "build", "-o", out, "./cmd/kilnd")
 	cmd.Dir = repo
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build kiln: %v: %s", err, b)
@@ -625,7 +625,7 @@ func readConfig(t *testing.T, root string) struct {
 	}
 	b, err := os.ReadFile(filepath.Join(root, "config.json"))
 	if err != nil {
-		t.Fatalf("config.json: %v (run kiln init)", err)
+		t.Fatalf("config.json: %v (run kilnd init)", err)
 	}
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		t.Fatalf("config.json: %v", err)
@@ -655,7 +655,7 @@ func kernelPath(t *testing.T, repo, root string) string {
 	}
 	path := filepath.Join(root, "kernel", "vmlinux-"+version)
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("kernel %s: %v (run kiln init)", path, err)
+		t.Fatalf("kernel %s: %v (run kilnd init)", path, err)
 	}
 	return path
 }

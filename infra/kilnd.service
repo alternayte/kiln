@@ -10,7 +10,7 @@ Type=simple
 User=root
 Environment=KILN_ROOT=/var/lib/kiln
 # The binary a release installs, and the one `install` in the README writes.
-ExecStart=/usr/local/bin/kiln serve
+ExecStart=/usr/local/bin/kilnd serve
 Restart=on-failure
 RestartSec=2
 # Stop only the daemon. The next start adopts the microVMs and page servers

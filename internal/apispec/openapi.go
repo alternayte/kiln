@@ -6,7 +6,7 @@ import (
 )
 
 // Version is the semver of this contract. It rises with the binary.
-const Version = "0.9.7"
+const Version = "0.10.0"
 
 // OpenAPI returns the OpenAPI 3.1 document of the tenant API. The operator
 // routes stay out: a tenant never reaches them, and the SDKs never call them.
@@ -207,6 +207,11 @@ func schemas() map[string]any {
 		"TemplateList":  list("Template"),
 		"Sandbox":       sandbox,
 		"SandboxList":   list("Sandbox"),
+		"SandboxLogs": object(map[string]any{
+			"build": map[string]any{"type": "object"},
+			"start": map[string]any{"type": "object"},
+			"note":  str,
+		}),
 		"ExecResult": object(map[string]any{
 			"exit_code": num, "stdout": str, "stderr": str,
 			"truncated": map[string]any{"type": "boolean"}, "timed_out": map[string]any{"type": "boolean"},

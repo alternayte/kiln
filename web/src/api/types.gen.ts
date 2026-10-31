@@ -89,6 +89,16 @@ export type Sandbox = {
 
 export type SandboxList = Array<Sandbox>;
 
+export type SandboxLogs = {
+    build?: {
+        [key: string]: unknown;
+    };
+    note?: string;
+    start?: {
+        [key: string]: unknown;
+    };
+};
+
 export type Snapshot = {
     created_at?: string;
     id?: string;
@@ -153,7 +163,16 @@ export type ViewerList = Array<Viewer>;
 export type EventsData = {
     body?: never;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * Event id to continue after. Zero replays every event.
+         */
+        after?: number;
+        /**
+         * Keep the events of one sandbox.
+         */
+        sandbox_id?: string;
+    };
     url: '/v1/events';
 };
 
@@ -802,6 +821,52 @@ export type ForkResponses = {
 };
 
 export type ForkResponse = ForkResponses[keyof ForkResponses];
+
+export type LogsData = {
+    body?: never;
+    path: {
+        /**
+         * Sandbox id.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/v1/sandboxes/{id}/logs';
+};
+
+export type LogsErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
+     */
+    429: Error;
+};
+
+export type LogsError = LogsErrors[keyof LogsErrors];
+
+export type LogsResponses = {
+    /**
+     * The call succeeded.
+     */
+    200: SandboxLogs;
+};
+
+export type LogsResponse = LogsResponses[keyof LogsResponses];
 
 export type StartProcessData = {
     body: {

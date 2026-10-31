@@ -21,7 +21,7 @@ func (m *Manager) Publish(ctx context.Context, id string, port int, visibility s
 		return store.Published{}, invalidf("visibility must be %q or %q", store.VisibilityPublic, store.VisibilityTeam)
 	}
 	if m.cfg.Zone == "" {
-		return store.Published{}, invalidf("no preview zone is configured; run kiln init --zone")
+		return store.Published{}, invalidf("no preview zone is configured; run kilnd init --zone")
 	}
 	unlock := m.lockOps(id)
 	defer unlock()

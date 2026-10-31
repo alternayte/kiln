@@ -10,7 +10,8 @@ require (
 	github.com/mdlayher/vsock v1.3.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/regclient/regclient v0.11.6
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
+	golang.org/x/term v0.47.0
 	modernc.org/sqlite v1.58.0
 )
 

@@ -68,7 +68,7 @@ func TestSecControls(t *testing.T) {
 	kernel := kernelPath(t, repo, root)
 	kilninit := filepath.Join(root, "bin", "kilninit")
 	if _, err := os.Stat(kilninit); err != nil {
-		t.Fatalf("kilninit %s: %v (run kiln init)", kilninit, err)
+		t.Fatalf("kilninit %s: %v (run kilnd init)", kilninit, err)
 	}
 	kilnBin := buildKiln(t, repo)
 
@@ -506,7 +506,7 @@ func checkControlPlane(t *testing.T, ctx context.Context, sbx *sandbox.Manager, 
 	t.Helper()
 	hostIP := hostUplinkIP(t)
 	// Bind the control port on the host's own address, so an allowed packet
-	// would find a listener. kiln serve may hold 127.0.0.1:8080.
+	// would find a listener. kilnd serve may hold 127.0.0.1:8080.
 	ln, err := net.Listen("tcp", net.JoinHostPort(hostIP, "8080"))
 	if err != nil {
 		ln, err = net.Listen("tcp", "0.0.0.0:8080")
@@ -939,8 +939,8 @@ func clearSnapshots(t *testing.T, ctx context.Context, st store.Store, sbx *sand
 
 func buildKiln(t *testing.T, repo string) string {
 	t.Helper()
-	out := filepath.Join(t.TempDir(), "kiln")
-	cmd := exec.Command("go", "build", "-o", out, "./cmd/kiln")
+	out := filepath.Join(t.TempDir(), "kilnd")
+	cmd := exec.Command("go", "build", "-o", out, "./cmd/kilnd")
 	cmd.Dir = repo
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build kiln: %v: %s", err, b)
@@ -992,7 +992,7 @@ func kernelPath(t *testing.T, repo, root string) string {
 	}
 	path := filepath.Join(root, "kernel", "vmlinux-"+version)
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("kernel %s: %v (run kiln init)", path, err)
+		t.Fatalf("kernel %s: %v (run kilnd init)", path, err)
 	}
 	return path
 }

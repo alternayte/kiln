@@ -36,6 +36,27 @@ The preview sleeps after its idle deadline and wakes on the next request, so an 
 
 Egress is deny by default. A preview that reaches a database or an API needs those hostnames in `egress_allow`, and nothing else is reachable from inside it.
 
+## The kiln command
+
+`kiln` is the client for Linux and macOS. It reads `KILN_URL` and `KILN_API_KEY`, and has one command for each operation below. `--json` prints JSON, and `kiln init` writes the Kiln skill and the MCP entry into a repository.
+
+The work loop for a preview environment is `kiln preview up --image X --port N`, which prints the URL, then `kiln logs <id>` when it fails, and `kiln preview down` when it is finished.
+
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | Success. |
+| 1 | An API or network failure, or a template that did not build. |
+| 2 | A usage or configuration error, such as a missing KILN_URL. |
+| 3 | The API answered `not_found`. |
+| 4 | The API answered `conflict`. |
+| 5 | The API answered `exhausted`: a cap of this tenant is reached. |
+| 6 | The API answered `invalid`. |
+| 14 | `--timeout` ended the wait. The build continues. |
+| 124 | `kiln exec`: the command reached `timeout_seconds`. |
+| 125 | `kiln exec`: Kiln itself failed. Any other code from `kiln exec` is the exit code of the command. |
+
 ## Errors
 
 Every error is `{"error":{"code":"...","message":"..."}}`. The code is stable: `invalid`, `not_found`, `conflict`, `exhausted`, `internal`. `exhausted` answers 429 and means a cap of this tenant is reached; the message names the cap. `not_found` also covers a row of another tenant.

@@ -125,6 +125,10 @@ class GeneratedClient:
         }.items() if v is not None}
         return self._json("POST", f"/v1/sandboxes/{id}/fork", body)
 
+    def logs(self, id: str) -> Any:
+        """Read what the guest kept of the start command output, how the start command ended, and the template build result. A sleeping sandbox wakes first."""
+        return self._json("GET", f"/v1/sandboxes/{id}/logs")
+
     def start_process(self, id: str, cmd: list[str], cwd: Optional[str] = None, env: Optional[dict[str, Any]] = None) -> Any:
         """Start a detached process and answer once it runs. It has no deadline, it outlives this request, and the sandbox does not sleep while it runs."""
         body = {k: v for k, v in {

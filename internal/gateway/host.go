@@ -21,7 +21,7 @@ type Host struct {
 	Transport http.RoundTripper
 }
 
-// HostCredentials are the values kiln gateway-env prints.
+// HostCredentials are the values kilnd gateway-env prints.
 type HostCredentials struct {
 	URL        string
 	Token      string

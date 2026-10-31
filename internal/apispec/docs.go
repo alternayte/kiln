@@ -35,6 +35,10 @@ func LLMsTXT(baseURL string) string {
 	fmt.Fprintf(&b, "5. `POST /v1/sandboxes/{id}/publish` returns the URL. Give that to the person.\n\n")
 	fmt.Fprintf(&b, "The preview sleeps after its idle deadline and wakes on the next request, so an open review costs nothing while nobody is looking. The host deletes the template at its TTL with the sandbox and the snapshot, so a forgotten preview cleans itself up.\n\n")
 	fmt.Fprintf(&b, "Egress is deny by default. A preview that reaches a database or an API needs those hostnames in `egress_allow`, and nothing else is reachable from inside it.\n\n")
+	fmt.Fprintf(&b, "## The kiln command\n\n")
+	fmt.Fprintf(&b, "`kiln` is the client for Linux and macOS. It reads `KILN_URL` and `KILN_API_KEY`, and has one command for each operation below. `--json` prints JSON, and `kiln init` writes the Kiln skill and the MCP entry into a repository.\n\n")
+	fmt.Fprintf(&b, "The work loop for a preview environment is `kiln preview up --image X --port N`, which prints the URL, then `kiln logs <id>` when it fails, and `kiln preview down` when it is finished.\n\n")
+	fmt.Fprintf(&b, "Exit codes:\n\n%s\n", ExitCodeTable())
 	fmt.Fprintf(&b, "## Errors\n\n")
 	fmt.Fprintf(&b, "Every error is `{\"error\":{\"code\":\"...\",\"message\":\"...\"}}`. The code is stable: `invalid`, `not_found`, `conflict`, `exhausted`, `internal`. `exhausted` answers 429 and means a cap of this tenant is reached; the message names the cap. `not_found` also covers a row of another tenant.\n")
 	return b.String()
@@ -50,7 +54,7 @@ func LLMsFullTXT(baseURL string) string {
 		if op.Operator {
 			continue
 		}
-		fmt.Fprintf(&b, "\n### %s\n\n`%s %s`\n\n%s\n", op.ID, op.Method, op.Path, op.Summary)
+		fmt.Fprintf(&b, "\n### %s\n\n`%s %s`\n\n`kiln %s`\n\n%s\n", op.ID, op.Method, op.Path, op.Command, op.Summary)
 		if op.Terminal {
 			b.WriteString("\nThis call is a WebSocket upgrade, not a request and an answer. The OpenAPI document and the generated clients leave it out.\n")
 		}

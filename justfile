@@ -4,7 +4,7 @@ check:
     #!/usr/bin/env bash
     set -uo pipefail
     fail=0
-    # The kiln binary embeds the guest agent, so the agent is built first.
+    # The kilnd binary embeds the guest agent, so the agent is built first.
     # A stale one would install an agent nobody wrote.
     bash scripts/build-kilninit.sh > /dev/null || fail=1
     for c in checks/*.sh; do
@@ -69,7 +69,7 @@ status:
     echo "next: ${next:-none}"
 
 # recipe: gate
-# Run one gate under scripts/leak.sh, then tag gate/<phase>. Gates: P0..P6, or sec.
+# Run one gate under scripts/leak.sh, then tag gate/<phase>. Gates: P0..P6, sec, or upgrade.
 gate phase:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -80,7 +80,8 @@ gate phase:
     case "$phase" in
         P[0-6]) pattern="^TestGate${phase}$" ;;
         sec)    pattern="^TestSec" ;;
-        *) echo "gate: unknown gate $phase. Use P0..P6 or sec." >&2; exit 2 ;;
+        upgrade) pattern="^TestGateUpgrade$" ;;
+        *) echo "gate: unknown gate $phase. Use P0..P6, sec or upgrade." >&2; exit 2 ;;
     esac
     tmp="$(mktemp)"
     trap 'rm -f "$tmp"' EXIT
@@ -92,6 +93,8 @@ gate phase:
     fi
     if [ "$phase" = sec ]; then
         pass="--- PASS: TestSec"
+    elif [ "$phase" = upgrade ]; then
+        pass="--- PASS: TestGateUpgrade"
     else
         pass="--- PASS: TestGate$phase"
     fi

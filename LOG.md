@@ -589,3 +589,21 @@ Factoree run. Restore and fork now take an optional `metadata` that replaces it.
 Issue 20 is not a restart fault: the event log shows `sleeping` to `stopping`
 with reason `destroy` at 06:36:23, from a `DELETE` the operator asked for after
 a run filled the tenant cap. The last restart was at 06:28:22.
+
+## 2026-10-31 — v0.10.0, a client called kiln and a host called kilnd
+
+Done: `docs/specs/agent-cli.md`. The host binary and its unit are now `kilnd`,
+with no alias, and `kiln ctl` is gone. `kiln` is a new client for Linux and
+macOS with one command per API operation, read from `internal/apispec`. A
+generator check fails on an operation with no command. It has a fixed exit code
+table, `--wait`, `kiln preview up` and `down`, `kiln logs` over a new route, and
+`kiln init`. The preview Action now downloads `kiln` and calls it, and
+`payload.py` and `prune.sh` are gone. The `upgrade` gate runs the latest release
+beside this build. `kiln egress` waits for `docs/specs/egress-guard.md`, and
+service output in `kiln logs` waits for `docs/specs/template-services.md`.
+
+The `sdk` workflow has failed on every tag so far. PyPI answers
+`invalid-publisher` and npm answers E404, because no trusted publisher is
+registered for `kiln-sdk` or `@alternayte/kiln`. That registration needs the
+maintainer's PyPI and npm accounts.
+

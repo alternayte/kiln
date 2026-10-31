@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Generate the Go copy of the version pins. scripts/versions.env is the only
-# version file; cmd/kiln/versions_gen.go is generated from it and checked by
+# version file; cmd/kilnd/versions_gen.go is generated from it and checked by
 # checks/versions.sh.
 set -euo pipefail
 

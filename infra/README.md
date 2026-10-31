@@ -2,7 +2,7 @@
 
 Pulumi program. It copies this repo to a server, installs the host packages,
 loads the KVM module, and runs `go build ./...` and `just check`. With
-`kiln:gate` set it also runs `kiln init` and one gate.
+`kiln:gate` set it also runs `kilnd init` and one gate.
 
 The steps start from a server you order. Nothing here points at an existing
 host: `kiln:host` names the server to bootstrap. Any x86_64 Ubuntu 24.04 or
@@ -17,15 +17,15 @@ are the same for both.
 A tagged release carries the host binary, so a box needs no Go and no source:
 
 ```sh
-curl -fsSLO https://github.com/alternayte/kiln/releases/latest/download/kiln
+curl -fsSLO https://github.com/alternayte/kiln/releases/latest/download/kilnd
 curl -fsSLO https://github.com/alternayte/kiln/releases/latest/download/SHA256SUMS
-sha256sum -c SHA256SUMS
-sudo install -m755 kiln /usr/local/bin/kiln
-sudo kiln init --zone example.com --acme-email you@example.com
-sudo kiln serve
+sha256sum --ignore-missing -c SHA256SUMS
+sudo install -m755 kilnd /usr/local/bin/kilnd
+sudo kilnd init --zone example.com --acme-email you@example.com
+sudo kilnd serve
 ```
 
-The binary carries the guest agent, so `kiln init` writes it out. The root
+The binary carries the guest agent, so `kilnd init` writes it out. The root
 [README](../README.md) carries the first sandbox and the config keys. The
 steps below bring up a box from source instead, which is what a change to
 Kiln itself needs.
@@ -69,7 +69,7 @@ Kiln itself needs.
    pulumi up
    ```
 4. `pulumi up` does the rest: packages, KVM module, repo copy, `just check`,
-   `kiln init`, `just gate P1`. It prints the gate output.
+   `kilnd init`, `just gate P1`. It prints the gate output.
 
 ## Scaleway Dedibox
 
@@ -149,27 +149,48 @@ copies the tree and re-runs the commands.
 
 ## Run as a service
 
-`infra/kiln.service` runs `/usr/local/bin/kiln serve` under systemd, the
-path a release install writes. Install it after `kiln init`, on the server.
+`infra/kilnd.service` runs `/usr/local/bin/kilnd serve` under systemd, the
+path a release install writes. Install it after `kilnd init`, on the server.
 From source:
 
 ```sh
 bash scripts/build-kilninit.sh
-go build -o /tmp/kiln ./cmd/kiln
-sudo install -m 755 /tmp/kiln /usr/local/bin/kiln
-sudo install -m 644 infra/kiln.service /etc/systemd/system/kiln.service
+go build -o /tmp/kilnd ./cmd/kilnd
+sudo install -m 755 /tmp/kilnd /usr/local/bin/kilnd
+sudo install -m 644 infra/kilnd.service /etc/systemd/system/kilnd.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now kiln
-journalctl -u kiln -f
+sudo systemctl enable --now kilnd
+journalctl -u kilnd -f
 ```
 
 `KillMode=process` stops only the daemon. A restart adopts the running
-microVMs, so `systemctl restart kiln` keeps every sandbox. Stop the service
+microVMs, so `systemctl restart kilnd` keeps every sandbox. Stop the service
 before a gate or `just demo` with a daemon of its own: both bind the same
 ports. After a code change, build and install the binary again, then
-`sudo systemctl restart kiln`. A box whose unit still names
-`/var/lib/kiln/bin/kiln` keeps working; install the binary at the new path
-before you copy the new unit file.
+`sudo systemctl restart kilnd`.
+
+## Upgrade from the kiln binary to kilnd
+
+Before v0.10.0 the host binary was `kiln`, under the unit `kiln.service`. These
+steps keep every sandbox running, because the unit stops only the daemon. The
+`upgrade` gate runs them on every release.
+
+```sh
+curl -fsSLO https://github.com/alternayte/kiln/releases/latest/download/kilnd
+curl -fsSLO https://github.com/alternayte/kiln/releases/latest/download/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+sudo systemctl disable --now kiln
+sudo install -m755 kilnd /usr/local/bin/kilnd
+sudo rm /usr/local/bin/kiln
+sudo rm /etc/systemd/system/kiln.service
+sudo install -m644 infra/kilnd.service /etc/systemd/system/kilnd.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now kilnd
+```
+
+A drop-in under `/etc/systemd/system/kiln.service.d`, such as the data disk one
+below, moves to `kilnd.service.d`. Install the `kiln` client over the removed
+path if you use it on the host.
 
 ## Put the data on a large disk
 
@@ -179,7 +200,7 @@ A sandbox that cannot find its `disk_mb` free is refused with `exhausted`. Stop
 every sandbox first, because a running microVM holds files open at the old path.
 
 ```sh
-sudo systemctl stop kiln
+sudo systemctl stop kilnd
 sudo mkdir -p /data/kiln
 sudo cp -a --sparse=always /var/lib/kiln/. /data/kiln/
 sudo mv /var/lib/kiln /var/lib/kiln.old
@@ -187,10 +208,10 @@ sudo mkdir /var/lib/kiln
 echo '/data/kiln /var/lib/kiln none bind,x-systemd.requires-mounts-for=/data 0 0' | sudo tee -a /etc/fstab
 sudo systemctl daemon-reload
 sudo mount /var/lib/kiln
-sudo mkdir -p /etc/systemd/system/kiln.service.d
-printf '[Unit]\nRequiresMountsFor=/var/lib/kiln\n' | sudo tee /etc/systemd/system/kiln.service.d/data.conf
+sudo mkdir -p /etc/systemd/system/kilnd.service.d
+printf '[Unit]\nRequiresMountsFor=/var/lib/kiln\n' | sudo tee /etc/systemd/system/kilnd.service.d/data.conf
 sudo systemctl daemon-reload
-sudo systemctl start kiln
+sudo systemctl start kilnd
 ```
 
 `--sparse=always` matters: a rootfs is a mostly empty file of its full size.
@@ -198,7 +219,7 @@ Remove `/var/lib/kiln.old` once previews work.
 
 ## The gateway listener
 
-A gateway on another machine reaches the host over mTLS. `kiln init` has no
+A gateway on another machine reaches the host over mTLS. `kilnd init` has no
 flag for it: add two keys to `config.json`, restart the service, and open
 the port.
 
@@ -212,11 +233,11 @@ gateway dials: a hostname, or the IP. Then print what the gateway needs, and
 paste it into its credential store:
 
 ```sh
-sudo kiln gateway-env --name production --host kiln.example.com:8443
+sudo kilnd gateway-env --name production --host kiln.example.com:8443
 ```
 
 The block holds `KILN_HOST_URL`, `KILN_HOST_TOKEN` and the three PEM values.
-`kiln ca revoke --serial <n>` cuts one certificate off. The rest of the
+`kilnd ca revoke --serial <n>` cuts one certificate off. The rest of the
 gateway setup is [docs/gateway.md](../docs/gateway.md).
 
 ## Config
@@ -287,7 +308,7 @@ export KILN_ROOT=/var/lib/kiln
 export CLOUDFLARE_DNS_API_TOKEN=...        # the token from step 2
 export KILN_VIEWER_EMAIL=you@example.com   # the first viewer account
 export KILN_VIEWER_PASSWORD=...            # at least 8 characters
-sudo -E go run ./cmd/kiln init --zone example.com --acme-email you@example.com
+sudo -E go run ./cmd/kilnd init --zone example.com --acme-email you@example.com
 sudo env "PATH=$PATH" just gate P6
 sudo env "PATH=$PATH" just demo
 ```

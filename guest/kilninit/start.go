@@ -186,3 +186,17 @@ func runAwait(conn net.Conn, req *guestproto.Request) {
 		},
 	})
 }
+
+// runStartOutput answers with the kept output of the start command. A guest
+// with no start command answers with no output.
+func runStartOutput(conn net.Conn) {
+	res := guestproto.Result{OK: true}
+	for port, app := range started {
+		res.Output = app.tail.String()
+		if done(port) {
+			res.Exited = true
+			res.ExitCode = app.exitCode
+		}
+	}
+	writeResult(conn, res)
+}

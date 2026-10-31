@@ -1,6 +1,6 @@
 # The gateway
 
-`kiln serve` alone is one operator, one token, on one box, reachable from
+`kilnd serve` alone is one operator, one token, on one box, reachable from
 that box. The gateway is what the rest of the world talks to. It holds
 tenants, API keys, members, viewers, OAuth, rate limits and an audit log,
 serves the web UI with a terminal into each sandbox, serves the same
@@ -9,13 +9,13 @@ the tenant's name on it. The host filters every row by that name.
 
 You need it when more than one person or program reaches the host, when any
 of them is not on the box, or when an agent should drive sandboxes over MCP.
-A single operator on one box with `kiln ctl` and `curl` does not.
+A single operator on one box with `kiln` and `curl` does not.
 
 ## What runs where
 
 | Piece | Runs | Holds |
 |---|---|---|
-| `kiln serve` | On the KVM host, as root, under systemd | The microVMs, `kiln.db`, the operator token |
+| `kilnd serve` | On the KVM host, as root, under systemd | The microVMs, `kiln.db`, the operator token |
 | `kiln-gateway` | Anywhere with a public address, as an image | Its own database: tenants, keys, members, sessions, OAuth, audit |
 
 The two are separate on purpose. The gateway changes often and deploys like
@@ -34,7 +34,7 @@ migrations at start.
 | `KILN_OAUTH_KEY` | yes | 32 bytes, base64, from your credential store: `openssl rand -base64 32`. It wraps the OAuth signing keys at rest. A new key on every restart would invalidate every token issued. |
 | `KILN_HOST_URL` | yes | The host. `https://<name>:8443` through the mTLS listener, or `http://127.0.0.1:8080` on the same box. |
 | `KILN_HOST_TOKEN` | yes | The host's operator token, from its `config.json`. |
-| `KILN_CA_CERT`, `KILN_CLIENT_CERT`, `KILN_CLIENT_KEY` | for an https host | The three PEM values `kiln gateway-env` prints. Each accepts a PEM block, the PEM as base64, or `\n` escapes, and `<NAME>_FILE` names a file instead. |
+| `KILN_CA_CERT`, `KILN_CLIENT_CERT`, `KILN_CLIENT_KEY` | for an https host | The three PEM values `kilnd gateway-env` prints. Each accepts a PEM block, the PEM as base64, or `\n` escapes, and `<NAME>_FILE` names a file instead. |
 | `KILN_OPERATOR_EMAIL`, `KILN_OPERATOR_PASSWORD` | first start | The first operator. Read at every start: a missing operator is created, the role is repaired, and the password is set when one is given. Remove both afterwards. |
 | `KILN_DB` | no | The SQLite file, `file:/data/kiln-gateway.db` in the image. Mount `/data`. |
 | `KILN_DATABASE_URL` | no | A Postgres DSN. Set, it replaces SQLite, which a second gateway needs. |
@@ -61,7 +61,7 @@ docker run -d --name kiln-gateway --network host \
   -e KILN_HOST_TOKEN="$(sudo jq -r .bearer_token /var/lib/kiln/config.json)" \
   -e KILN_OPERATOR_EMAIL=you@example.com \
   -e KILN_OPERATOR_PASSWORD='at least eight characters' \
-  ghcr.io/alternayte/kiln-gateway:v0.9.7
+  ghcr.io/alternayte/kiln-gateway:v0.10.0
 ```
 
 `--network host` is what lets it reach `127.0.0.1:8080`. Put a TLS
@@ -75,7 +75,7 @@ On the host, add the mTLS listener to `config.json`, restart, and open the
 port. Then print the gateway's credentials:
 
 ```sh
-sudo kiln gateway-env --name production --host kiln.example.com:8443
+sudo kilnd gateway-env --name production --host kiln.example.com:8443
 ```
 
 The steps are in [infra/README.md](../infra/README.md#the-gateway-listener).

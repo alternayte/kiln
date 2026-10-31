@@ -64,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gate: ${{ fromJSON(inputs.gate && format('["{0}"]', inputs.gate) || '["P0","P1","P2","P3","P4","P5","sec"]') }}
+        gate: ${{ fromJSON(inputs.gate && format('["{0}"]', inputs.gate) || '["P0","P1","P2","P3","P4","P5","sec","upgrade"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -77,10 +77,10 @@ jobs:
           echo "GOCACHE=$(go env GOCACHE)" >> "$GITHUB_ENV"
           echo "GOMODCACHE=$(go env GOMODCACHE)" >> "$GITHUB_ENV"
       - run: sudo env "PATH=$PATH" bash scripts/dev-env.sh
-      # kiln init writes the guest agent the binary carries, so the agent
+      # kilnd init writes the guest agent the binary carries, so the agent
       # is built first.
       - run: bash scripts/build-kilninit.sh
-      - run: sudo env "PATH=$PATH" "GOCACHE=$GOCACHE" "GOMODCACHE=$GOMODCACHE" go run ./cmd/kiln init
+      - run: sudo env "PATH=$PATH" "GOCACHE=$GOCACHE" "GOMODCACHE=$GOMODCACHE" go run ./cmd/kilnd init
       # Docker sets the FORWARD policy to DROP. Kiln's chains are in the inet
       # family at the same priority and are registered later, so Docker's
       # policy would drop guest traffic before Kiln's chain sees it. The reply

@@ -976,6 +976,50 @@ func (m *Manager) Exec(ctx context.Context, id string, req runtime.ExecRequest, 
 	return res, err
 }
 
+// Logs is what the host and the guest kept about one sandbox.
+type Logs struct {
+	Template store.Template
+	// Start is nil when the template names no start command, or when the
+	// guest came from a template older than this request.
+	Start *runtime.StartOutput
+	// GuestTooOld says the guest did not know the request.
+	GuestTooOld bool
+}
+
+// Logs reads the output of the start command and the template build result.
+// A sleeping sandbox wakes first, because its guest holds the output.
+func (m *Manager) Logs(ctx context.Context, id string) (Logs, error) {
+	row, unlock, err := m.acquireRunning(ctx, id)
+	if err != nil {
+		return Logs{}, err
+	}
+	defer unlock()
+	var out Logs
+	out.Template, err = m.cfg.Store.GetTemplate(ctx, row.TemplateName)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return Logs{}, err
+	}
+	if len(out.Template.Start) == 0 {
+		return out, nil
+	}
+	vm, err := m.vmFor(row)
+	if err != nil {
+		return Logs{}, err
+	}
+	start, err := vm.StartOutput(ctx)
+	var ee *runtime.ExecError
+	if errors.As(err, &ee) && ee.Code == guestproto.CodeInvalid {
+		out.GuestTooOld = true
+		return out, nil
+	}
+	if err != nil {
+		return Logs{}, err
+	}
+	out.Start = &start
+	m.touch(ctx, row)
+	return out, nil
+}
+
 // Terminal opens an interactive terminal in a running sandbox. A
 // sleeping sandbox wakes first. The read lock is held until the session is
 // closed, so the sandbox cannot sleep under an open shell.

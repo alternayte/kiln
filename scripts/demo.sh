@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # just demo is the v1 done-line. It runs the sequence in the SDD against a
-# live kiln serve, and it asserts every step. It asserts no timing bound: it
+# live kilnd serve, and it asserts every step. It asserts no timing bound: it
 # prints the create wall time against the last recorded value.
 #
 # It needs config.json with a zone and an ACME account, wildcard DNS for
@@ -9,7 +9,7 @@ set -euo pipefail
 
 ROOT="${KILN_ROOT:-/var/lib/kiln}"
 CONFIG="$ROOT/config.json"
-[ -f "$CONFIG" ] || { echo "demo: $CONFIG is missing; run kiln init" >&2; exit 1; }
+[ -f "$CONFIG" ] || { echo "demo: $CONFIG is missing; run kilnd init" >&2; exit 1; }
 TOKEN="$(jq -er .bearer_token "$CONFIG")"
 CONTROL="http://$(jq -r '.control_addr // "127.0.0.1:8080"' "$CONFIG")"
 ZONE="$(jq -er .zone "$CONFIG")"

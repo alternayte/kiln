@@ -15,8 +15,8 @@ esac
 echo "nuke: killing Kiln processes"
 pkill -f "$ROOT" 2>/dev/null || true
 pkill -x firecracker 2>/dev/null || true
-pkill -x kiln 2>/dev/null || true
-pkill -f 'kiln snapfault' 2>/dev/null || true
+pkill -x kilnd 2>/dev/null || true
+pkill -f 'kilnd? snapfault' 2>/dev/null || true
 sleep 1
 
 if command -v ip >/dev/null; then

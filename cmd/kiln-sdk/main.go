@@ -17,6 +17,9 @@ func main() {
 	server := flag.String("server", "https://api.example.com", "server URL in the OpenAPI document")
 	flag.Parse()
 
+	if err := apispec.CheckCommands(); err != nil {
+		fail(err)
+	}
 	openapi, err := apispec.OpenAPIJSON(*server)
 	if err != nil {
 		fail(err)

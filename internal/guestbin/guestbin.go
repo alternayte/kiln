@@ -1,4 +1,4 @@
-// Package guestbin carries the guest agent inside the kiln binary.
+// Package guestbin carries the guest agent inside the kilnd binary.
 //
 // A host used to compile the agent at init time, which meant installing Kiln
 // needed the Go toolchain and the source. It also meant a host with neither
@@ -23,7 +23,7 @@ import (
 //go:embed all:bin
 var files embed.FS
 
-// ErrMissing reports a kiln binary built without the agent. It names the fix,
+// ErrMissing reports a kilnd binary built without the agent. It names the fix,
 // because the person who meets it is holding a binary that cannot install a
 // host.
 var ErrMissing = errors.New("guestbin: this binary carries no guest agent; run scripts/build-kilninit.sh and build again")

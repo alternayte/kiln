@@ -12,7 +12,7 @@ import (
 	"github.com/alternayte/kiln/internal/snapshot"
 )
 
-// cmdSnapfault serves guest memory pages for one restoring microVM. kiln serve
+// cmdSnapfault serves guest memory pages for one restoring microVM. kilnd serve
 // launches it once per restore.
 func cmdSnapfault(args []string) error {
 	fs := flag.NewFlagSet("snapfault", flag.ContinueOnError)

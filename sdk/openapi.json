@@ -223,6 +223,20 @@
         },
         "type": "array"
       },
+      "SandboxLogs": {
+        "properties": {
+          "build": {
+            "type": "object"
+          },
+          "note": {
+            "type": "string"
+          },
+          "start": {
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
       "Snapshot": {
         "properties": {
           "created_at": {
@@ -405,13 +419,31 @@
   "info": {
     "description": "Isolated Linux microVMs on one host, created from OCI images and forked into copies.",
     "title": "Kiln",
-    "version": "0.9.7"
+    "version": "0.10.0"
   },
   "openapi": "3.1.0",
   "paths": {
     "/v1/events": {
       "get": {
         "operationId": "events",
+        "parameters": [
+          {
+            "description": "Event id to continue after. Zero replays every event.",
+            "in": "query",
+            "name": "after",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Keep the events of one sandbox.",
+            "in": "query",
+            "name": "sandbox_id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -1593,6 +1625,85 @@
           }
         },
         "summary": "Snapshot a running sandbox and restore several copies of it."
+      }
+    },
+    "/v1/sandboxes/{id}/logs": {
+      "get": {
+        "operationId": "logs",
+        "parameters": [
+          {
+            "description": "Sandbox id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxLogs"
+                }
+              }
+            },
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised."
+          }
+        },
+        "summary": "Read what the guest kept of the start command output, how the start command ended, and the template build result. A sleeping sandbox wakes first."
       }
     },
     "/v1/sandboxes/{id}/processes": {

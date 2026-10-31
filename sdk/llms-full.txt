@@ -36,6 +36,27 @@ The preview sleeps after its idle deadline and wakes on the next request, so an 
 
 Egress is deny by default. A preview that reaches a database or an API needs those hostnames in `egress_allow`, and nothing else is reachable from inside it.
 
+## The kiln command
+
+`kiln` is the client for Linux and macOS. It reads `KILN_URL` and `KILN_API_KEY`, and has one command for each operation below. `--json` prints JSON, and `kiln init` writes the Kiln skill and the MCP entry into a repository.
+
+The work loop for a preview environment is `kiln preview up --image X --port N`, which prints the URL, then `kiln logs <id>` when it fails, and `kiln preview down` when it is finished.
+
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | Success. |
+| 1 | An API or network failure, or a template that did not build. |
+| 2 | A usage or configuration error, such as a missing KILN_URL. |
+| 3 | The API answered `not_found`. |
+| 4 | The API answered `conflict`. |
+| 5 | The API answered `exhausted`: a cap of this tenant is reached. |
+| 6 | The API answered `invalid`. |
+| 14 | `--timeout` ended the wait. The build continues. |
+| 124 | `kiln exec`: the command reached `timeout_seconds`. |
+| 125 | `kiln exec`: Kiln itself failed. Any other code from `kiln exec` is the exit code of the command. |
+
 ## Errors
 
 Every error is `{"error":{"code":"...","message":"..."}}`. The code is stable: `invalid`, `not_found`, `conflict`, `exhausted`, `internal`. `exhausted` answers 429 and means a cap of this tenant is reached; the message names the cap. `not_found` also covers a row of another tenant.
@@ -46,15 +67,24 @@ Every error is `{"error":{"code":"...","message":"..."}}`. The code is stable: `
 
 `GET /v1/events`
 
+`kiln events`
+
 Read the event stream of this tenant as server-sent events. The stream starts at the latest event and never ends; ?after=0 replays every event, ?after=<id> continues from one, and ?sandbox_id= keeps one sandbox.
 
 This call can stream. Read the body as it arrives.
+
+Query:
+
+- `after` (integer): Event id to continue after. Zero replays every event.
+- `sandbox_id` (string): Keep the events of one sandbox.
 
 Answers 200 with `EventList`.
 
 ### health
 
 `GET /v1/health`
+
+`kiln health`
 
 Report whether the host can run sandboxes.
 
@@ -64,6 +94,8 @@ Answers 200 with `Health`.
 
 `GET /v1/registries`
 
+`kiln registries list`
+
 List the registry credentials of this tenant. The tokens are never returned.
 
 Answers 200 with `RegistryList`.
@@ -71,6 +103,8 @@ Answers 200 with `RegistryList`.
 ### putRegistry
 
 `POST /v1/registries`
+
+`kiln registries put`
 
 Store the credential a template build uses to pull a private image for this tenant.
 
@@ -86,6 +120,8 @@ Answers 201 with `Registry`.
 
 `DELETE /v1/registries/{host}`
 
+`kiln registries delete`
+
 Remove one registry credential.
 
 Path:
@@ -98,6 +134,8 @@ Answers 204 with no body.
 
 `GET /v1/sandboxes`
 
+`kiln sandboxes list`
+
 List the sandboxes of this tenant.
 
 Answers 200 with `SandboxList`.
@@ -105,6 +143,8 @@ Answers 200 with `SandboxList`.
 ### createSandbox
 
 `POST /v1/sandboxes`
+
+`kiln sandboxes create`
 
 Create a sandbox by restoring a template snapshot.
 
@@ -124,6 +164,8 @@ Answers 201 with `Sandbox`.
 
 `DELETE /v1/sandboxes/{id}`
 
+`kiln sandboxes delete`
+
 Destroy a sandbox and retire its hostnames.
 
 Path:
@@ -136,6 +178,8 @@ Answers 204 with no body.
 
 `GET /v1/sandboxes/{id}`
 
+`kiln sandboxes get`
+
 Read one sandbox with its published ports.
 
 Path:
@@ -147,6 +191,8 @@ Answers 200 with `Sandbox`.
 ### setEgress
 
 `PUT /v1/sandboxes/{id}/egress`
+
+`kiln sandboxes set-egress`
 
 Replace the egress policy of one sandbox. The answer comes after the host swaps the list and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it.
 
@@ -163,6 +209,8 @@ Answers 200 with `Sandbox`.
 ### exec
 
 `POST /v1/sandboxes/{id}/exec`
+
+`kiln exec`
 
 Run a command inside a sandbox. Accept text/event-stream to read the output as it runs.
 
@@ -185,6 +233,8 @@ Answers 200 with `ExecResult`.
 
 `GET /v1/sandboxes/{id}/files/{path...}`
 
+`kiln files read`
+
 Read one file out of a sandbox. The answer is the file's bytes.
 
 This call can stream. Read the body as it arrives.
@@ -199,6 +249,8 @@ Answers 200 with `FileBody`.
 ### writeFile
 
 `PUT /v1/sandboxes/{id}/files/{path...}`
+
+`kiln files write`
 
 Write one file into a sandbox. The request body is the file's bytes, and parent directories are created.
 
@@ -215,6 +267,8 @@ Answers 204 with no body.
 
 `POST /v1/sandboxes/{id}/fork`
 
+`kiln sandboxes fork`
+
 Snapshot a running sandbox and restore several copies of it.
 
 Path:
@@ -229,9 +283,25 @@ Body:
 
 Answers 201 with `SandboxList`.
 
+### logs
+
+`GET /v1/sandboxes/{id}/logs`
+
+`kiln logs`
+
+Read what the guest kept of the start command output, how the start command ended, and the template build result. A sleeping sandbox wakes first.
+
+Path:
+
+- `id` (string): Sandbox id.
+
+Answers 200 with `SandboxLogs`.
+
 ### startProcess
 
 `POST /v1/sandboxes/{id}/processes`
+
+`kiln processes start`
 
 Start a detached process and answer once it runs. It has no deadline, it outlives this request, and the sandbox does not sleep while it runs.
 
@@ -251,6 +321,8 @@ Answers 201 with `ProcessCreated`.
 
 `DELETE /v1/sandboxes/{id}/processes/{pid}`
 
+`kiln processes signal`
+
 Send a signal to the process group of a detached process. A process that has ended takes no signal, and the call still succeeds.
 
 Path:
@@ -267,6 +339,8 @@ Answers 204 with no body.
 ### readProcess
 
 `GET /v1/sandboxes/{id}/processes/{pid}`
+
+`kiln processes read`
 
 Read the state of a detached process and its output after each offset. One answer holds at most 1 MiB of each stream, the guest keeps the last 8 MiB, and the answer names the next offsets and the bytes lost.
 
@@ -286,6 +360,8 @@ Answers 200 with `Process`.
 
 `POST /v1/sandboxes/{id}/publish`
 
+`kiln sandboxes publish`
+
 Serve a guest port on a public hostname.
 
 Path:
@@ -303,6 +379,8 @@ Answers 201 with `Published`.
 
 `DELETE /v1/sandboxes/{id}/publish/{port}`
 
+`kiln sandboxes retire`
+
 Retire a published hostname. It answers 404 from then on.
 
 Path:
@@ -315,6 +393,8 @@ Answers 204 with no body.
 ### snapshot
 
 `POST /v1/sandboxes/{id}/snapshot`
+
+`kiln sandboxes snapshot`
 
 Snapshot a sandbox. With stop the sandbox sleeps and keeps its hostnames.
 
@@ -332,6 +412,8 @@ Answers 201 with `SnapshotCreated`.
 
 `GET /v1/sandboxes/{id}/terminal`
 
+`kiln terminal`
+
 Open an interactive shell in a sandbox over a WebSocket. A binary message carries terminal bytes both ways, and a text message carries {"cols":n,"rows":n}.
 
 This call is a WebSocket upgrade, not a request and an answer. The OpenAPI document and the generated clients leave it out.
@@ -348,6 +430,8 @@ Answers 101 with no body.
 
 `GET /v1/snapshots`
 
+`kiln snapshots list`
+
 List the snapshots of this tenant.
 
 Answers 200 with `SnapshotList`.
@@ -355,6 +439,8 @@ Answers 200 with `SnapshotList`.
 ### deleteSnapshot
 
 `DELETE /v1/snapshots/{id}`
+
+`kiln snapshots delete`
 
 Delete a snapshot that has no live sandbox.
 
@@ -368,6 +454,8 @@ Answers 204 with no body.
 
 `GET /v1/snapshots/{id}`
 
+`kiln snapshots get`
+
 Read one snapshot.
 
 Path:
@@ -379,6 +467,8 @@ Answers 200 with `Snapshot`.
 ### restore
 
 `POST /v1/snapshots/{id}/restore`
+
+`kiln snapshots restore`
 
 Restore a snapshot into one or more new sandboxes.
 
@@ -398,6 +488,8 @@ Answers 201 with `SandboxList`.
 
 `GET /v1/templates`
 
+`kiln templates list`
+
 List the templates of this tenant.
 
 Answers 200 with `TemplateList`.
@@ -405,6 +497,8 @@ Answers 200 with `TemplateList`.
 ### createTemplate
 
 `POST /v1/templates`
+
+`kiln templates create`
 
 Build a template from an OCI image. The build runs after the answer.
 
@@ -429,6 +523,8 @@ Answers 202 with `TemplateState`.
 
 `DELETE /v1/templates/{name}`
 
+`kiln templates delete`
+
 Delete a template that has no live sandbox and no snapshot.
 
 Path:
@@ -440,6 +536,8 @@ Answers 204 with no body.
 ### getTemplate
 
 `GET /v1/templates/{name}`
+
+`kiln templates get`
 
 Read one template.
 
@@ -453,6 +551,8 @@ Answers 200 with `Template`.
 
 `GET /v1/viewers`
 
+`kiln viewers list`
+
 List the viewers of this tenant.
 
 Answers 200 with `ViewerList`.
@@ -460,6 +560,8 @@ Answers 200 with `ViewerList`.
 ### createViewer
 
 `POST /v1/viewers`
+
+`kiln viewers create`
 
 Add a viewer of this tenant. A viewer opens team previews and nothing else.
 
@@ -473,6 +575,8 @@ Answers 201 with `Viewer`.
 ### deleteViewer
 
 `DELETE /v1/viewers/{id}`
+
+`kiln viewers delete`
 
 Revoke one viewer. The viewer is disabled and its sessions end.
 

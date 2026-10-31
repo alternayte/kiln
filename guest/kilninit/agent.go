@@ -44,6 +44,8 @@ func serve(conn net.Conn) {
 		runStart(conn, &req)
 	case guestproto.OpAwait:
 		runAwait(conn, &req)
+	case guestproto.OpStartOutput:
+		runStartOutput(conn)
 	case guestproto.OpTerminal:
 		runTerminal(conn, &req)
 	case guestproto.OpCheckUser:

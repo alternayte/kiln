@@ -5,12 +5,23 @@ reviewer clicks a link instead of reading a diff and imagining the result.
 
 Two things reach for this, and they use the same API.
 
-- **CI**, on every pull request. See [the Action](../.github/actions/preview/README.md), which a workflow pins by tag: `alternayte/kiln/.github/actions/preview@v0.9.7`. The workflow needs `deployments: write`, because the preview reports a GitHub deployment with its URL.
+- **CI**, on every pull request. See [the Action](../.github/actions/preview/README.md), which a workflow pins by tag: `alternayte/kiln/.github/actions/preview@v0.10.0`. The workflow needs `deployments: write`, because the preview reports a GitHub deployment with its URL.
 - **A coding agent**, which has finished a feature and wants to prove it runs.
   That is this page.
 
 Kiln does not build application images. You build and push the image; Kiln
 turns it into a microVM, runs it, and gives you the URL.
+
+## The one command
+
+`kiln preview up` runs the four calls below, waits for the build, and prints the
+URL. A second `up` in the same directory replaces the first. `kiln logs <id>`
+reads a failure.
+
+```sh
+kiln preview up --image ghcr.io/acme/shop:a1b2c3d --port 8000 --start '/app/server --port 8000'
+kiln preview down
+```
 
 ## Once per tenant: the registry credential
 

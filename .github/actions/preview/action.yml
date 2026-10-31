@@ -99,6 +99,12 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Install the kiln client
+      shell: bash
+      env:
+        ACTION_REF: ${{ github.action_ref }}
+      run: ${{ github.action_path }}/install.sh
+
     # A fork's commit is a stranger's code beside this tenant's API key, so a
     # maintainer decides when it runs, one commit at a time. A label that
     # survived a push would authorise code nobody read.

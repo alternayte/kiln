@@ -290,6 +290,58 @@ func (s *Server) streamExec(w http.ResponseWriter, r *http.Request, id string, r
 	flusher.Flush()
 }
 
+// sandboxLogsResponse is the answer to GET /v1/sandboxes/{id}/logs.
+type sandboxLogsResponse struct {
+	Build logsBuild  `json:"build"`
+	Start *logsStart `json:"start,omitempty"`
+	Note  string     `json:"note,omitempty"`
+}
+
+type logsBuild struct {
+	Template string `json:"template"`
+	State    string `json:"state"`
+	Error    string `json:"error,omitempty"`
+}
+
+type logsStart struct {
+	Command  []string `json:"command"`
+	Port     int      `json:"port"`
+	Running  bool     `json:"running"`
+	ExitCode *int     `json:"exit_code,omitempty"`
+	Output   string   `json:"output"`
+}
+
+// sandboxLogs answers with the output the guest kept and the build result.
+func (s *Server) sandboxLogs(w http.ResponseWriter, r *http.Request) {
+	logs, err := s.Sandboxes.Logs(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	out := sandboxLogsResponse{Build: logsBuild{
+		Template: logs.Template.Name,
+		State:    logs.Template.State,
+		Error:    logs.Template.Error,
+	}}
+	if logs.GuestTooOld {
+		out.Note = "this sandbox came from a template built before this route; rebuild the template to read its output"
+	}
+	if logs.Start != nil {
+		start := &logsStart{
+			Command: logs.Template.Start,
+			Port:    logs.Template.StartPort,
+			Running: !logs.Start.Exited,
+			Output:  logs.Start.Output,
+		}
+		if logs.Start.Exited {
+			code := logs.Start.ExitCode
+			start.ExitCode = &code
+		}
+		out.Start = start
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // getSandboxFile streams one guest file.
 func (s *Server) getSandboxFile(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

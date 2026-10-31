@@ -40,7 +40,7 @@ func cmdServe() error {
 		return err
 	}
 	if cfg.BearerToken == "" {
-		return fmt.Errorf("serve: %s has no bearer_token; run kiln init", cfgPath)
+		return fmt.Errorf("serve: %s has no bearer_token; run kilnd init", cfgPath)
 	}
 	sealKey, err := cfg.sealKey()
 	if err != nil {
@@ -51,7 +51,7 @@ func cmdServe() error {
 	}
 	kilninit := filepath.Join(root, "bin", "kilninit")
 	if _, err := os.Stat(kilninit); err != nil {
-		return fmt.Errorf("serve: %w; run kiln init", err)
+		return fmt.Errorf("serve: %w; run kilnd init", err)
 	}
 
 	st, err := store.Open(filepath.Join(root, "kiln.db"))
@@ -113,7 +113,7 @@ func cmdServe() error {
 		return fmt.Errorf("serve: reconcile: %w", err)
 	} else if n := len(report.Adopted) + len(report.Failed) + len(report.Swept) +
 		len(report.Stuck) + len(report.Expired); n > 0 {
-		fmt.Printf("kiln serve: swept: %d adopted, %d failed, %d destroyed, %d stuck templates, %d expired templates\n",
+		fmt.Printf("kilnd serve: swept: %d adopted, %d failed, %d destroyed, %d stuck templates, %d expired templates\n",
 			len(report.Adopted), len(report.Failed), len(report.Swept),
 			len(report.Stuck), len(report.Expired))
 	}
@@ -165,7 +165,7 @@ func cmdServe() error {
 		}
 		gateway := &http.Server{Addr: cfg.GatewayAddr, Handler: handler, TLSConfig: tlsConfig}
 		go func() {
-			fmt.Printf("kiln serve: gateway on %s (mTLS)\n", cfg.GatewayAddr)
+			fmt.Printf("kilnd serve: gateway on %s (mTLS)\n", cfg.GatewayAddr)
 			if err := gateway.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Printf("serve: gateway listener: %v", err)
 			}
@@ -182,7 +182,7 @@ func cmdServe() error {
 	if err != nil {
 		return fmt.Errorf("serve: %w", err)
 	}
-	fmt.Printf("kiln serve: control on %s\n", cfg.ControlAddr)
+	fmt.Printf("kilnd serve: control on %s\n", cfg.ControlAddr)
 
 	var ingressSrv *http.Server
 	if cfg.Zone != "" && cfg.ACME.Email != "" && len(cfg.ACME.Credentials) > 0 {
@@ -213,12 +213,12 @@ func cmdServe() error {
 			// ServeTLS adds the HTTP protocols to the certificate manager's
 			// ALPN list, which bare tls.NewListener would not do.
 			if err := ingressSrv.ServeTLS(public, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				fmt.Fprintf(os.Stderr, "kiln serve: ingress: %v\n", err)
+				fmt.Fprintf(os.Stderr, "kilnd serve: ingress: %v\n", err)
 			}
 		}()
-		fmt.Printf("kiln serve: ingress on %s for *.%s\n", addr, cfg.Zone)
+		fmt.Printf("kilnd serve: ingress on %s for *.%s\n", addr, cfg.Zone)
 	} else if cfg.Zone != "" {
-		fmt.Printf("kiln serve: ingress disabled: config.json has no acme account\n")
+		fmt.Printf("kilnd serve: ingress disabled: config.json has no ACME registration\n")
 	}
 
 	errCh := make(chan error, 1)
@@ -239,14 +239,14 @@ func cmdServe() error {
 	}
 }
 
-// readConfig reads config.json written by kiln init. A host that predates
+// readConfig reads config.json written by kilnd init. A host that predates
 // the sealing key gains one here and keeps it, so an upgrade needs no
 // command. serve, ctl and gateway-env all read it, so the error names the
 // file and not one command.
 func readConfig(path string) (configFile, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return configFile{}, fmt.Errorf("%w; run kiln init, or set KILN_ROOT to the root kiln init wrote", err)
+		return configFile{}, fmt.Errorf("%w; run kilnd init, or set KILN_ROOT to the root kilnd init wrote", err)
 	}
 	var cfg configFile
 	if err := json.Unmarshal(b, &cfg); err != nil {
@@ -261,7 +261,7 @@ func readConfig(path string) (configFile, error) {
 		if err := saveConfig(path, cfg); err != nil {
 			return configFile{}, fmt.Errorf("serve: store the new sealing key: %w", err)
 		}
-		fmt.Println("kiln serve: wrote a sealing key to the config")
+		fmt.Println("kilnd serve: wrote a sealing key to the config")
 	}
 	return cfg, nil
 }

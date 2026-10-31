@@ -81,3 +81,20 @@ func (vm *VM) Await(ctx context.Context, port int) (StartResult, error) {
 	}
 	return out, nil
 }
+
+// StartOutput is what the guest kept of the start command.
+type StartOutput struct {
+	Output   string
+	Exited   bool
+	ExitCode int
+}
+
+// StartOutput reads the kept output of the start command. A guest from an
+// older template does not know the request and answers with an error.
+func (vm *VM) StartOutput(ctx context.Context) (StartOutput, error) {
+	res, _, _, err := vm.ask(ctx, guestproto.Request{Op: guestproto.OpStartOutput})
+	if err != nil {
+		return StartOutput{}, err
+	}
+	return StartOutput{Output: res.Output, Exited: res.Exited, ExitCode: res.ExitCode}, nil
+}

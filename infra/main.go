@@ -117,7 +117,7 @@ just check
 `, remoteDir)
 }
 
-// gateScript installs Firecracker and the guest kernel, then runs kiln init
+// gateScript installs Firecracker and the guest kernel, then runs kilnd init
 // and one gate. The gate needs root and /dev/kvm.
 func gateScript(remoteDir, gate string) string {
 	return fmt.Sprintf(`set -euo pipefail
@@ -126,7 +126,7 @@ export PATH=/usr/local/go/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH
 cd %s
 [ -e /dev/kvm ] || { echo "gate %s: /dev/kvm is missing on this host" >&2; exit 1; }
 sudo env "PATH=$PATH" bash scripts/dev-env.sh
-sudo env "PATH=$PATH" go run ./cmd/kiln init
+sudo env "PATH=$PATH" go run ./cmd/kilnd init
 sudo env "PATH=$PATH" just gate %s
 `, remoteDir, gate, gate)
 }

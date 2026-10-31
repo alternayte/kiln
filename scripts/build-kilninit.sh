@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-compile the guest agent into the directory the kiln binary embeds.
+# Cross-compile the guest agent into the directory the kilnd binary embeds.
 # The kiln build reads that file, so this runs before it, the way the web
 # bundle is built before the gateway.
 set -euo pipefail

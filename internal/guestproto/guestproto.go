@@ -46,6 +46,8 @@ const (
 	OpTerminal  = "terminal"
 	OpStart     = "start"
 	OpAwait     = "await"
+	// OpStartOutput reads the output the guest keeps of the start command.
+	OpStartOutput = "start_output"
 	// OpCheckUser asks whether the image holds a user, while a template builds.
 	OpCheckUser = "check_user"
 	// The detached process operations.
@@ -164,6 +166,10 @@ type Result struct {
 	Process *ProcessState `json:"process,omitempty"`
 	// Running is how many detached processes run now.
 	Running int `json:"running,omitempty"`
+	// Output is the kept output of the start command, and Exited says whether
+	// that command has ended. ExitCode then holds how it ended.
+	Output string `json:"output,omitempty"`
+	Exited bool   `json:"exited,omitempty"`
 }
 
 // ProcessState is what the guest knows about one detached process.

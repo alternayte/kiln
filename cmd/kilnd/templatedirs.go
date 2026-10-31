@@ -47,7 +47,7 @@ func moveTemplatesIntoTenants(ctx context.Context, st store.Store, root string) 
 			if err := os.Rename(old, want); err != nil {
 				return fmt.Errorf("move %s: %w", old, err)
 			}
-			fmt.Printf("kiln serve: template %s moved to tenant %s\n", row.Name, tenant)
+			fmt.Printf("kilnd serve: template %s moved to tenant %s\n", row.Name, tenant)
 			break
 		}
 	}

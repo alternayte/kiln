@@ -117,6 +117,11 @@ export class GeneratedClient {
     return this.json("POST", `/v1/sandboxes/${encodeURIComponent(String(id))}/fork`, body);
   }
 
+  /** Read what the guest kept of the start command output, how the start command ended, and the template build result. A sleeping sandbox wakes first. */
+  logs(id: string): Promise<unknown> {
+    return this.json("GET", `/v1/sandboxes/${encodeURIComponent(String(id))}/logs`);
+  }
+
   /** Start a detached process and answer once it runs. It has no deadline, it outlives this request, and the sandbox does not sleep while it runs. */
   startProcess(id: string, body: { cmd: string[]; cwd?: string; env?: Record<string, unknown> }): Promise<unknown> {
     return this.json("POST", `/v1/sandboxes/${encodeURIComponent(String(id))}/processes`, body);

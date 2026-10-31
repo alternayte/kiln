@@ -1,109 +1,66 @@
 #!/usr/bin/env bash
 # Build this commit into a template, run one sandbox from it, publish the
-# application port, and print the hostname.
-#
-# curl talks to the gateway, because the API is the product. python3 builds
-# and reads the JSON; it is on every runner and needs no build step, and a
-# shell that assembles JSON by hand breaks on the first quote in a setup
-# command.
+# application port, and print the hostname. kiln preview up does the work, so
+# the Action and an agent run one flow.
 set -euo pipefail
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-api() {
-  local method="$1" path="$2" body="${3:-}"
-  local args=(-sS -X "$method" -H "Authorization: Bearer $KILN_API_KEY" -w $'\n%{http_code}')
-  if [ -n "$body" ]; then args+=(-H 'Content-Type: application/json' -d "$body"); fi
-  curl "${args[@]}" "$KILN_URL$path"
-}
-status() { tail -n1 <<< "$1"; }
-payload() { sed '$d' <<< "$1"; }
-
-# Caller errors fail before the template builds. This also masks every env
-# value, so no later line of the log shows one.
-python3 "$here/payload.py" check
+# Every value is masked first, so no later line of the log shows one.
+while IFS= read -r line; do
+  value="${line#*=}"
+  if [ "$value" != "$line" ] && [ -n "$value" ]; then
+    echo "::add-mask::$value"
+  fi
+done <<< "$ENV_LINES"
 if [ -n "${REGISTRY_TOKEN:-}" ]; then
   echo "::add-mask::$REGISTRY_TOKEN"
 fi
 
-if [ "$FORK" = "true" ] && [ -n "$(tr -d '[:space:]' <<< "$ENV_LINES")" ]; then
-  echo "this pull request comes from a fork, so env is not sent to its preview"
-fi
-
-# A template with no sandbox is invisible to prune.sh, which finds templates
-# through their sandboxes, so a failed run removes its own. Otherwise each one
-# holds its disk until its TTL.
-discard_template() {
-  api DELETE "/v1/templates/$name" > /dev/null || true
-}
-
-short="${SHA:0:7}"
-name="pr-${PR}-${short}"
-
-echo "building template $name from $IMAGE"
-body="$(NAME="$name" python3 "$here/payload.py" template)"
-out="$(api POST /v1/templates "$body")"
-if [ "$(status "$out")" != "202" ]; then
-  echo "the template was refused: $(payload "$out")" >&2
-  exit 1
-fi
-
-# Wait for the build. A failure prints the events: a silent preview failure
-# wastes the reviewer's time, not the author's.
-state=building
-for _ in $(seq 1 900); do
-  sleep 2
-  out="$(api GET "/v1/templates/$name")"
-  [ "$(status "$out")" = "200" ] || continue
-  state="$(payload "$out" | python3 "$here/payload.py" get state)"
-  [ "$state" = "building" ] || break
-done
-if [ "$state" != "ready" ]; then
-  echo "the template did not build: state=$state" >&2
-  payload "$out" | python3 "$here/payload.py" get error >&2 || true
-  echo "--- events" >&2
-  # The event stream never ends, and it starts at the latest event. after=0
-  # replays the tenant's history, and the time limit closes the stream.
-  curl -sS --max-time 5 -H "Authorization: Bearer $KILN_API_KEY" "$KILN_URL/v1/events?after=0" >&2 || true
-  discard_template
-  exit 1
-fi
-
-body="$(NAME="$name" python3 "$here/payload.py" sandbox)"
-out="$(api POST /v1/sandboxes "$body")"
-if [ "$(status "$out")" != "201" ]; then
-  echo "the sandbox was refused: $(payload "$out")" >&2
-  discard_template
-  exit 1
-fi
-sandbox="$(payload "$out" | python3 "$here/payload.py" get id)"
-
-# port goes first: the first published port of a sandbox gets the short
-# hostname, and every other port shares its stem.
-published=""
-for p in "$PORT" $(python3 "$here/payload.py" ports); do
-  body="$(python3 "$here/payload.py" publish "$p")"
-  out="$(api POST "/v1/sandboxes/$sandbox/publish" "$body")"
-  if [ "$(status "$out")" != "201" ]; then
-    echo "port $p was refused: $(payload "$out")" >&2
-    exit 1
+# A fork's commit never sees env: a label approves the code, not what the code
+# can reach, and a value can leave through the published port.
+if [ "$FORK" = "true" ]; then
+  if [ -n "$(tr -d '[:space:]' <<< "$ENV_LINES")" ]; then
+    echo "this pull request comes from a fork, so env is not sent to its preview"
   fi
-  u="$(payload "$out" | python3 "$here/payload.py" get url)"
-  published+="$p $u"$'\n'
-  echo "port $p at $u"
+  ENV_LINES=""
+fi
+
+args=(
+  preview up --json
+  --name "pr-${PR}-${SHA:0:7}"
+  --image "$IMAGE"
+  --port "$PORT"
+  --start "$START"
+  --publish "$PUBLISH"
+  --vcpus "$VCPUS"
+  --memory-mb "$MEMORY_MB"
+  --disk-mb "$DISK_MB"
+  --ttl-seconds "$TTL_SECONDS"
+  --idle-seconds "$IDLE_SECONDS"
+  --env-file -
+  --registry-username "$REGISTRY_USERNAME"
+  # The group finds the previous preview of one pull request, so the Action
+  # keeps no state of its own.
+  --group "repository=$REPO"
+  --group "pull_request=$PR"
+  --metadata "commit=$SHA"
+)
+for host in $EGRESS; do
+  args+=(--egress-allow "$host")
 done
-url="$(head -n1 <<< "$published" | cut -d' ' -f2-)"
-urls="$(python3 "$here/payload.py" urls <<< "$published")"
+while IFS= read -r line; do
+  if [ -n "${line//[[:space:]]/}" ]; then
+    args+=(--setup "$line")
+  fi
+done <<< "$SETUP"
 
+# The client reads the token from the environment, so it stays off the command
+# line. With --json, a failure comes back on stdout.
+if ! out="$(printf '%s\n' "$ENV_LINES" | KILN_REGISTRY_TOKEN="${REGISTRY_TOKEN:-}" kiln "${args[@]}")"; then
+  echo "the preview did not come up: $out" >&2
+  exit 1
+fi
+
+url="$(jq -r .url <<< "$out")"
 echo "url=$url" >> "$GITHUB_OUTPUT"
-echo "urls=$urls" >> "$GITHUB_OUTPUT"
+echo "urls=$(jq -c .urls <<< "$out")" >> "$GITHUB_OUTPUT"
 echo "preview at $url"
-
-# Where the time went. The stream never ends, so the time limit closes it, and
-# a preview that is already live does not fail over its own timing.
-curl -sS --max-time 5 -H "Authorization: Bearer $KILN_API_KEY" "$KILN_URL/v1/events?after=0" \
-  | NAME="$name" SANDBOX="$sandbox" python3 "$here/payload.py" phases || true
-
-# The previous preview of this pull request goes last, so the comment never
-# names a hostname that has already been retired.
-KEEP="$name" "$here/prune.sh" || true

@@ -41,11 +41,11 @@ func TestGateP2(t *testing.T) {
 	kernel := kernelPath(t, repo, root)
 	kilninit := filepath.Join(root, "bin", "kilninit")
 	if _, err := os.Stat(kilninit); err != nil {
-		t.Fatalf("kilninit %s: %v (run kiln init)", kilninit, err)
+		t.Fatalf("kilninit %s: %v (run kilnd init)", kilninit, err)
 	}
 	cfg := readConfig(t, root)
 	if cfg.BearerToken == "" {
-		t.Fatalf("%s has no bearer_token (run kiln init)", filepath.Join(root, "config.json"))
+		t.Fatalf("%s has no bearer_token (run kilnd init)", filepath.Join(root, "config.json"))
 	}
 
 	st, err := store.Open(filepath.Join(root, "kiln.db"))
@@ -577,7 +577,7 @@ func readConfig(t *testing.T, root string) struct {
 	}
 	b, err := os.ReadFile(filepath.Join(root, "config.json"))
 	if err != nil {
-		t.Fatalf("config.json: %v (run kiln init)", err)
+		t.Fatalf("config.json: %v (run kilnd init)", err)
 	}
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		t.Fatalf("config.json: %v", err)
@@ -604,7 +604,7 @@ func kernelPath(t *testing.T, repo, root string) string {
 	}
 	path := filepath.Join(root, "kernel", "vmlinux-"+version)
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("kernel %s: %v (run kiln init)", path, err)
+		t.Fatalf("kernel %s: %v (run kilnd init)", path, err)
 	}
 	return path
 }

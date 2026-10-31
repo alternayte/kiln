@@ -5,6 +5,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -137,6 +140,35 @@ func TestStartRejectsUnsafeID(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid") {
 		t.Fatalf("err %v, want invalid", err)
+	}
+}
+
+// A client that leaves during a snapshot must not leave the VM paused.
+func TestSnapshotResumesAfterCancel(t *testing.T) {
+	rec := &apiRecorder{}
+	vm := &VM{Socket: serveAPI(t, rec), Dir: t.TempDir(), ID: "cancelled"}
+	vm.api = newAPI(vm.Socket)
+	snapDir := filepath.Join(vm.chrootDir(), "snapshots")
+	if err := os.MkdirAll(snapDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"state", "mem"} {
+		if err := os.WriteFile(filepath.Join(snapDir, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := &Firecracker{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := f.SnapshotPaused(ctx, vm, filepath.Join(t.TempDir(), "out")); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if err := f.Resume(ctx, vm); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	want := []string{"PUT /snapshot/create", "PATCH /vm"}
+	if !slices.Equal(rec.paths, want) {
+		t.Fatalf("requests %v, want %v", rec.paths, want)
 	}
 }
 

@@ -250,6 +250,8 @@ func (m *Manager) Sleep(ctx context.Context, id string) error {
 }
 
 func (m *Manager) sleepLocked(ctx context.Context, id string) error {
+	// A client that leaves mid-write must not leave the VM paused.
+	ctx = context.WithoutCancel(ctx)
 	row, err := m.cfg.Store.GetSandbox(ctx, id)
 	if err != nil {
 		return err

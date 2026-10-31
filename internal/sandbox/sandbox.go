@@ -410,6 +410,8 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Snapshot, error) {
 	unlock := m.lockOps(id)
 	defer unlock()
+	// A client that leaves mid-write must not leave the VM paused.
+	ctx = context.WithoutCancel(ctx)
 	row, err := m.ensureRunningLocked(ctx, id)
 	if err != nil {
 		return store.Snapshot{}, err
@@ -439,6 +441,7 @@ func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Sna
 			return store.Snapshot{}, err
 		}
 	} else if files, err = m.cfg.Runtime.Snapshot(ctx, vm, dir); err != nil {
+		_ = os.RemoveAll(dir)
 		return store.Snapshot{}, err
 	}
 	now := m.now()

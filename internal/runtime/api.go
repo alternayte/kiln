@@ -11,9 +11,20 @@ import (
 	"time"
 )
 
-// apiClientTimeout bounds one Firecracker API call. A snapshot load can serve
-// page faults for a while before it answers.
-const apiClientTimeout = 2 * time.Minute
+const (
+	// apiClientTimeout bounds one Firecracker API call whose context has no
+	// deadline of its own.
+	apiClientTimeout = 2 * time.Minute
+	// snapshotTimePerMiB is what a snapshot call adds per MiB of guest memory.
+	// A snapshot of a restored VM faults each page in through the page fault
+	// source before it writes that page to disk.
+	snapshotTimePerMiB = 120 * time.Millisecond
+)
+
+// snapshotTimeout bounds a Firecracker call that moves the whole guest memory.
+func snapshotTimeout(memoryMiB int) time.Duration {
+	return apiClientTimeout + time.Duration(memoryMiB)*snapshotTimePerMiB
+}
 
 // api is a minimal Firecracker API client over the jailed API socket.
 type api struct {
@@ -26,7 +37,7 @@ func newAPI(socket string) *api {
 			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
 		},
 	}
-	return &api{client: &http.Client{Transport: tr, Timeout: apiClientTimeout}}
+	return &api{client: &http.Client{Transport: tr}}
 }
 
 func (a *api) put(ctx context.Context, path string, body any) error {
@@ -45,6 +56,11 @@ func (a *api) get(ctx context.Context, path string) ([]byte, error) {
 }
 
 func (a *api) do(ctx context.Context, method, path string, body any) ([]byte, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, apiClientTimeout)
+		defer cancel()
+	}
 	var reader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)

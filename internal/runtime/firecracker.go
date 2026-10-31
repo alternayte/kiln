@@ -65,6 +65,7 @@ type VM struct {
 	Socket      string
 	VsockSocket string
 	VsockPort   uint32
+	MemoryMiB   int
 
 	api     *api
 	cmd     *exec.Cmd
@@ -93,6 +94,7 @@ func (f *Firecracker) Restore(ctx context.Context, spec RestoreSpec) (*VM, error
 		ID:        spec.ID,
 		Dir:       SandboxDir(f.root, spec.ID),
 		VsockPort: spec.VsockPort,
+		MemoryMiB: spec.MemoryMiB,
 		done:      make(chan struct{}),
 	}
 	vm.Socket = filepath.Join(vm.chrootDir(), "run", "firecracker.sock")
@@ -142,7 +144,9 @@ func (f *Firecracker) loadSnapshot(ctx context.Context, spec RestoreSpec, vm *VM
 			{"iface_id": "eth0", "host_dev_name": spec.TAPName},
 		}
 	}
-	if err := vm.api.put(ctx, "/snapshot/load", load); err != nil {
+	loadCtx, cancel := context.WithTimeout(ctx, snapshotTimeout(spec.MemoryMiB))
+	defer cancel()
+	if err := vm.api.put(loadCtx, "/snapshot/load", load); err != nil {
 		return err
 	}
 	return vm.api.patch(ctx, "/vm", map[string]string{"state": "Resumed"})
@@ -160,6 +164,7 @@ func (f *Firecracker) Start(ctx context.Context, spec Spec) (*VM, error) {
 		ID:        spec.ID,
 		Dir:       SandboxDir(f.root, spec.ID),
 		VsockPort: spec.VsockPort,
+		MemoryMiB: spec.MemoryMiB,
 		done:      make(chan struct{}),
 	}
 	vm.Socket = filepath.Join(vm.chrootDir(), "run", "firecracker.sock")
@@ -195,6 +200,7 @@ func (f *Firecracker) Adopt(ctx context.Context, spec AdoptSpec) (*VM, error) {
 		PID:       spec.PID,
 		Dir:       SandboxDir(f.root, spec.ID),
 		VsockPort: guestproto.Port,
+		MemoryMiB: spec.MemoryMiB,
 	}
 	vm.Socket = filepath.Join(vm.chrootDir(), "run", "firecracker.sock")
 	vm.VsockSocket = filepath.Join(vm.chrootDir(), "run", "vsock.sock")
@@ -241,8 +247,13 @@ func (f *Firecracker) Pause(ctx context.Context, vm *VM) error {
 	return vm.api.patch(ctx, "/vm", map[string]string{"state": "Paused"})
 }
 
-// Resume unfreezes the VM.
+// Resume unfreezes the VM. Firecracker answers one call at a time, so after a
+// snapshot call that gave up, the resume waits for that write to end. The
+// caller's context does not apply: a VM must not stay paused because its
+// client left.
 func (f *Firecracker) Resume(ctx context.Context, vm *VM) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), snapshotTimeout(vm.MemoryMiB))
+	defer cancel()
 	return vm.api.patch(ctx, "/vm", map[string]string{"state": "Resumed"})
 }
 
@@ -260,8 +271,11 @@ func (f *Firecracker) Snapshot(ctx context.Context, vm *VM, dir string) (Snapsho
 }
 
 // SnapshotPaused writes a full memory and state snapshot of an already paused
-// VM into dir. The VM stays paused.
+// VM into dir. The VM stays paused. Firecracker cannot abandon the write, so
+// the caller's cancel does not apply, only a deadline from the memory size.
 func (f *Firecracker) SnapshotPaused(ctx context.Context, vm *VM, dir string) (SnapshotFiles, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), snapshotTimeout(vm.MemoryMiB))
+	defer cancel()
 	out := SnapshotFiles{}
 	err := vm.api.put(ctx, "/snapshot/create", map[string]any{
 		"snapshot_path": "/snapshots/state",

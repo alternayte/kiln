@@ -51,8 +51,9 @@ type RestoreSpec struct {
 // AdoptSpec names a microVM whose process survived a daemon restart. The
 // jail directory and both sockets are still in place.
 type AdoptSpec struct {
-	ID  string
-	PID int
+	ID        string
+	PID       int
+	MemoryMiB int
 }
 
 // SnapshotFiles are the two files a full snapshot consists of.

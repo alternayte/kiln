@@ -151,7 +151,8 @@ func (r *Reconciler) adopt(ctx context.Context, row store.Sandbox, host *hostSta
 	if !ok {
 		return fmt.Errorf("no firecracker process")
 	}
-	vm, err := r.Runtime.Adopt(ctx, runtime.AdoptSpec{ID: row.ID, PID: pid})
+	tpl, tplErr := r.Store.GetTemplate(ctx, row.TemplateName)
+	vm, err := r.Runtime.Adopt(ctx, runtime.AdoptSpec{ID: row.ID, PID: pid, MemoryMiB: tpl.MemoryMB})
 	if err != nil {
 		return err
 	}
@@ -161,9 +162,8 @@ func (r *Reconciler) adopt(ctx context.Context, row store.Sandbox, host *hostSta
 	}
 	var att *network.Attachment
 	if row.TapName != "" {
-		tpl, err := r.Store.GetTemplate(ctx, row.TemplateName)
-		if err != nil {
-			return err
+		if tplErr != nil {
+			return tplErr
 		}
 		att, err = r.Network.Adopt(ctx, row.ID, row.TapName, row.Egress(tpl))
 		if err != nil {

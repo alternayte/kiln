@@ -564,3 +564,12 @@ from about 140 s to 100 s. The third test commit then failed with `exhausted`:
 sandbox step left its 1.6 GB template behind, invisible to `prune.sh`. The
 Action now removes the template of a failed run. On the Dedibox the data moved
 to the 213 GB `/data` by bind mount, and `infra/README.md` says how.
+
+## 2026-10-31 — v0.9.5, a snapshot of a large sandbox
+
+Issue 18: one 2 minute client timeout covered each Firecracker call, and a
+snapshot of a 4096 MB restored sandbox did not fit. Snapshot create and load now
+get 2 minutes plus 120 ms per MiB of guest memory. Firecracker cannot abandon a
+write, so a client that leaves no longer cancels the snapshot, and a resume no
+longer depends on the context of that client. Before this, a cancel left the VM
+paused.

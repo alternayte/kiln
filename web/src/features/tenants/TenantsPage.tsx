@@ -40,7 +40,7 @@ export function TenantsPage() {
   const tenants = useQuery({
     queryKey: ["tenants"],
     enabled: isOperator,
-    queryFn: () => operator<{ tenants?: Tenant[] }>("GET", "/operator/tenants"),
+    queryFn: () => operator<Tenant[]>("GET", "/operator/tenants"),
   });
 
   const create = useMutation({
@@ -56,7 +56,7 @@ export function TenantsPage() {
     return <Empty>Only an operator administers tenants.</Empty>;
   }
 
-  const rows = tenants.data?.tenants ?? [];
+  const rows = tenants.data ?? [];
 
   return (
     <>

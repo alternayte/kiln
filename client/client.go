@@ -448,10 +448,19 @@ type SandboxRef struct {
 // Fork snapshots a running sandbox and restores count copies. A secret-bearing
 // sandbox needs allowSecretFork.
 func (c *Client) Fork(ctx context.Context, id string, count int, allowSecretFork bool) ([]SandboxRef, error) {
+	return c.ForkWithMetadata(ctx, id, count, allowSecretFork, nil)
+}
+
+// ForkWithMetadata is Fork with metadata that replaces the origin's on the
+// copies. Nil keeps the origin's.
+func (c *Client) ForkWithMetadata(ctx context.Context, id string, count int, allowSecretFork bool, metadata map[string]any) ([]SandboxRef, error) {
 	var out struct {
 		Sandboxes []SandboxRef `json:"sandboxes"`
 	}
 	body := map[string]any{"count": count, "allow_secret_fork": allowSecretFork}
+	if metadata != nil {
+		body["metadata"] = metadata
+	}
 	if err := c.do(ctx, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/fork", body, &out); err != nil {
 		return nil, err
 	}
@@ -493,10 +502,19 @@ func (c *Client) DeleteSnapshot(ctx context.Context, id string) error {
 
 // RestoreSnapshot copies a listed snapshot into count new sandboxes.
 func (c *Client) RestoreSnapshot(ctx context.Context, snapshotID string, count int, allowSecretFork bool) ([]SandboxRef, error) {
+	return c.RestoreSnapshotWithMetadata(ctx, snapshotID, count, allowSecretFork, nil)
+}
+
+// RestoreSnapshotWithMetadata is RestoreSnapshot with metadata that replaces
+// the origin's on the copies. Nil keeps the origin's.
+func (c *Client) RestoreSnapshotWithMetadata(ctx context.Context, snapshotID string, count int, allowSecretFork bool, metadata map[string]any) ([]SandboxRef, error) {
 	var out struct {
 		Sandboxes []SandboxRef `json:"sandboxes"`
 	}
 	body := map[string]any{"count": count, "allow_secret_fork": allowSecretFork}
+	if metadata != nil {
+		body["metadata"] = metadata
+	}
 	if err := c.do(ctx, http.MethodPost, "/v1/snapshots/"+url.PathEscape(snapshotID)+"/restore", body, &out); err != nil {
 		return nil, err
 	}

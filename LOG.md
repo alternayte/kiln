@@ -581,3 +581,11 @@ guest memory, and that caused 1,048,649 faults, one per 4 KiB page, at about
 31 MB/s. `snapfault` now takes a SIGUSR1 just before a snapshot, a fork or a
 sleep, and copies the untouched pages in 2 MiB blocks between faults. Restores
 stay lazy. A `snapfault` from an older binary ignores the signal.
+
+## 2026-10-31 — v0.9.7, metadata on a restore or a fork
+
+Issue 19: a copy kept the metadata of its origin, which named the wrong
+Factoree run. Restore and fork now take an optional `metadata` that replaces it.
+Issue 20 is not a restart fault: the event log shows `sleeping` to `stopping`
+with reason `destroy` at 06:36:23, from a `DELETE` the operator asked for after
+a run filled the tenant cap. The last restart was at 06:28:22.

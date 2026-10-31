@@ -434,18 +434,24 @@ func checkEgressChange(t *testing.T, ctx context.Context, st store.Store, sbx *s
 	}
 	assertReach(t, ctx, sbx, sb.ID, "pypi.org", false)
 	assertReach(t, ctx, sbx, sb.ID, "www.python.org", true)
-	copies, err := sbx.Fork(ctx, sb.ID, 1, false)
+	copies, err := sbx.Fork(ctx, sb.ID, 1, false, map[string]any{"run": "fork"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(copies[0].Metadata, `"run":"fork"`) {
+		t.Errorf("fork metadata %q", copies[0].Metadata)
 	}
 	assertReach(t, ctx, sbx, copies[0].ID, "pypi.org", false)
 	snap, err := sbx.Snapshot(ctx, sb.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored, err := sbx.RestoreSnapshot(ctx, snap.ID, 1, false)
+	restored, err := sbx.RestoreSnapshot(ctx, snap.ID, 1, false, map[string]any{"run": "restore"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(restored[0].Metadata, `"run":"restore"`) {
+		t.Errorf("restore metadata %q", restored[0].Metadata)
 	}
 	assertReach(t, ctx, sbx, restored[0].ID, "pypi.org", false)
 

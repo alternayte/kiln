@@ -116,11 +116,12 @@ class GeneratedClient:
         }.items() if v is not None}
         return self._json("POST", f"/v1/sandboxes/{id}/exec", body)
 
-    def fork(self, id: str, count: int, allow_secret_fork: Optional[bool] = None) -> Any:
+    def fork(self, id: str, count: int, allow_secret_fork: Optional[bool] = None, metadata: Optional[dict[str, Any]] = None) -> Any:
         """Snapshot a running sandbox and restore several copies of it."""
         body = {k: v for k, v in {
             "count": count,
             "allow_secret_fork": allow_secret_fork,
+            "metadata": metadata,
         }.items() if v is not None}
         return self._json("POST", f"/v1/sandboxes/{id}/fork", body)
 
@@ -179,11 +180,12 @@ class GeneratedClient:
         """Read one snapshot."""
         return self._json("GET", f"/v1/snapshots/{id}")
 
-    def restore(self, id: str, count: int, allow_secret_fork: Optional[bool] = None) -> Any:
+    def restore(self, id: str, count: int, allow_secret_fork: Optional[bool] = None, metadata: Optional[dict[str, Any]] = None) -> Any:
         """Restore a snapshot into one or more new sandboxes."""
         body = {k: v for k, v in {
             "count": count,
             "allow_secret_fork": allow_secret_fork,
+            "metadata": metadata,
         }.items() if v is not None}
         return self._json("POST", f"/v1/snapshots/{id}/restore", body)
 

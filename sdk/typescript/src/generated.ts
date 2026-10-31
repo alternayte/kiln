@@ -113,7 +113,7 @@ export class GeneratedClient {
   }
 
   /** Snapshot a running sandbox and restore several copies of it. */
-  fork(id: string, body: { count: number; allow_secret_fork?: boolean }): Promise<unknown> {
+  fork(id: string, body: { count: number; allow_secret_fork?: boolean; metadata?: Record<string, unknown> }): Promise<unknown> {
     return this.json("POST", `/v1/sandboxes/${encodeURIComponent(String(id))}/fork`, body);
   }
 
@@ -170,7 +170,7 @@ export class GeneratedClient {
   }
 
   /** Restore a snapshot into one or more new sandboxes. */
-  restore(id: string, body: { count: number; allow_secret_fork?: boolean }): Promise<unknown> {
+  restore(id: string, body: { count: number; allow_secret_fork?: boolean; metadata?: Record<string, unknown> }): Promise<unknown> {
     return this.json("POST", `/v1/snapshots/${encodeURIComponent(String(id))}/restore`, body);
   }
 

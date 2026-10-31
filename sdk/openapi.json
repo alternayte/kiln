@@ -405,7 +405,7 @@
   "info": {
     "description": "Isolated Linux microVMs on one host, created from OCI images and forked into copies.",
     "title": "Kiln",
-    "version": "0.9.6"
+    "version": "0.9.7"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1515,6 +1515,10 @@
                   },
                   "count": {
                     "type": "integer"
+                  },
+                  "metadata": {
+                    "additionalProperties": true,
+                    "type": "object"
                   }
                 },
                 "required": [
@@ -2406,6 +2410,10 @@
                   },
                   "count": {
                     "type": "integer"
+                  },
+                  "metadata": {
+                    "additionalProperties": true,
+                    "type": "object"
                   }
                 },
                 "required": [

@@ -213,6 +213,7 @@ func Operations() []Operation {
 			Body: []Field{
 				{Name: "count", Type: "integer", Required: true, Doc: "Number of copies."},
 				{Name: "allow_secret_fork", Type: "boolean", Doc: "Allow a fork of a sandbox that holds secrets."},
+				{Name: "metadata", Type: "object", Doc: "Metadata of the new sandboxes. It replaces the metadata of the origin sandbox, which they keep without this field."},
 			},
 			Returns: "SandboxList",
 		},
@@ -274,6 +275,7 @@ func Operations() []Operation {
 			Body: []Field{
 				{Name: "count", Type: "integer", Required: true, Doc: "Number of sandboxes."},
 				{Name: "allow_secret_fork", Type: "boolean", Doc: "Allow a restore of a snapshot that holds secrets."},
+				{Name: "metadata", Type: "object", Doc: "Metadata of the new sandboxes. It replaces the metadata of the origin sandbox, which they keep without this field."},
 			},
 			Returns: "SandboxList",
 		},

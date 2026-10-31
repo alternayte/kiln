@@ -225,6 +225,7 @@ Body:
 
 - `count` (integer, required): Number of copies.
 - `allow_secret_fork` (boolean): Allow a fork of a sandbox that holds secrets.
+- `metadata` (object): Metadata of the new sandboxes. It replaces the metadata of the origin sandbox, which they keep without this field.
 
 Answers 201 with `SandboxList`.
 
@@ -389,6 +390,7 @@ Body:
 
 - `count` (integer, required): Number of sandboxes.
 - `allow_secret_fork` (boolean): Allow a restore of a snapshot that holds secrets.
+- `metadata` (object): Metadata of the new sandboxes. It replaces the metadata of the origin sandbox, which they keep without this field.
 
 Answers 201 with `SandboxList`.
 

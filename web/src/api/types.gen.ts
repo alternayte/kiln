@@ -755,6 +755,9 @@ export type ForkData = {
     body: {
         allow_secret_fork?: boolean;
         count: number;
+        metadata?: {
+            [key: string]: unknown;
+        };
     };
     path: {
         /**
@@ -1250,6 +1253,9 @@ export type RestoreData = {
     body: {
         allow_secret_fork?: boolean;
         count: number;
+        metadata?: {
+            [key: string]: unknown;
+        };
     };
     path: {
         /**

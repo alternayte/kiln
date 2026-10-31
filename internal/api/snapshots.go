@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -21,8 +22,9 @@ type snapshotCreatedResponse struct {
 
 // copyRequest is the body of fork and restore. Count is required.
 type copyRequest struct {
-	Count           int  `json:"count"`
-	AllowSecretFork bool `json:"allow_secret_fork"`
+	Count           int             `json:"count"`
+	AllowSecretFork bool            `json:"allow_secret_fork"`
+	Metadata        json.RawMessage `json:"metadata"`
 }
 
 // sandboxRef names one copy without repeating the whole sandbox.
@@ -99,7 +101,12 @@ func (s *Server) forkSandbox(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	copies, err := s.Sandboxes.Fork(r.Context(), r.PathValue("id"), req.Count, req.AllowSecretFork)
+	metadata, err := parseMetadata(req.Metadata)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalid, err.Error())
+		return
+	}
+	copies, err := s.Sandboxes.Fork(r.Context(), r.PathValue("id"), req.Count, req.AllowSecretFork, metadata)
 	if err != nil {
 		s.writeErr(w, err)
 		return
@@ -151,7 +158,12 @@ func (s *Server) restoreSnapshot(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	copies, err := s.Sandboxes.RestoreSnapshot(r.Context(), r.PathValue("id"), req.Count, req.AllowSecretFork)
+	metadata, err := parseMetadata(req.Metadata)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalid, err.Error())
+		return
+	}
+	copies, err := s.Sandboxes.RestoreSnapshot(r.Context(), r.PathValue("id"), req.Count, req.AllowSecretFork, metadata)
 	if err != nil {
 		s.writeErr(w, err)
 		return

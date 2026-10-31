@@ -243,11 +243,9 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (store.Sandbox,
 	}
 	metadata := "{}"
 	if len(req.Metadata) > 0 {
-		b, err := json.Marshal(req.Metadata)
-		if err != nil {
-			return store.Sandbox{}, invalidf("metadata: %v", err)
+		if metadata, err = encodeMetadata(req.Metadata); err != nil {
+			return store.Sandbox{}, err
 		}
-		metadata = string(b)
 	}
 	now := m.now()
 	m.markActive(id)
@@ -484,7 +482,7 @@ func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Sna
 // image. Every copy gets a fresh overlay and its own page-fault source. A
 // failure at any copy destroys every copy made in the call. A sleeping source
 // wakes first.
-func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bool) ([]store.Sandbox, error) {
+func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bool, metadata map[string]any) ([]store.Sandbox, error) {
 	if count < 1 {
 		return nil, invalidf("count must be greater than zero")
 	}
@@ -538,6 +536,12 @@ func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bo
 	writeParentFile(dir, row.SnapshotID, row.TemplateName)
 	m.touch(ctx, row)
 
+	if metadata != nil {
+		if row.Metadata, err = encodeMetadata(metadata); err != nil {
+			m.reapSnapshot(context.WithoutCancel(ctx), snapID)
+			return nil, err
+		}
+	}
 	copies, err := m.makeCopies(ctx, img, row, count)
 	if err != nil {
 		m.reapSnapshot(context.WithoutCancel(ctx), snapID)
@@ -547,9 +551,9 @@ func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bo
 }
 
 // RestoreSnapshot copies a listed snapshot into count new sandboxes. The
-// copies inherit the lifecycle and metadata of the sandbox the snapshot came
-// from.
-func (m *Manager) RestoreSnapshot(ctx context.Context, snapshotID string, count int, allowSecret bool) ([]store.Sandbox, error) {
+// copies inherit the lifecycle of the sandbox the snapshot came from, and its
+// metadata when metadata is nil.
+func (m *Manager) RestoreSnapshot(ctx context.Context, snapshotID string, count int, allowSecret bool, metadata map[string]any) ([]store.Sandbox, error) {
 	if count < 1 {
 		return nil, invalidf("count must be greater than zero")
 	}
@@ -581,6 +585,11 @@ func (m *Manager) RestoreSnapshot(ctx context.Context, snapshotID string, count 
 		egress:     snap.EgressAllow,
 	}
 	m.touch(ctx, origin)
+	if metadata != nil {
+		if origin.Metadata, err = encodeMetadata(metadata); err != nil {
+			return nil, err
+		}
+	}
 	copies, err := m.makeCopies(ctx, img, origin, count)
 	if err != nil {
 		return nil, err
@@ -625,6 +634,14 @@ func (m *Manager) DeleteSnapshot(ctx context.Context, id string) error {
 		return err
 	}
 	return os.RemoveAll(filepath.Join(m.cfg.Root, "snapshots", snap.ID))
+}
+
+func encodeMetadata(metadata map[string]any) (string, error) {
+	b, err := json.Marshal(metadata)
+	if err != nil {
+		return "", invalidf("metadata: %v", err)
+	}
+	return string(b), nil
 }
 
 // makeCopies creates count rows from one image and restores each of them. Any

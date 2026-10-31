@@ -31,6 +31,19 @@ type createSandboxRequest struct {
 	Env         map[string]string `json:"env"`
 }
 
+// parseMetadata reads an optional metadata field. Nil means the field is absent,
+// and an empty object is a value.
+func parseMetadata(raw json.RawMessage) (map[string]any, error) {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, nil
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return nil, errors.New("metadata must be a JSON object")
+	}
+	return metadata, nil
+}
+
 type execRequest struct {
 	Cmd            []string          `json:"cmd"`
 	Cwd            string            `json:"cwd"`
@@ -120,12 +133,10 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalid, "idle_seconds is required")
 		return
 	}
-	metadata := map[string]any{}
-	if len(req.Metadata) > 0 && !bytes.Equal(bytes.TrimSpace(req.Metadata), []byte("null")) {
-		if err := json.Unmarshal(req.Metadata, &metadata); err != nil {
-			writeError(w, http.StatusBadRequest, CodeInvalid, "metadata must be a JSON object")
-			return
-		}
+	metadata, err := parseMetadata(req.Metadata)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalid, err.Error())
+		return
 	}
 	sb, err := s.Sandboxes.Create(r.Context(), sandbox.CreateRequest{
 		Template:    req.Template,

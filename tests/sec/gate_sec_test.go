@@ -279,7 +279,7 @@ func checkSecrets(t *testing.T, ctx context.Context, root string, sbx *sandbox.M
 	if out := execGuest(t, ctx, sbx, sb, "sh", "-c", "printf '%s' \"$"+secretName+"\""); out.Stdout != secretValue {
 		t.Fatalf("the secret was not injected: exit %d stdout %q", out.ExitCode, out.Stdout)
 	}
-	if _, err := sbx.Fork(ctx, sb.ID, 1, false); !errors.Is(err, store.ErrConflict) {
+	if _, err := sbx.Fork(ctx, sb.ID, 1, false, nil); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("forking a secret-bearing sandbox returned %v, want conflict", err)
 	}
 }
@@ -292,7 +292,7 @@ func checkEntropyAndClock(t *testing.T, ctx context.Context, sbx *sandbox.Manage
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sbx.DeleteSnapshot(context.WithoutCancel(ctx), snap.ID) })
-	copies, err := sbx.RestoreSnapshot(ctx, snap.ID, 3, false)
+	copies, err := sbx.RestoreSnapshot(ctx, snap.ID, 3, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

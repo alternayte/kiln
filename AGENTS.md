@@ -4,7 +4,7 @@
 Kiln runs isolated Linux microVMs on one host, built from OCI images and forked into copies. The build authority is `docs/specs/`. Phases P0 to P6 are built; `LOG.md` records what is done.
 
 ## Run
-On a Linux host with KVM, as root: `go run ./cmd/kiln init`, then `go run ./cmd/kiln serve`.
+On a Linux host with KVM, as root: `go run ./cmd/kilnd init`, then `go run ./cmd/kilnd serve`.
 The server and the systemd unit: `infra/README.md`.
 
 ## Test

@@ -165,14 +165,12 @@ func TestSecEgressGuard(t *testing.T) {
 	nm.Flush()
 	t.Run("Record", func(t *testing.T) {
 		rows := waitRecord(t, ctx, sbx, sb.ID, func(rows []store.EgressRecord) bool {
-			return hasRow(rows, otherName, 443, "denied") && hasRow(rows, "1.1.1.1", 80, "denied") && hasRow(rows, "1.1.1.1", 443, "denied")
+			return hasRow(rows, otherName, 443, "denied") && hasRow(rows, "1.1.1.1", 80, "denied") && hasRow(rows, "1.1.1.1", 443, "denied") &&
+				hasRow(rows, metadataName, 443, "denied")
 		})
 		allowed := rowOf(rows, allowedName, 443, "allowed")
 		if allowed == nil || allowed.Count < 1 || allowed.BytesOut == 0 || allowed.BytesIn == 0 {
 			t.Errorf("the allowed row is %+v", allowed)
-		}
-		if !hasRow(rows, metadataName, 443, "denied") {
-			t.Errorf("no refusal of the metadata name in %+v", rows)
 		}
 	})
 

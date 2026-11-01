@@ -253,6 +253,11 @@ func (a *Attachment) guardLost(link *guardLink) {
 	}
 	a.guard = nil
 	_ = runtime.KillProcess(link.pid)
+	// The reconciler removes the link of a sandbox it failed, and its guard with
+	// it. That sandbox has nothing left to guard.
+	if !a.tapExists() {
+		return
+	}
 	log.Printf("network: %s: the egress guard exited", a.ID)
 	if a.m.OnGuardExit != nil {
 		a.m.OnGuardExit(a.ID)
@@ -271,10 +276,15 @@ func (a *Attachment) guardLost(link *guardLink) {
 		a.mu.Unlock()
 		time.Sleep(2 * time.Second)
 		a.mu.Lock()
-		if a.done {
+		if a.done || !a.tapExists() {
 			return
 		}
 	}
+}
+
+func (a *Attachment) tapExists() bool {
+	_, err := os.Stat("/sys/class/net/" + a.TAPName)
+	return err == nil
 }
 
 // stopGuard asks the guard for its last report, then ends it.

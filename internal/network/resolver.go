@@ -190,6 +190,10 @@ func (r *resolver) handle(query []byte) []byte {
 		log.Printf("network: resolver %s: %s: %v", r.id, name, err)
 		return response(query, dnsServFail)
 	}
+	// A guest reads this answer as a failed lookup, and nothing else records it.
+	if len(resp) >= 4 && resp[3]&0x0f == dnsServFail {
+		log.Printf("network: resolver %s: %s: the upstream answered SERVFAIL", r.id, name)
+	}
 	if r.att.addressSet {
 		r.install(name, resp)
 	}

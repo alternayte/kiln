@@ -661,3 +661,10 @@ into the next one, `rewind` restores a point under the same id and hostnames, an
 `fork` takes `point`. A wake, a snapshot or a fork of the origin resets the dirty
 pages, so the next point after one is a full snapshot. `kilnd init` installs
 `snapshot-editor`. The measured numbers the spec asks for are not recorded yet.
+
+Fixed: guests share one address and one gateway, so a tuple one sandbox used found
+that sandbox's conntrack entry in another, and its DNS got no answer for up to 120
+seconds. Each sandbox now has its own conntrack zone, and the `sec` gate asks from
+one source port in two sandboxes. This is not proven to be the cause of the DNS
+failure in release run 41352301252. The resolver now logs an upstream SERVFAIL, so
+the next occurrence names that layer or rules it out.

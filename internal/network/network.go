@@ -284,7 +284,7 @@ func (a *Attachment) Detach(ctx context.Context) error {
 			first = err
 		}
 	}
-	for _, suffix := range []string{"_fwd", "_in", "_dnat", "_src"} {
+	for _, suffix := range []string{"_zone", "_fwd", "_in", "_dnat", "_src"} {
 		_, err := run(ctx, "nft", "delete", "chain", "inet", Table, a.chain(suffix))
 		keep(err)
 	}
@@ -343,6 +343,7 @@ func (a *Attachment) applyRules(ctx context.Context) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "add set inet %s %s { type ipv4_addr; flags timeout; }\n", Table, a.setName())
 	for _, chain := range []struct{ suffix, spec string }{
+		{"_zone", "type filter hook prerouting priority raw; policy accept;"},
 		{"_fwd", "type filter hook forward priority 0; policy accept;"},
 		{"_in", "type filter hook input priority 0; policy accept;"},
 		{"_dnat", "type nat hook prerouting priority dstnat; policy accept;"},
@@ -350,6 +351,7 @@ func (a *Attachment) applyRules(ctx context.Context) error {
 	} {
 		fmt.Fprintf(&b, "add chain inet %s %s { %s }\n", Table, a.chain(chain.suffix), chain.spec)
 	}
+	b.WriteString(a.zoneRule())
 	b.WriteString(a.forwardRules())
 	b.WriteString(a.inputRules())
 	b.WriteString(a.dnatRules())
@@ -369,6 +371,16 @@ func (a *Attachment) rewriteDNS(ctx context.Context) error {
 	b.WriteString(a.inputRules())
 	b.WriteString(a.dnatRules())
 	return nftScript(ctx, b.String())
+}
+
+// zoneRule gives the flows a guest opens their own conntrack zone. Every guest has
+// one address and one gateway, so without a zone a tuple one sandbox used finds
+// that sandbox's entry in another one, and its DNS goes to a resolver bound to the
+// wrong TAP. The zone covers the original direction only: a reply from the
+// internet or from a host socket carries no zone, and still finds its entry. A
+// zone is 16 bits and a mark only grows, so the zone wraps and skips zone 0.
+func (a *Attachment) zoneRule() string {
+	return fmt.Sprintf("add rule inet %s %s iifname %q ct original zone set %d\n", Table, a.chain("_zone"), a.TAPName, a.mark%65535+1)
 }
 
 // forwardRules is the filter chain for traffic the guest sends.
@@ -568,7 +580,7 @@ func ForgetShort(ctx context.Context, short string) error {
 			first = err
 		}
 	}
-	for _, suffix := range []string{"_fwd", "_in", "_dnat", "_src"} {
+	for _, suffix := range []string{"_zone", "_fwd", "_in", "_dnat", "_src"} {
 		_, err := run(ctx, "nft", "delete", "chain", "inet", Table, "kiln_"+short+suffix)
 		keep(err)
 	}

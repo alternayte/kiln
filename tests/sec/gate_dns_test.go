@@ -116,6 +116,22 @@ func TestSecDNSSharedSourcePort(t *testing.T) {
 			t.Errorf("the first sandbox again: %s", got)
 		}
 	})
+	// The log says how often copies of one image pick one port by themselves.
+	t.Run("PortsOfCopies", func(t *testing.T) {
+		copies, err := sbx.Fork(ctx, second.ID, 3, false, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range copies {
+			res, err := sbx.Exec(ctx, c.ID, runtime.ExecRequest{
+				Cmd: []string{"python", "-c", "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.connect(('172.31.0.1',53));print(s.getsockname()[1])"}, TimeoutSeconds: 30,
+			}, nil)
+			t.Logf("copy %s port %s %v", c.ID, strings.TrimSpace(res.Stdout), err)
+			if err := sbx.Destroy(ctx, c.ID); err != nil {
+				t.Error(err)
+			}
+		}
+	})
 	t.Run("AfterADestroy", func(t *testing.T) {
 		if got := ask(first.ID, 40001); got != "0" {
 			t.Fatalf("the first sandbox: %s", got)

@@ -97,7 +97,7 @@ curl -X POST "$KILN_URL/v1/templates" \
     "image": "ghcr.io/acme/shop:a1b2c3d",
     "start": ["/app/server", "--port", "8000"],
     "port": 8000,
-    "egress_allow": ["db.acme.internal", "api.stripe.com"],
+    "egress_allow": ["db.acme.com", "api.stripe.com"],
     "ttl_seconds": 604800,
     "vcpus": 1, "memory_mb": 1024, "disk_mb": 4096
   }'
@@ -162,7 +162,10 @@ process that reads the TLS name of every port 443 connection, resolves that name
 itself, and refuses a name outside `egress_allow`. `kiln egress <id>` prints what
 a sandbox reached and what the host refused. A guard reads only the unencrypted
 TLS name, so it does not see the `Host` header inside the connection. An allowed
-host that fronts other sites can still reach them.
+host that fronts other sites can still reach them. The guard refuses a name that
+resolves to a private, loopback, link-local or metadata address, and it serves
+port 443 only, so a database inside your own network needs a service in the
+template or a public TLS endpoint.
 
 **Egress is deny by default.** A template with an empty `egress_allow`
 reaches nothing, and DNS fails inside it. A preview that talks to a database

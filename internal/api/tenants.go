@@ -15,6 +15,7 @@ type tenantJSON struct {
 	MaxSandboxes     int       `json:"max_sandboxes"`
 	MaxTemplates     int       `json:"max_templates"`
 	MaxSnapshotBytes int64     `json:"max_snapshot_bytes"`
+	AllowObserve     bool      `json:"allow_observe"`
 	Sandboxes        int       `json:"sandboxes"`
 	Templates        int       `json:"templates"`
 	SnapshotBytes    int64     `json:"snapshot_bytes"`
@@ -27,6 +28,13 @@ type tenantRequest struct {
 	MaxSandboxes     int    `json:"max_sandboxes"`
 	MaxTemplates     int    `json:"max_templates"`
 	MaxSnapshotBytes int64  `json:"max_snapshot_bytes"`
+	// AllowObserve is true when absent.
+	AllowObserve *bool `json:"allow_observe"`
+}
+
+// refusesObserve reads the optional cap on egress observe.
+func (r tenantRequest) refusesObserve() bool {
+	return r.AllowObserve != nil && !*r.AllowObserve
 }
 
 // operatorOnly refuses a tenant-scoped call. One tenant never reads or
@@ -63,6 +71,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request) {
 			MaxSandboxes:     req.MaxSandboxes,
 			MaxTemplates:     req.MaxTemplates,
 			MaxSnapshotBytes: req.MaxSnapshotBytes,
+			NoObserve:        req.refusesObserve(),
 		},
 		CreatedAt: time.Now().UTC(),
 	}
@@ -73,7 +82,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, tenantJSON{
 		ID: row.ID, Name: row.Name,
 		MaxSandboxes: row.Caps.MaxSandboxes, MaxTemplates: row.Caps.MaxTemplates,
-		MaxSnapshotBytes: row.Caps.MaxSnapshotBytes, CreatedAt: row.CreatedAt,
+		MaxSnapshotBytes: row.Caps.MaxSnapshotBytes, AllowObserve: !row.Caps.NoObserve, CreatedAt: row.CreatedAt,
 	})
 }
 
@@ -130,6 +139,7 @@ func (s *Server) setTenantCaps(w http.ResponseWriter, r *http.Request) {
 		MaxSandboxes:     req.MaxSandboxes,
 		MaxTemplates:     req.MaxTemplates,
 		MaxSnapshotBytes: req.MaxSnapshotBytes,
+		NoObserve:        req.refusesObserve(),
 	}
 	if err := s.Store.SetTenantCaps(r.Context(), id, caps); err != nil {
 		s.writeErr(w, err)
@@ -179,6 +189,7 @@ func (s *Server) tenantJSON(r *http.Request, row store.Tenant) (tenantJSON, erro
 		MaxSandboxes:     row.Caps.MaxSandboxes,
 		MaxTemplates:     row.Caps.MaxTemplates,
 		MaxSnapshotBytes: row.Caps.MaxSnapshotBytes,
+		AllowObserve:     !row.Caps.NoObserve,
 		Sandboxes:        usage.Sandboxes,
 		Templates:        usage.Templates,
 		SnapshotBytes:    usage.SnapshotBytes,

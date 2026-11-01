@@ -1,17 +1,21 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/alternayte/kiln/internal/guestproto"
 	"github.com/alternayte/kiln/internal/runtime"
+	"github.com/alternayte/kiln/internal/store"
 )
 
 // egressRequest is the PUT /v1/sandboxes/{id}/egress body.
 type egressRequest struct {
 	EgressAllow *[]string `json:"egress_allow"`
+	Observe     *bool     `json:"observe"`
 }
 
 // setSandboxEgress replaces the egress policy of one sandbox.
@@ -21,11 +25,26 @@ func (s *Server) setSandboxEgress(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalid, err.Error())
 		return
 	}
-	if req.EgressAllow == nil {
+	var (
+		row store.Sandbox
+		err error
+	)
+	switch {
+	case req.Observe != nil && (!*req.Observe || req.EgressAllow != nil):
+		writeError(w, http.StatusBadRequest, CodeInvalid, "observe takes the value true and replaces egress_allow; send egress_allow to end it")
+		return
+	case req.Observe != nil:
+		if err := s.observeAllowed(r.Context()); err != nil {
+			s.writeErr(w, err)
+			return
+		}
+		row, err = s.Sandboxes.ObserveEgress(r.Context(), r.PathValue("id"))
+	case req.EgressAllow == nil:
 		writeError(w, http.StatusBadRequest, CodeInvalid, "egress_allow is required and may be empty")
 		return
+	default:
+		row, err = s.Sandboxes.SetEgress(r.Context(), r.PathValue("id"), *req.EgressAllow)
 	}
-	row, err := s.Sandboxes.SetEgress(r.Context(), r.PathValue("id"), *req.EgressAllow)
 	if err != nil {
 		s.writeErr(w, err)
 		return
@@ -145,4 +164,56 @@ func (s *Server) signalProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// observeAllowed applies the tenant cap on observe mode. A call with no tenant
+// comes from the operator, who holds no cap.
+func (s *Server) observeAllowed(ctx context.Context) error {
+	id, scoped := store.TenantFrom(ctx)
+	if !scoped {
+		return nil
+	}
+	tenant, err := s.Store.GetTenant(ctx, id)
+	if err != nil {
+		return err
+	}
+	if tenant.Caps.NoObserve {
+		return fmt.Errorf("%w: the operator refuses egress observe for this tenant", store.ErrConflict)
+	}
+	return nil
+}
+
+// egressRecordJSON is one destination of one sandbox.
+type egressRecordJSON struct {
+	Host      string    `json:"host"`
+	Port      int       `json:"port"`
+	Decision  string    `json:"decision"`
+	Count     int64     `json:"count"`
+	BytesOut  int64     `json:"bytes_out"`
+	BytesIn   int64     `json:"bytes_in"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+}
+
+// egressLogJSON is the whole egress record. Dropped counts what had no room.
+type egressLogJSON struct {
+	Records []egressRecordJSON `json:"records"`
+	Dropped int64              `json:"dropped"`
+}
+
+// getEgressLog returns the egress record of one sandbox.
+func (s *Server) getEgressLog(w http.ResponseWriter, r *http.Request) {
+	record, err := s.Sandboxes.EgressLog(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	out := egressLogJSON{Records: []egressRecordJSON{}, Dropped: record.Dropped}
+	for _, row := range record.Records {
+		out.Records = append(out.Records, egressRecordJSON{
+			Host: row.Host, Port: row.Port, Decision: row.Decision, Count: row.Count,
+			BytesOut: row.BytesOut, BytesIn: row.BytesIn, FirstSeen: row.FirstSeen, LastSeen: row.LastSeen,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }

@@ -26,8 +26,11 @@ type resolver struct {
 	tap   string
 	set   string
 	allow map[string]bool
-	up    []string
-	// allowMu guards allow, which a policy change replaces.
+	// observe answers every name.
+	observe bool
+	up      []string
+	att     *Attachment
+	// allowMu guards allow and observe, which a policy change replaces.
 	allowMu sync.RWMutex
 
 	udp *net.UDPConn
@@ -45,21 +48,23 @@ type resolver struct {
 //
 // The resolver lives as long as the sandbox, not as long as the request that
 // created it, so it detaches from the caller's cancellation. Close stops it.
-func newResolver(parent context.Context, a *Attachment, allow []string, upstream []string) (*resolver, error) {
+func newResolver(parent context.Context, a *Attachment, policy Policy, upstream []string) (*resolver, error) {
 	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
-	names, err := normalizeAllow(allow)
+	names, err := normalizeAllow(policy.Allow)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 	r := &resolver{
-		id:     a.ID,
-		tap:    a.TAPName,
-		set:    a.setName(),
-		allow:  names,
-		up:     upstream,
-		cancel: cancel,
-		sem:    make(chan struct{}, 16),
+		id:      a.ID,
+		tap:     a.TAPName,
+		set:     a.setName(),
+		allow:   names,
+		observe: policy.Observe,
+		up:      upstream,
+		att:     a,
+		cancel:  cancel,
+		sem:     make(chan struct{}, 16),
 	}
 	lc := net.ListenConfig{Control: bindControl(a.TAPName, a.mark)}
 	pc, err := lc.ListenPacket(ctx, "udp4", net.JoinHostPort(runtime.GuestGateway, "0"))
@@ -175,6 +180,9 @@ func (r *resolver) handle(query []byte) []byte {
 		return response(query, dnsFormErr)
 	}
 	if !r.allowed(name) {
+		now := time.Now().Unix()
+		// The name came with no port, so the record carries none.
+		r.att.m.add(r.id, []Record{{Host: name, Decision: DecisionDenied, Count: 1, First: now, Last: now}}, 0)
 		return response(query, dnsRefused)
 	}
 	resp, err := r.forward(query)
@@ -182,7 +190,9 @@ func (r *resolver) handle(query []byte) []byte {
 		log.Printf("network: resolver %s: %s: %v", r.id, name, err)
 		return response(query, dnsServFail)
 	}
-	r.install(name, resp)
+	if r.att.addressSet {
+		r.install(name, resp)
+	}
 	return resp
 }
 
@@ -191,7 +201,13 @@ func (r *resolver) handle(query []byte) []byte {
 func (r *resolver) allowed(name string) bool {
 	r.allowMu.RLock()
 	defer r.allowMu.RUnlock()
-	if r.allow[name] {
+	return r.observe || matchAllow(r.allow, name)
+}
+
+// matchAllow reports whether a name is in a list, as itself or under a wildcard
+// entry.
+func matchAllow(allow map[string]bool, name string) bool {
+	if allow[name] {
 		return true
 	}
 	for rest := name; ; {
@@ -199,7 +215,7 @@ func (r *resolver) allowed(name string) bool {
 		if !ok {
 			return false
 		}
-		if r.allow[wildcardPrefix+parent] {
+		if allow[wildcardPrefix+parent] {
 			return true
 		}
 		rest = parent
@@ -209,9 +225,9 @@ func (r *resolver) allowed(name string) bool {
 // replaceAllow swaps the allowlist and empties the address set. A query that
 // was already upstream checks the list again before it installs its answer,
 // so nothing the old list allowed lands in the set afterwards.
-func (r *resolver) replaceAllow(ctx context.Context, names map[string]bool) error {
+func (r *resolver) replaceAllow(ctx context.Context, names map[string]bool, observe bool) error {
 	r.allowMu.Lock()
-	r.allow = names
+	r.allow, r.observe = names, observe
 	r.allowMu.Unlock()
 	r.nft.Lock()
 	defer r.nft.Unlock()

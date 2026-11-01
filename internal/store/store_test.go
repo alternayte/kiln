@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"reflect"
@@ -684,7 +685,7 @@ func TestSandboxEgressKeepsNilApartFromEmpty(t *testing.T) {
 	if err != nil || got.EgressAllow != nil || len(got.Egress(tpl)) != 1 {
 		t.Fatalf("new sandbox egress %v, %v", got.EgressAllow, err)
 	}
-	if err := st.SetSandboxEgress(ctx, row.ID, []string{}); err != nil {
+	if err := st.SetSandboxEgress(ctx, row.ID, []string{}, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err = st.GetSandbox(ctx, row.ID)
@@ -705,5 +706,65 @@ func TestSandboxEgressKeepsNilApartFromEmpty(t *testing.T) {
 	events, err := st.ListEventsSince(ctx, 0, 0)
 	if err != nil || len(events) != 1 || events[0].Template != "t" || events[0].Phase != "layers" || events[0].DurationMS != 7 {
 		t.Fatalf("events %+v, %v", events, err)
+	}
+}
+
+func TestEgressRecord(t *testing.T) {
+	ctx := context.Background()
+	st, _ := openTest(t)
+	now := time.Unix(1000, 0).UTC()
+	if err := st.StartTemplateBuild(ctx, Template{Name: "t", ImageRef: "i", VCPUs: 1, MemoryMB: 1, DiskMB: 1,
+		EgressAllow: []string{}, State: TemplateReady, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateSandbox(ctx, Sandbox{ID: "sb", TemplateName: "t", Lifecycle: LifecyclePersistent,
+		State: SandboxRunning, IdleSeconds: 1, LastActiveAt: now, Metadata: "{}", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	denied := EgressRecord{Host: "a.test", Port: 443, Decision: DecisionDenied, Count: 1, FirstSeen: now, LastSeen: now}
+
+	tenant, first, err := st.RecordEgress(ctx, "sb", []EgressRecord{denied}, 0)
+	if err != nil || tenant != DefaultTenant || len(first) != 1 {
+		t.Fatalf("tenant %q first %v err %v", tenant, first, err)
+	}
+	// The same host on another port is not a first refusal.
+	denied.Port = 0
+	if _, first, err = st.RecordEgress(ctx, "sb", []EgressRecord{denied}, 2); err != nil || len(first) != 0 {
+		t.Fatalf("second refusal: first %v err %v", first, err)
+	}
+	log, err := st.EgressLog(ctx, "sb")
+	if err != nil || len(log.Records) != 2 || log.Dropped != 2 {
+		t.Fatalf("log %+v err %v", log, err)
+	}
+	// A build VM has no row, so it records nothing.
+	if tenant, _, err := st.RecordEgress(ctx, "build", []EgressRecord{denied}, 0); err != nil || tenant != "" {
+		t.Fatalf("no row: tenant %q err %v", tenant, err)
+	}
+	// A destination past the bound only counts.
+	many := make([]EgressRecord, maxEgressRows+1)
+	for i := range many {
+		many[i] = EgressRecord{Host: fmt.Sprintf("h%d", i), Decision: "allowed", Count: 1, FirstSeen: now, LastSeen: now}
+	}
+	if _, _, err := st.RecordEgress(ctx, "sb", many, 0); err != nil {
+		t.Fatal(err)
+	}
+	if log, _ = st.EgressLog(ctx, "sb"); len(log.Records) != maxEgressRows || log.Dropped != 5 {
+		t.Fatalf("rows %d dropped %d", len(log.Records), log.Dropped)
+	}
+	// The record stays past the destroy, until the prune.
+	if err := st.DestroySandbox(ctx, "sb", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PruneEgress(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.EgressLog(ctx, "sb"); err != nil {
+		t.Fatalf("pruned early: %v", err)
+	}
+	if err := st.PruneEgress(ctx, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.EgressLog(ctx, "sb"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("after the prune: %v", err)
 	}
 }

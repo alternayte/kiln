@@ -122,6 +122,51 @@ func TestGateUpgrade(t *testing.T) {
 			}
 		}
 	}
+
+	// A sandbox from before the guard keeps its rule, and still takes a policy
+	// change. It cannot observe until its next wake.
+	if _, err := cli.SetEgress(ctx, id, []string{"pypi.org"}); err != nil {
+		t.Errorf("a policy change after the upgrade: %v", err)
+	}
+	// A previous release with a guard adopts that guard, and this check has
+	// nothing to refuse.
+	if guardCount(t) == 0 {
+		if _, err := cli.ObserveEgress(ctx, id); err == nil {
+			t.Error("a sandbox with no guard took observe")
+		}
+	}
+
+	// A restart of the daemon does not end the guard of a new sandbox.
+	guarded, err := cli.CreateSandbox(ctx, client.SandboxRequest{
+		Template: templateName, Lifecycle: "persistent", IdleSeconds: idle,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cli.DeleteSandbox(context.WithoutCancel(ctx), guarded.ID)
+	guardsBefore := guardPIDs(t)
+	if len(guardsBefore) == 0 {
+		t.Fatal("a new sandbox has no egress guard")
+	}
+	next.Process.Signal(syscall.SIGTERM)
+	next.Wait()
+	next = serve(t, current, root)
+	waitHealth(t, ctx, cli)
+	if after := guardPIDs(t); after != guardsBefore {
+		t.Errorf("egress guards %q before the restart, %q after", guardsBefore, after)
+	}
+}
+
+func guardCount(t *testing.T) int {
+	t.Helper()
+	return len(strings.Fields(guardPIDs(t)))
+}
+
+// guardPIDs lists the egress guard processes.
+func guardPIDs(t *testing.T) string {
+	t.Helper()
+	out, _ := exec.Command("pgrep", "-f", " egressguard ").Output()
+	return strings.TrimSpace(string(out))
 }
 
 // downloadPreviousRelease fetches the host binary of the latest release and

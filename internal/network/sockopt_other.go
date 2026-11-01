@@ -4,7 +4,16 @@
 // runs on Linux, so these are never used.
 package network
 
+import (
+	"errors"
+	"net"
+)
+
 const (
 	soBindToDevice = 0x19
 	soMark         = 0x24
 )
+
+var errRingOverrun = errors.New("no kernel log")
+
+func originalDestination(*net.TCPConn) string { return "" }

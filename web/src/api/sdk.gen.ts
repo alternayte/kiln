@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, CreateTemplateData, CreateTemplateErrors, CreateTemplateResponses, CreateViewerData, CreateViewerErrors, CreateViewerResponses, DeleteRegistryData, DeleteRegistryErrors, DeleteRegistryResponses, DeleteSandboxData, DeleteSandboxErrors, DeleteSandboxResponses, DeleteSnapshotData, DeleteSnapshotErrors, DeleteSnapshotResponses, DeleteTemplateData, DeleteTemplateErrors, DeleteTemplateResponses, DeleteViewerData, DeleteViewerErrors, DeleteViewerResponses, EventsData, EventsErrors, EventsResponse, EventsResponses, ExecData, ExecErrors, ExecResponses, ForkData, ForkErrors, ForkResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, GetSnapshotData, GetSnapshotErrors, GetSnapshotResponses, GetTemplateData, GetTemplateErrors, GetTemplateResponses, HealthData, HealthErrors, HealthResponses, ListRegistriesData, ListRegistriesErrors, ListRegistriesResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, ListSnapshotsData, ListSnapshotsErrors, ListSnapshotsResponses, ListTemplatesData, ListTemplatesErrors, ListTemplatesResponses, ListViewersData, ListViewersErrors, ListViewersResponses, LogsData, LogsErrors, LogsResponses, PublishData, PublishErrors, PublishResponses, PutRegistryData, PutRegistryErrors, PutRegistryResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadProcessData, ReadProcessErrors, ReadProcessResponses, RestoreData, RestoreErrors, RestoreResponses, RetireData, RetireErrors, RetireResponses, SetEgressData, SetEgressErrors, SetEgressResponses, SignalProcessData, SignalProcessErrors, SignalProcessResponses, SnapshotData, SnapshotErrors, SnapshotResponses, StartProcessData, StartProcessErrors, StartProcessResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
+import type { CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, CreateTemplateData, CreateTemplateErrors, CreateTemplateResponses, CreateViewerData, CreateViewerErrors, CreateViewerResponses, DeleteRegistryData, DeleteRegistryErrors, DeleteRegistryResponses, DeleteSandboxData, DeleteSandboxErrors, DeleteSandboxResponses, DeleteSnapshotData, DeleteSnapshotErrors, DeleteSnapshotResponses, DeleteTemplateData, DeleteTemplateErrors, DeleteTemplateResponses, DeleteViewerData, DeleteViewerErrors, DeleteViewerResponses, EgressLogData, EgressLogErrors, EgressLogResponses, EventsData, EventsErrors, EventsResponse, EventsResponses, ExecData, ExecErrors, ExecResponses, ForkData, ForkErrors, ForkResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, GetSnapshotData, GetSnapshotErrors, GetSnapshotResponses, GetTemplateData, GetTemplateErrors, GetTemplateResponses, HealthData, HealthErrors, HealthResponses, ListRegistriesData, ListRegistriesErrors, ListRegistriesResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, ListSnapshotsData, ListSnapshotsErrors, ListSnapshotsResponses, ListTemplatesData, ListTemplatesErrors, ListTemplatesResponses, ListViewersData, ListViewersErrors, ListViewersResponses, LogsData, LogsErrors, LogsResponses, PublishData, PublishErrors, PublishResponses, PutRegistryData, PutRegistryErrors, PutRegistryResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadProcessData, ReadProcessErrors, ReadProcessResponses, RestoreData, RestoreErrors, RestoreResponses, RetireData, RetireErrors, RetireResponses, SetEgressData, SetEgressErrors, SetEgressResponses, SignalProcessData, SignalProcessErrors, SignalProcessResponses, SnapshotData, SnapshotErrors, SnapshotResponses, StartProcessData, StartProcessErrors, StartProcessResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -108,7 +108,7 @@ export const getSandbox = <ThrowOnError extends boolean = false>(options: Option
 });
 
 /**
- * Replace the egress policy of one sandbox. The answer comes after the host swaps the list and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it.
+ * Replace the egress policy of one sandbox. Send egress_allow or observe. The answer comes after the host swaps the policy and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it.
  */
 export const setEgress = <ThrowOnError extends boolean = false>(options: Options<SetEgressData, ThrowOnError>) => (options.client ?? client).put<SetEgressResponses, SetEgressErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
@@ -118,6 +118,15 @@ export const setEgress = <ThrowOnError extends boolean = false>(options: Options
         'Content-Type': 'application/json',
         ...options.headers
     }
+});
+
+/**
+ * Read the egress record: one row per destination, with its decision, counts and bytes. A row names a host, or an address when the connection named no host. A fork or a restore starts with no rows. The rows stay for 7 days after a destroy.
+ */
+export const egressLog = <ThrowOnError extends boolean = false>(options: Options<EgressLogData, ThrowOnError>) => (options.client ?? client).get<EgressLogResponses, EgressLogErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
+    url: '/v1/sandboxes/{id}/egress/log',
+    ...options
 });
 
 /**

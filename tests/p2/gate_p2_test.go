@@ -59,7 +59,13 @@ func TestGateP2(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 18*time.Minute)
 	defer cancel()
-	nm := network.New()
+	guardBin := filepath.Join(t.TempDir(), "kilnd")
+	build := exec.Command("go", "build", "-o", guardBin, "./cmd/kilnd")
+	build.Dir = repo
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build kilnd: %v: %s", err, out)
+	}
+	nm := network.New(guardBin, root)
 	if err := nm.EnsureBase(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +188,7 @@ func testBuildAndExec(t *testing.T, ctx context.Context, cli *client, mgr *templ
 	}
 
 	rootfs := filepath.Join(dir, "rootfs.ext4")
-	att, err := nm.Attach(ctx, "p2-exec", []string{"pypi.org"})
+	att, err := nm.Attach(ctx, "p2-exec", network.Policy{Allow: []string{"pypi.org"}})
 	if err != nil {
 		t.Fatal(err)
 	}

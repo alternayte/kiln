@@ -35,16 +35,17 @@ const (
 // host on port 443, and exits non-zero otherwise.
 const canReach = "import socket,sys; socket.create_connection((sys.argv[1],443),timeout=8).close(); print('reached')"
 
-// holdConnection opens a connection, waits for /tmp/go, then tries to use it.
-// A TLS server answers garbage with an alert. A cut connection answers nothing.
-const holdConnection = `import os,socket,time
-s=socket.create_connection(('pypi.org',443),timeout=20)
+// holdConnection opens a TLS connection, waits for /tmp/go, then tries to use
+// it. The guard answers any connect, so only a finished handshake proves the
+// connection reached the site. A cut connection answers nothing.
+const holdConnection = `import os,socket,ssl,time
+s=ssl.create_default_context().wrap_socket(socket.create_connection(('pypi.org',443),timeout=20),server_hostname='pypi.org')
 print('connected',flush=True)
 while not os.path.exists('/tmp/go'): time.sleep(0.2)
 s.settimeout(15)
 try:
-    s.send(b'garbage\r\n\r\n')
-    print('answered' if s.recv(64) else 'closed',flush=True)
+    s.send(b'HEAD / HTTP/1.0\r\nHost: pypi.org\r\n\r\n')
+    print('answered' if s.recv(64) else 'cut',flush=True)
 except Exception as e:
     print('cut',flush=True)
 `
@@ -72,7 +73,7 @@ func TestSecAgentControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nm := network.New()
+	nm := network.New(kilnBin, root)
 	if err := nm.EnsureBase(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +166,7 @@ func TestSecAgentControls(t *testing.T) {
 	t.Run("Restart", func(t *testing.T) {
 		// A new manager is what a restarted daemon has: no handles, and only
 		// the row and the guest to go on.
-		restartedNet := network.New()
+		restartedNet := network.New(kilnBin, root)
 		restarted := newManager(restartedNet)
 		sweep := &reconcile.Reconciler{Root: root, Store: st, Sandboxes: restarted, Network: restartedNet, Templates: tmgr, Runtime: rt}
 		if _, err := sweep.Sweep(ctx); err != nil {
@@ -382,7 +383,7 @@ func checkEgressChange(t *testing.T, ctx context.Context, st store.Store, sbx *s
 	// A connection that lives through the change, and the same probe with no
 	// change, which proves the probe can tell the two apart.
 	control := strings.Replace(holdConnection, "while not os.path.exists('/tmp/go'): time.sleep(0.2)\n", "", 1)
-	if out := guestOutput(t, ctx, sbx, sb.ID, "python", "-c", control); !strings.Contains(out, "answered") && !strings.Contains(out, "closed") {
+	if out := guestOutput(t, ctx, sbx, sb.ID, "python", "-c", control); !strings.Contains(out, "answered") {
 		t.Fatalf("an open connection did not answer with no policy change: %q", out)
 	}
 	held, err := sbx.StartProcess(ctx, sb.ID, runtime.ProcessRequest{Cmd: []string{"python", "-c", holdConnection}, Cwd: "/tmp"})
@@ -405,9 +406,6 @@ func checkEgressChange(t *testing.T, ctx context.Context, st store.Store, sbx *s
 	if got := row.EgressAllow; len(got) != 1 || got[0] != "*.python.org" {
 		t.Errorf("the row holds %v", got)
 	}
-	// The held connection goes first, while the address set is empty. A CDN
-	// serves pypi.org and python.org from shared addresses, and the policy
-	// works on addresses once a name resolves.
 	if err := sbx.WriteFile(ctx, sb.ID, "/tmp/go", strings.NewReader("")); err != nil {
 		t.Fatal(err)
 	}

@@ -102,9 +102,14 @@ export class GeneratedClient {
     return this.json("GET", `/v1/sandboxes/${encodeURIComponent(String(id))}`);
   }
 
-  /** Replace the egress policy of one sandbox. The answer comes after the host swaps the list and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it. */
-  setEgress(id: string, body: { egress_allow: string[] }): Promise<unknown> {
+  /** Replace the egress policy of one sandbox. Send egress_allow or observe. The answer comes after the host swaps the policy and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it. */
+  setEgress(id: string, body: { egress_allow?: string[]; observe?: boolean }): Promise<unknown> {
     return this.json("PUT", `/v1/sandboxes/${encodeURIComponent(String(id))}/egress`, body);
+  }
+
+  /** Read the egress record: one row per destination, with its decision, counts and bytes. A row names a host, or an address when the connection named no host. A fork or a restore starts with no rows. The rows stay for 7 days after a destroy. */
+  egressLog(id: string): Promise<unknown> {
+    return this.json("GET", `/v1/sandboxes/${encodeURIComponent(String(id))}/egress/log`);
   }
 
   /** Run a command inside a sandbox. Accept text/event-stream to read the output as it runs. */

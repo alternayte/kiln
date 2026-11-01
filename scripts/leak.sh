@@ -10,6 +10,7 @@ DB="$ROOT/kiln.db"
 
 snapshot() {
   echo "procs $(pgrep -c firecracker 2>/dev/null || echo 0)"
+  echo "guards $(pgrep -fc ' egressguard ' 2>/dev/null || echo 0)"
   echo "taps $(ip -o link show 2>/dev/null | grep -c 'kiln-' || echo 0)"
   echo "chains $(nft list chains 2>/dev/null | grep -c 'kiln_' || echo 0)"
   echo "mounts $(grep -c " $ROOT" /proc/mounts 2>/dev/null || echo 0)"
@@ -19,6 +20,7 @@ snapshot() {
 
 names() {
   echo "--- firecracker pids:"; pgrep -a firecracker 2>/dev/null || true
+  echo "--- egress guards:"; pgrep -af ' egressguard ' 2>/dev/null || true
   echo "--- taps:";   ip -o link show 2>/dev/null | grep 'kiln-' || true
   echo "--- chains:"; nft list chains 2>/dev/null | grep 'kiln_' || true
   echo "--- dirs:";   ls -1 "$ROOT/sandboxes" 2>/dev/null || true

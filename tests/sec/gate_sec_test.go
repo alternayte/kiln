@@ -83,7 +83,7 @@ func TestSecControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nm := network.New()
+	nm := network.New(kilnBin, root)
 	if err := nm.EnsureBase(ctx); err != nil {
 		t.Fatal(err)
 	}

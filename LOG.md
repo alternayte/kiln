@@ -621,3 +621,20 @@ copy restores onto its own copy. A fork therefore pauses its origin for longer,
 and the drive counts toward `max_snapshot_bytes`. Listed snapshots from before
 this have no copy and keep the old fault.
 
+
+## 2026-11-01 — egress guard
+
+Done: `docs/specs/egress-guard.md`. Every port 443 connection of a sandbox goes
+to `kilnd egressguard`, one process per sandbox, which reads the TLS name and
+dials the address it resolved itself. The guard survives a daemon restart, a
+dead guard fails closed and restarts, and a sandbox adopted from before the guard
+keeps its address set until its next wake. The host keeps an egress record, read
+at `GET /v1/sandboxes/{id}/egress/log` and with `kiln egress <id>`. `PUT .../egress`
+takes `{"observe": true}`, and `kiln egress <id> --propose` prints a list.
+
+Refused direct addresses come from a rate-limited nftables log line that the
+daemon reads from `/dev/kmsg`, so these lines also reach the host journal.
+Egress records also cap at 4096 destinations per sandbox, with the rest counted
+as `dropped`, because a guest chooses any number of names.
+
+Next: `docs/specs/credential-injection.md`. It terminates TLS in this guard.

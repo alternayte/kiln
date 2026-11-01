@@ -157,6 +157,13 @@ The sandbox goes first: a template with a live sandbox refuses to be deleted.
 
 ## Two things to get right
 
+**Egress names hosts, not addresses.** Each sandbox has an egress guard, a host
+process that reads the TLS name of every port 443 connection, resolves that name
+itself, and refuses a name outside `egress_allow`. `kiln egress <id>` prints what
+a sandbox reached and what the host refused. A guard reads only the unencrypted
+TLS name, so it does not see the `Host` header inside the connection. An allowed
+host that fronts other sites can still reach them.
+
 **Egress is deny by default.** A template with an empty `egress_allow`
 reaches nothing, and DNS fails inside it. A preview that talks to a database
 or a payment API needs those hostnames listed, and nothing beyond them is

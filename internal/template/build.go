@@ -470,7 +470,7 @@ func (m *Manager) runBuild(ctx context.Context, req BuildRequest) (err error) {
 	}
 
 	began := time.Now()
-	att, err := m.Network.Attach(ctx, m.buildVMID(ctx, req.Name, "s"), req.EgressAllow)
+	att, err := m.Network.Attach(ctx, m.buildVMID(ctx, req.Name, "s"), network.Policy{Allow: req.EgressAllow})
 	if err != nil {
 		phase("setup_boot", began, err)
 		return err

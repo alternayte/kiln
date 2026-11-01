@@ -241,6 +241,8 @@ type Sandbox struct {
 	Published    []Published     `json:"published"`
 	EnvKeys      []string        `json:"env_keys"`
 	EgressAllow  []string        `json:"egress_allow"`
+	// EgressObserve lets any TLS name through and records it.
+	EgressObserve bool `json:"egress_observe"`
 }
 
 // SetEgress replaces the egress policy of one sandbox. It returns after the
@@ -252,6 +254,40 @@ func (c *Client) SetEgress(ctx context.Context, id string, allow []string) (Sand
 	var out Sandbox
 	err := c.do(ctx, http.MethodPut, "/v1/sandboxes/"+url.PathEscape(id)+"/egress",
 		map[string][]string{"egress_allow": allow}, &out)
+	return out, err
+}
+
+// ObserveEgress lets any public TLS name through one sandbox and records it.
+func (c *Client) ObserveEgress(ctx context.Context, id string) (Sandbox, error) {
+	var out Sandbox
+	err := c.do(ctx, http.MethodPut, "/v1/sandboxes/"+url.PathEscape(id)+"/egress",
+		map[string]bool{"observe": true}, &out)
+	return out, err
+}
+
+// EgressRecord is one destination of one sandbox.
+type EgressRecord struct {
+	Host      string    `json:"host"`
+	Port      int       `json:"port"`
+	Decision  string    `json:"decision"`
+	Count     int64     `json:"count"`
+	BytesOut  int64     `json:"bytes_out"`
+	BytesIn   int64     `json:"bytes_in"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+}
+
+// EgressLog is the egress record of one sandbox. Dropped counts the records that
+// had no room.
+type EgressLog struct {
+	Records []EgressRecord `json:"records"`
+	Dropped int64          `json:"dropped"`
+}
+
+// EgressLog reads the egress record of one sandbox.
+func (c *Client) EgressLog(ctx context.Context, id string) (EgressLog, error) {
+	var out EgressLog
+	err := c.do(ctx, http.MethodGet, "/v1/sandboxes/"+url.PathEscape(id)+"/egress/log", nil, &out)
 	return out, err
 }
 

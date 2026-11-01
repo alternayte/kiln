@@ -133,6 +133,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request) {
 	}
 	start := time.Now()
 	credential := carriesCredential(r)
+	egressMode := egressModeOf(r)
 	recorder := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -166,6 +167,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request) {
 			Duration:   time.Since(start),
 			At:         time.Now().UTC(),
 			Credential: credential,
+			EgressMode: egressMode,
 		})
 	}
 }
@@ -192,6 +194,32 @@ func carriesCredential(r *http.Request) bool {
 		return false
 	}
 	return len(probe.Credential) > 0 && string(probe.Credential) != "null"
+}
+
+// egressModeOf names the egress mode a policy call asks for, and leaves the body
+// for the host to read. Every other call has none.
+func egressModeOf(r *http.Request) string {
+	if r.Method != http.MethodPut || !strings.HasSuffix(r.URL.Path, "/egress") || r.Body == nil {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	r.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(body), r.Body), r.Body}
+	if err != nil {
+		return ""
+	}
+	var probe struct {
+		Observe bool `json:"observe"`
+	}
+	if json.Unmarshal(body, &probe) != nil {
+		return ""
+	}
+	if probe.Observe {
+		return "observe"
+	}
+	return "allow"
 }
 
 func userID(p *authall.Principal) string {

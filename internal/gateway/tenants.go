@@ -20,6 +20,7 @@ type tenantRequest struct {
 	MaxSandboxes     int    `json:"max_sandboxes"`
 	MaxTemplates     int    `json:"max_templates"`
 	MaxSnapshotBytes int64  `json:"max_snapshot_bytes"`
+	AllowObserve     *bool  `json:"allow_observe"`
 }
 
 // createTenant creates the tenant here and on the host in one call, so the
@@ -49,6 +50,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request) {
 		"max_sandboxes":      req.MaxSandboxes,
 		"max_templates":      req.MaxTemplates,
 		"max_snapshot_bytes": req.MaxSnapshotBytes,
+		"allow_observe":      req.AllowObserve,
 	}
 	if _, err := s.hostCall(r.Context(), http.MethodPost, "/v1/tenants", "", body); err != nil {
 		// The tenant exists in two stores, so a refusal here undoes the row
@@ -94,6 +96,7 @@ func (s *Server) setTenantCaps(w http.ResponseWriter, r *http.Request) {
 		"max_sandboxes":      req.MaxSandboxes,
 		"max_templates":      req.MaxTemplates,
 		"max_snapshot_bytes": req.MaxSnapshotBytes,
+		"allow_observe":      req.AllowObserve,
 	}
 	out, err := s.hostCall(r.Context(), http.MethodPut, "/v1/tenants/"+r.PathValue("id")+"/caps", "", body)
 	if err != nil {

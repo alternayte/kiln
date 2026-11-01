@@ -4,6 +4,20 @@ export type ClientOptions = {
     baseUrl: 'https://api.example.com' | (string & {});
 };
 
+export type EgressLog = {
+    dropped?: number;
+    records?: Array<{
+        bytes_in?: number;
+        bytes_out?: number;
+        count?: number;
+        decision?: string;
+        first_seen?: string;
+        host?: string;
+        last_seen?: string;
+        port?: number;
+    }>;
+};
+
 export type Error = {
     error?: {
         code?: string;
@@ -76,6 +90,7 @@ export type RegistryList = Array<Registry>;
 export type Sandbox = {
     created_at?: string;
     egress_allow?: Array<string>;
+    egress_observe?: boolean;
     env_keys?: Array<string>;
     id?: string;
     lifecycle?: string;
@@ -582,7 +597,8 @@ export type GetSandboxResponse = GetSandboxResponses[keyof GetSandboxResponses];
 
 export type SetEgressData = {
     body: {
-        egress_allow: Array<string>;
+        egress_allow?: Array<string>;
+        observe?: boolean;
     };
     path: {
         /**
@@ -627,6 +643,52 @@ export type SetEgressResponses = {
 };
 
 export type SetEgressResponse = SetEgressResponses[keyof SetEgressResponses];
+
+export type EgressLogData = {
+    body?: never;
+    path: {
+        /**
+         * Sandbox id.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/v1/sandboxes/{id}/egress/log';
+};
+
+export type EgressLogErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
+     */
+    429: Error;
+};
+
+export type EgressLogError = EgressLogErrors[keyof EgressLogErrors];
+
+export type EgressLogResponses = {
+    /**
+     * The call succeeded.
+     */
+    200: EgressLog;
+};
+
+export type EgressLogResponse = EgressLogResponses[keyof EgressLogResponses];
 
 export type ExecData = {
     body: {

@@ -115,7 +115,7 @@ func cmdInit(args []string) error {
 
 	// The nftables base is host state, not sandbox state: one table, the
 	// mark-copy chain, forwarding and the reverse path filter.
-	if err := network.New().EnsureBase(context.Background()); err != nil {
+	if err := network.New("", root).EnsureBase(context.Background()); err != nil {
 		return err
 	}
 	// Opening the store applies every migration, then closes. The daemon

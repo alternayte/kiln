@@ -67,6 +67,8 @@ type sandboxResponse struct {
 	EnvKeys []string `json:"env_keys"`
 	// EgressAllow is the policy in force on this sandbox.
 	EgressAllow []string `json:"egress_allow"`
+	// EgressObserve lets any TLS name through and records it.
+	EgressObserve bool `json:"egress_observe"`
 }
 
 type execResponse struct {
@@ -96,6 +98,8 @@ func (s *Server) sandboxJSON(ctx context.Context, sb store.Sandbox) (sandboxResp
 		DestroyedAt:  sb.DestroyedAt,
 		Published:    []publishedResponse{},
 		EnvKeys:      sb.EnvKeys,
+
+		EgressObserve: sb.EgressObserve,
 	}
 	if out.EnvKeys == nil {
 		out.EnvKeys = []string{}

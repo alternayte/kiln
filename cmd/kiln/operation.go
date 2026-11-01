@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +27,7 @@ type parsed struct {
 	query   url.Values
 	rawBody string
 	wait    bool
+	propose bool
 	timeout time.Duration
 	from    string
 	help    bool
@@ -98,6 +101,12 @@ func parseArgs(op apispec.Operation, args []string) (*parsed, error) {
 			continue
 		case "wait":
 			p.wait = true
+			continue
+		case "propose":
+			if op.ID != "egressLog" {
+				return nil, usagef(usage, "unknown flag --propose")
+			}
+			p.propose = true
 			continue
 		case "timeout":
 			v, err := take()
@@ -325,6 +334,9 @@ func (c *cli) runOperation(op apispec.Operation, args []string) (int, error) {
 	if err != nil {
 		return apispec.ExitOK, err
 	}
+	if p.propose {
+		return apispec.ExitOK, c.printProposal(p.positional[0], raw)
+	}
 	if op.ID == "createTemplate" && p.wait {
 		name, _ := p.body["name"].(string)
 		if b, ok := body.(map[string]any); ok && name == "" {
@@ -425,12 +437,66 @@ func (c *cli) printAnswer(op apispec.Operation, raw []byte, next string) {
 	}
 	if op.ID == "logs" {
 		c.printLogs(decoded)
+	} else if op.ID == "egressLog" {
+		c.printEgress(decoded)
 	} else if decoded != nil {
 		printText(c.out, decoded)
 	}
 	if next != "" {
 		fmt.Fprintf(c.errOut, "next: %s\n", next)
 	}
+}
+
+// printEgress prints the egress record for a person. A gap in it must show.
+func (c *cli) printEgress(decoded any) {
+	obj, _ := decoded.(map[string]any)
+	rows, _ := obj["records"].([]any)
+	if len(rows) == 0 {
+		fmt.Fprintln(c.out, "no destinations")
+	} else {
+		printRows(c.out, rows)
+	}
+	if dropped, _ := obj["dropped"].(float64); dropped > 0 {
+		fmt.Fprintf(c.out, "dropped: %s records had no room\n", cell(dropped))
+	}
+}
+
+// printProposal prints the current list plus each refused and observed name,
+// and applies nothing. It names hosts exactly, because a guessed wildcard widens
+// a list with nobody noticing. An address is not a name, so it stays out.
+func (c *cli) printProposal(id string, raw []byte) error {
+	var record struct {
+		Records []struct {
+			Host     string `json:"host"`
+			Decision string `json:"decision"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return err
+	}
+	var sandbox struct {
+		EgressAllow []string `json:"egress_allow"`
+	}
+	if _, err := c.call(c.ctx, "GET", "/v1/sandboxes/"+url.PathEscape(id), nil, &sandbox); err != nil {
+		return err
+	}
+	names := append([]string{}, sandbox.EgressAllow...)
+	for _, row := range record.Records {
+		if net.ParseIP(row.Host) == nil && (row.Decision == "denied" || row.Decision == "observed") {
+			names = append(names, row.Host)
+		}
+	}
+	sort.Strings(names)
+	names = slices.Compact(names)
+	if c.json {
+		printJSON(c.out, map[string]any{"egress_allow": names, "next": "kiln sandboxes set-egress " + id + " --body <json>"})
+		return nil
+	}
+	for _, name := range names {
+		fmt.Fprintln(c.out, name)
+	}
+	fmt.Fprintf(c.errOut, "next: kiln sandboxes set-egress %s --egress-allow <name> ...\n", id)
+	return nil
 }
 
 // printLogs prints the logs answer for a person.
@@ -500,6 +566,9 @@ func (c *cli) operationHelp(op apispec.Operation) {
 	}
 	if op.ID == "createTemplate" {
 		fmt.Fprint(c.errOut, "  --wait\n      Wait for the build to end.\n  --timeout duration\n      Stop waiting after this time. The build continues.\n")
+	}
+	if op.ID == "egressLog" {
+		fmt.Fprint(c.errOut, "  --propose\n      Print the current list plus each refused and observed name. This applies nothing.\n")
 	}
 	if len(op.Body) > 0 {
 		fmt.Fprint(c.errOut, "  --body json|file|-\n      The whole request body.\n")

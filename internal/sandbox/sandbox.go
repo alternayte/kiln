@@ -51,6 +51,9 @@ func invalidf(format string, args ...any) error {
 	return &InvalidError{Message: fmt.Sprintf(format, args...)}
 }
 
+// errObserving refuses to make an origin of a sandbox with widened egress.
+var errObserving = fmt.Errorf("%w: this sandbox observes egress, so it cannot be copied", store.ErrConflict)
+
 // Config holds the sandbox manager dependencies.
 type Config struct {
 	Root    string
@@ -102,7 +105,7 @@ type Manager struct {
 
 // New returns a sandbox manager.
 func New(cfg Config) *Manager {
-	return &Manager{
+	m := &Manager{
 		cfg:    cfg,
 		vms:    map[string]*runtime.VM{},
 		pages:  map[string]snapshot.PageFaultSource{},
@@ -111,6 +114,11 @@ func New(cfg Config) *Manager {
 		timers: map[string]*time.Timer{},
 		active: map[string]bool{},
 	}
+	if cfg.Network != nil {
+		cfg.Network.OnRecords = m.recordEgress
+		cfg.Network.OnGuardExit = m.egressGuardExited
+	}
+	return m
 }
 
 // CreateRequest is one POST /v1/sandboxes body.
@@ -319,7 +327,7 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 			return store.Sandbox{}, err
 		}
 	}
-	att, err := m.cfg.Network.Attach(ctx, row.ID, row.Egress(img.template))
+	att, err := m.cfg.Network.Attach(ctx, row.ID, network.Policy{Allow: row.Egress(img.template), Observe: row.EgressObserve})
 	if err != nil {
 		return store.Sandbox{}, err
 	}
@@ -422,6 +430,9 @@ func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Sna
 	if err != nil {
 		return store.Snapshot{}, err
 	}
+	if row.EgressObserve {
+		return store.Snapshot{}, errObserving
+	}
 	vm, err := m.vmFor(row)
 	if err != nil {
 		return store.Snapshot{}, err
@@ -510,6 +521,9 @@ func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bo
 	}
 	if row.SecretBearing && !allowSecret {
 		return nil, store.ErrConflict
+	}
+	if row.EgressObserve {
+		return nil, errObserving
 	}
 	tpl, err := m.cfg.Store.GetTemplate(ctx, row.TemplateName)
 	if err != nil {

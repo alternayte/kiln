@@ -70,7 +70,11 @@ func cmdServe() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	nm := network.New()
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("serve: %w", err)
+	}
+	nm := network.New(exe, root)
 	if err := nm.EnsureBase(ctx); err != nil {
 		return err
 	}
@@ -82,10 +86,6 @@ func cmdServe() error {
 		Builder:    template.Builder{KilninitPath: kilninit},
 		SealKey:    sealKey,
 		KernelPath: filepath.Join(root, "kernel", "vmlinux-"+kernelVersion),
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("serve: %w", err)
 	}
 	sbx := sandbox.New(sandbox.Config{
 		Root:       root,

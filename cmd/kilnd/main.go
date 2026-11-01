@@ -21,6 +21,8 @@ func main() {
 		err = cmdServe()
 	case "snapfault":
 		err = cmdSnapfault(os.Args[2:])
+	case "egressguard":
+		err = cmdEgressGuard(os.Args[2:])
 	case "ca":
 		err = cmdCA(os.Args[2:])
 	case "gateway-env":

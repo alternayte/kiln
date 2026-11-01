@@ -37,10 +37,53 @@ const tapMAC = "02:00:00:00:00:01"
 // Manager creates and removes per-VM network attachments.
 type Manager struct {
 	next atomic.Uint32
+
+	binary string
+	root   string
+
+	// OnRecords takes the egress records of one sandbox, and the count of
+	// records that had no room. A sandbox manager sets it before any attach.
+	OnRecords func(id string, records []Record, dropped int64)
+	// OnGuardExit takes the id of a sandbox whose guard died.
+	OnGuardExit func(id string)
+
+	start       sync.Once
+	reportMu    sync.Mutex
+	shorts      map[string]string
+	held        map[string]map[recordKey]*Record
+	heldCount   int
+	heldDropped map[string]int64
 }
 
-// New returns the network manager.
-func New() *Manager { return &Manager{} }
+// New returns the network manager. binary is the kilnd executable that runs
+// each egress guard, and root is the Kiln root that holds their sockets.
+func New(binary, root string) *Manager {
+	return &Manager{
+		binary: binary, root: root,
+		shorts: map[string]string{}, held: map[string]map[recordKey]*Record{}, heldDropped: map[string]int64{},
+	}
+}
+
+// background starts what reads records for every attachment.
+func (m *Manager) background() {
+	m.start.Do(func() {
+		go m.runReports()
+		go m.watchRefusals()
+	})
+}
+
+// name makes the kernel log lines of one short id readable as a sandbox.
+func (m *Manager) name(short, id string) {
+	m.reportMu.Lock()
+	defer m.reportMu.Unlock()
+	m.shorts[short] = id
+}
+
+func (m *Manager) unname(short string) {
+	m.reportMu.Lock()
+	defer m.reportMu.Unlock()
+	delete(m.shorts, short)
+}
 
 // Attachment is one VM's host-side link: a TAP device, a routing table, a
 // firewall mark and the resolver sockets.
@@ -48,13 +91,19 @@ type Attachment struct {
 	ID      string
 	TAPName string
 
+	m        *Manager
 	short    string
 	mark     int
 	table    int
 	resolver *resolver
 
-	mu   sync.Mutex
-	done bool
+	mu     sync.Mutex
+	done   bool
+	policy Policy
+	guard  *guardLink
+	// addressSet marks a sandbox from before the guard. The resolver still
+	// opens its port 443 by address, until its next wake.
+	addressSet bool
 }
 
 // EnsureBase creates the Kiln table and its shared mark chain, and enables
@@ -84,14 +133,16 @@ func markScript() string {
 }
 
 // Attach creates the TAP device, the resolver, the nftables chains and the
-// routing rule for one VM. The allowlist is the egress policy of the VM.
-func (m *Manager) Attach(ctx context.Context, id string, allow []string) (*Attachment, error) {
-	if _, err := normalizeAllow(allow); err != nil {
+// routing rule for one VM, and starts its egress guard.
+func (m *Manager) Attach(ctx context.Context, id string, policy Policy) (*Attachment, error) {
+	if _, err := normalizeAllow(policy.Allow); err != nil {
 		return nil, err
 	}
+	m.background()
 	short := shortID(id)
 	idx := m.allocIndex()
-	a := &Attachment{ID: id, TAPName: "kiln-" + short, short: short, mark: idx, table: 1000 + idx}
+	a := &Attachment{ID: id, TAPName: "kiln-" + short, m: m, short: short, mark: idx, table: 1000 + idx, policy: policy}
+	m.name(short, id)
 
 	if _, err := run(ctx, "ip", "tuntap", "add", "dev", a.TAPName, "mode", "tap",
 		"user", strconv.Itoa(runtime.JailUID), "group", strconv.Itoa(runtime.JailGID)); err != nil {
@@ -106,12 +157,16 @@ func (m *Manager) Attach(ctx context.Context, id string, allow []string) (*Attac
 		_ = a.Detach(ctx)
 		return nil, err
 	}
-	res, err := newResolver(ctx, a, allow, up)
+	res, err := newResolver(ctx, a, policy, up)
 	if err != nil {
 		_ = a.Detach(ctx)
 		return nil, err
 	}
 	a.resolver = res
+	if err := a.startGuard(ctx); err != nil {
+		_ = a.Detach(ctx)
+		return nil, err
+	}
 	if err := a.applyRules(ctx); err != nil {
 		_ = a.Detach(ctx)
 		return nil, err
@@ -126,8 +181,10 @@ func (m *Manager) Attach(ctx context.Context, id string, allow []string) (*Attac
 // Adopt reattaches to the network of a microVM whose process survived a
 // daemon restart. The TAP device and its rules belong to the running VM, so
 // they stay. The resolver runs in this process and died with the old daemon,
-// so it starts again and the DNS rules are rewritten.
-func (m *Manager) Adopt(ctx context.Context, id, tapName string, allow []string) (*Attachment, error) {
+// so it starts again and the DNS rules are rewritten. The guard outlives the
+// daemon, so a new link reaches it. A guard that also died starts again, and a
+// sandbox from before the guard keeps its address set.
+func (m *Manager) Adopt(ctx context.Context, id, tapName string, policy Policy) (*Attachment, error) {
 	if tapName == "" {
 		return nil, fmt.Errorf("network: sandbox %s has no tap device", id)
 	}
@@ -136,21 +193,46 @@ func (m *Manager) Adopt(ctx context.Context, id, tapName string, allow []string)
 		return nil, err
 	}
 	m.Reserve(mark)
-	a := &Attachment{ID: id, TAPName: tapName, short: shortID(id), mark: mark, table: table}
+	m.background()
+	a := &Attachment{ID: id, TAPName: tapName, m: m, short: shortID(id), mark: mark, table: table, policy: policy}
+	m.name(a.short, id)
+	guarded, err := usesGuard(ctx, a.chain("_dnat"))
+	if err != nil {
+		return nil, err
+	}
+	a.addressSet = !guarded
 	up, err := upstreams()
 	if err != nil {
 		return nil, err
 	}
-	res, err := newResolver(ctx, a, allow, up)
+	res, err := newResolver(ctx, a, policy, up)
 	if err != nil {
 		return nil, err
 	}
 	a.resolver = res
+	if guarded {
+		if err := a.adoptGuard(ctx); err != nil {
+			_ = a.Detach(ctx)
+			return nil, err
+		}
+	}
 	if err := a.rewriteDNS(ctx); err != nil {
 		_ = a.Detach(ctx)
 		return nil, err
 	}
 	return a, nil
+}
+
+// adoptGuard reaches the guard a previous daemon started, or replaces it.
+func (a *Attachment) adoptGuard(ctx context.Context) error {
+	conn, err := net.DialTimeout("unix", a.m.guardSocket(a.short), time.Second)
+	if err != nil {
+		if a.m.OnGuardExit != nil {
+			a.m.OnGuardExit(a.ID)
+		}
+		return a.startGuard(ctx)
+	}
+	return a.linkGuard(ctx, conn)
 }
 
 // allocIndex hands out a mark and table number no other attachment holds.
@@ -181,6 +263,8 @@ func (a *Attachment) Detach(ctx context.Context) error {
 		return nil
 	}
 	a.done = true
+	a.stopGuard()
+	a.m.unname(a.short)
 	if a.resolver != nil {
 		a.resolver.Close()
 		a.resolver = nil
@@ -286,24 +370,40 @@ func (a *Attachment) forwardRules() string {
 	tap := a.TAPName
 	var b strings.Builder
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ct mark set %d\n", Table, a.chain("_fwd"), tap, a.mark)
+	// Port 443 went to the guard before this chain, so every new connection
+	// here is refused. The limit keeps a hostile guest out of the kernel log.
+	if !a.addressSet {
+		fmt.Fprintf(&b, "add rule inet %s %s iifname %q ct state new limit rate 10/second burst 20 packets log prefix %q\n",
+			Table, a.chain("_fwd"), tap, refusalPrefix+a.short+" ")
+	}
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s drop\n", Table, a.chain("_fwd"), tap, metadataAddr)
 	// An established connection was allowed when it started. Keep it after its
 	// address leaves the set, so a long transfer is not cut by a DNS TTL.
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ct state established,related accept\n", Table, a.chain("_fwd"), tap)
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr @%s tcp dport 443 accept\n", Table, a.chain("_fwd"), tap, a.setName())
+	if a.addressSet {
+		fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr @%s tcp dport 443 accept\n", Table, a.chain("_fwd"), tap, a.setName())
+	}
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter drop\n", Table, a.chain("_fwd"), tap)
 	return b.String()
 }
 
 // inputRules is the chain for traffic the guest sends to its gateway. Only
-// the resolver answers there, and only replies to host-originated
+// the resolver and the guard answer there, and only replies to host-originated
 // connections pass, so a published port can answer the proxy.
 func (a *Attachment) inputRules() string {
-	return inputRuleScript(a.chain("_in"), a.TAPName, a.mark, a.resolver.udpPort(), a.resolver.tcpPort())
+	return inputRuleScript(a.chain("_in"), a.TAPName, a.mark, a.resolver.udpPort(), a.resolver.tcpPort(), a.guardPort())
+}
+
+// guardPort is the port of the guard, or zero for a sandbox with none.
+func (a *Attachment) guardPort() int {
+	if a.guard == nil {
+		return 0
+	}
+	return a.guard.port
 }
 
 // inputRuleScript builds the input chain of one attachment.
-func inputRuleScript(chain, tap string, mark, udpPort, tcpPort int) string {
+func inputRuleScript(chain, tap string, mark, udpPort, tcpPort, guardPort int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ct mark set %d\n", Table, chain, tap, mark)
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s drop\n", Table, chain, tap, metadataAddr)
@@ -312,11 +412,16 @@ func inputRuleScript(chain, tap string, mark, udpPort, tcpPort int) string {
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ct state established,related accept\n", Table, chain, tap)
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s udp dport %d accept\n", Table, chain, tap, runtime.GuestGateway, udpPort)
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s tcp dport %d accept\n", Table, chain, tap, runtime.GuestGateway, tcpPort)
+	if guardPort > 0 {
+		fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s tcp dport %d accept\n", Table, chain, tap, runtime.GuestGateway, guardPort)
+	}
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter drop\n", Table, chain, tap)
 	return b.String()
 }
 
-// dnatRules sends guest DNS queries to the resolver sockets.
+// dnatRules sends guest DNS queries to the resolver sockets, and every port 443
+// connection to the guard. The guest cannot choose another path: anything else
+// meets the drop in the forward chain.
 func (a *Attachment) dnatRules() string {
 	tap := a.TAPName
 	var b strings.Builder
@@ -324,6 +429,10 @@ func (a *Attachment) dnatRules() string {
 		Table, a.chain("_dnat"), tap, runtime.GuestGateway, runtime.GuestGateway, a.resolver.udpPort())
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s tcp dport 53 dnat ip to %s:%d\n",
 		Table, a.chain("_dnat"), tap, runtime.GuestGateway, runtime.GuestGateway, a.resolver.tcpPort())
+	if port := a.guardPort(); port > 0 {
+		fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter tcp dport 443 dnat ip to %s:%d\n",
+			Table, a.chain("_dnat"), tap, runtime.GuestGateway, port)
+	}
 	return b.String()
 }
 
@@ -532,12 +641,15 @@ func run(ctx context.Context, name string, args ...string) (string, error) {
 	return string(out), nil
 }
 
-// SetEgress replaces the allowlist of one live attachment. The address set
-// empties and every connection the guest opened ends, because repository code
-// holds such a connection open otherwise. A connection the host opened to a
-// published port stays.
-func (a *Attachment) SetEgress(ctx context.Context, allow []string) error {
-	names, err := normalizeAllow(allow)
+// HasGuard reports whether this attachment enforces through a guard. A sandbox
+// adopted from before the guard does not, until its next wake.
+func (a *Attachment) HasGuard() bool { return !a.addressSet }
+
+// SetEgress replaces the policy of one live attachment. Every connection the
+// guest opened ends, because repository code holds such a connection open
+// otherwise. A connection the host opened to a published port stays.
+func (a *Attachment) SetEgress(ctx context.Context, policy Policy) error {
+	names, err := normalizeAllow(policy.Allow)
 	if err != nil {
 		return err
 	}
@@ -546,8 +658,14 @@ func (a *Attachment) SetEgress(ctx context.Context, allow []string) error {
 	if a.done || a.resolver == nil {
 		return fmt.Errorf("network: sandbox %s has no live link", a.ID)
 	}
-	if err := a.resolver.replaceAllow(ctx, names); err != nil {
+	a.policy = policy
+	if err := a.resolver.replaceAllow(ctx, names, policy.Observe); err != nil {
 		return err
+	}
+	if a.guard != nil {
+		if err := a.guard.apply(ctx, policy, true); err != nil {
+			return err
+		}
 	}
 	return a.cutGuestConnections(ctx)
 }

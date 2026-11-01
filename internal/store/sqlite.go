@@ -640,7 +640,7 @@ func (s *sqliteStore) GetSandbox(ctx context.Context, id string) (Sandbox, error
 	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT
 		id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
-		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing, env_keys, egress_allow
+		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing, env_keys, egress_allow, egress_observe
 	FROM sandboxes WHERE id = ?`+clause, append([]any{id}, args...)...)
 	sb, err := scanSandbox(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -653,7 +653,7 @@ func (s *sqliteStore) ListSandboxes(ctx context.Context) ([]Sandbox, error) {
 	clause, args := scope(ctx, "tenant_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, template_name, snapshot_id, lifecycle, state, ttl_seconds, idle_seconds,
-		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing, env_keys, egress_allow
+		last_active_at, tap_name, vsock_cid, pid, metadata, created_at, destroyed_at, secret_bearing, env_keys, egress_allow, egress_observe
 	FROM sandboxes WHERE 1 = 1`+clause+` ORDER BY created_at, id`, args...)
 	if err != nil {
 		return nil, err
@@ -727,7 +727,9 @@ func (s *sqliteStore) DestroySandbox(ctx context.Context, id string, at time.Tim
 	if changed == 0 {
 		return ErrNotFound
 	}
-	return nil
+	_, err = s.db.ExecContext(ctx, `UPDATE egress_logs SET destroyed_at = COALESCE(destroyed_at, ?)
+		WHERE sandbox_id = ?`, at.Unix(), id)
+	return err
 }
 
 type sandboxScanner interface {
@@ -748,11 +750,12 @@ func scanSandbox(row sandboxScanner) (Sandbox, error) {
 		bearing   int
 		envKeys   string
 		egress    sql.NullString
+		observe   int
 	)
 	var err error
 	if err = row.Scan(
 		&sb.ID, &sb.TemplateName, &snapshot, &sb.Lifecycle, &sb.State, &ttl, &sb.IdleSeconds,
-		&active, &tap, &cid, &pid, &sb.Metadata, &created, &destroyed, &bearing, &envKeys, &egress,
+		&active, &tap, &cid, &pid, &sb.Metadata, &created, &destroyed, &bearing, &envKeys, &egress, &observe,
 	); err != nil {
 		return Sandbox{}, err
 	}
@@ -780,6 +783,7 @@ func scanSandbox(row sandboxScanner) (Sandbox, error) {
 		sb.DestroyedAt = &t
 	}
 	sb.SecretBearing = bearing != 0
+	sb.EgressObserve = observe != 0
 	return sb, nil
 }
 
@@ -792,14 +796,14 @@ func boolInt(v bool) int {
 }
 
 // SetSandboxEgress replaces the egress policy of one live sandbox.
-func (s *sqliteStore) SetSandboxEgress(ctx context.Context, id string, allow []string) error {
+func (s *sqliteStore) SetSandboxEgress(ctx context.Context, id string, allow []string, observe bool) error {
 	encoded, err := encodeOptionalEgress(allow)
 	if err != nil {
 		return err
 	}
 	clause, args := scope(ctx, "tenant_id")
-	res, err := s.db.ExecContext(ctx, `UPDATE sandboxes SET egress_allow = ?
-		WHERE id = ? AND destroyed_at IS NULL`+clause, append([]any{encoded, id}, args...)...)
+	res, err := s.db.ExecContext(ctx, `UPDATE sandboxes SET egress_allow = ?, egress_observe = ?
+		WHERE id = ? AND destroyed_at IS NULL`+clause, append([]any{encoded, boolInt(observe), id}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -1134,9 +1138,9 @@ func scanSnapshot(row sandboxScanner) (Snapshot, error) {
 
 func (s *sqliteStore) CreateTenant(ctx context.Context, t Tenant) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO tenants (
-		id, name, max_sandboxes, max_templates, max_snapshot_bytes, created_at
-	) VALUES (?, ?, ?, ?, ?, ?)`,
-		t.ID, t.Name, t.Caps.MaxSandboxes, t.Caps.MaxTemplates, t.Caps.MaxSnapshotBytes, t.CreatedAt.Unix())
+		id, name, max_sandboxes, max_templates, max_snapshot_bytes, no_observe, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.Name, t.Caps.MaxSandboxes, t.Caps.MaxTemplates, t.Caps.MaxSnapshotBytes, boolInt(t.Caps.NoObserve), t.CreatedAt.Unix())
 	if err != nil && isUniqueViolation(err) {
 		return ErrConflict
 	}
@@ -1145,7 +1149,7 @@ func (s *sqliteStore) CreateTenant(ctx context.Context, t Tenant) error {
 
 func (s *sqliteStore) GetTenant(ctx context.Context, id string) (Tenant, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT
-		id, name, max_sandboxes, max_templates, max_snapshot_bytes, created_at
+		id, name, max_sandboxes, max_templates, max_snapshot_bytes, no_observe, created_at
 	FROM tenants WHERE id = ?`, id)
 	t, err := scanTenant(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1156,7 +1160,7 @@ func (s *sqliteStore) GetTenant(ctx context.Context, id string) (Tenant, error) 
 
 func (s *sqliteStore) ListTenants(ctx context.Context) ([]Tenant, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
-		id, name, max_sandboxes, max_templates, max_snapshot_bytes, created_at
+		id, name, max_sandboxes, max_templates, max_snapshot_bytes, no_observe, created_at
 	FROM tenants ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -1175,8 +1179,8 @@ func (s *sqliteStore) ListTenants(ctx context.Context) ([]Tenant, error) {
 
 func (s *sqliteStore) SetTenantCaps(ctx context.Context, id string, caps Caps) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE tenants SET
-		max_sandboxes = ?, max_templates = ?, max_snapshot_bytes = ?
-	WHERE id = ?`, caps.MaxSandboxes, caps.MaxTemplates, caps.MaxSnapshotBytes, id)
+		max_sandboxes = ?, max_templates = ?, max_snapshot_bytes = ?, no_observe = ?
+	WHERE id = ?`, caps.MaxSandboxes, caps.MaxTemplates, caps.MaxSnapshotBytes, boolInt(caps.NoObserve), id)
 	if err != nil {
 		return err
 	}
@@ -1237,7 +1241,7 @@ func scanTenant(row scanner) (Tenant, error) {
 		created int64
 	)
 	if err := row.Scan(&t.ID, &t.Name, &t.Caps.MaxSandboxes, &t.Caps.MaxTemplates,
-		&t.Caps.MaxSnapshotBytes, &created); err != nil {
+		&t.Caps.MaxSnapshotBytes, &t.Caps.NoObserve, &created); err != nil {
 		return Tenant{}, err
 	}
 	t.CreatedAt = time.Unix(created, 0).UTC()
@@ -1336,4 +1340,116 @@ func scanRegistry(row scanner) (Registry, error) {
 	}
 	r.CreatedAt = time.Unix(created, 0).UTC()
 	return r, nil
+}
+
+// maxEgressRows bounds the destinations one sandbox records. A guest can ask
+// for any number of names, so a new destination past this only counts.
+const maxEgressRows = 4096
+
+func (s *sqliteStore) RecordEgress(ctx context.Context, sandboxID string, rows []EgressRecord, dropped int64) (string, []string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO egress_logs (sandbox_id, tenant_id, destroyed_at)
+		SELECT id, tenant_id, destroyed_at FROM sandboxes WHERE id = ?
+		ON CONFLICT (sandbox_id) DO NOTHING`, sandboxID); err != nil {
+		return "", nil, err
+	}
+	var tenant string
+	err = tx.QueryRowContext(ctx, `SELECT tenant_id FROM egress_logs WHERE sandbox_id = ?`, sandboxID).Scan(&tenant)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil, nil
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	var held int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM egress_records WHERE sandbox_id = ?`, sandboxID).Scan(&held); err != nil {
+		return "", nil, err
+	}
+	var first []string
+	for _, row := range rows {
+		var known, deniedBefore int
+		if err := tx.QueryRowContext(ctx, `SELECT
+			count(CASE WHEN port = ? AND decision = ? THEN 1 END),
+			count(CASE WHEN decision = ? THEN 1 END)
+		FROM egress_records WHERE sandbox_id = ? AND host = ?`,
+			row.Port, row.Decision, DecisionDenied, sandboxID, row.Host).Scan(&known, &deniedBefore); err != nil {
+			return "", nil, err
+		}
+		if known == 0 && held >= maxEgressRows {
+			dropped += max(row.Count, 1)
+			continue
+		}
+		if known == 0 {
+			held++
+		}
+		if row.Decision == DecisionDenied && deniedBefore == 0 {
+			first = append(first, row.Host)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO egress_records (
+			sandbox_id, host, port, decision, count, bytes_out, bytes_in, first_seen, last_seen
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (sandbox_id, host, port, decision) DO UPDATE SET
+			count = count + excluded.count,
+			bytes_out = bytes_out + excluded.bytes_out,
+			bytes_in = bytes_in + excluded.bytes_in,
+			last_seen = max(last_seen, excluded.last_seen)`,
+			sandboxID, row.Host, row.Port, row.Decision, row.Count, row.BytesOut, row.BytesIn,
+			row.FirstSeen.Unix(), row.LastSeen.Unix()); err != nil {
+			return "", nil, err
+		}
+	}
+	if dropped > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE egress_logs SET dropped = dropped + ? WHERE sandbox_id = ?`, dropped, sandboxID); err != nil {
+			return "", nil, err
+		}
+	}
+	return tenant, first, tx.Commit()
+}
+
+func (s *sqliteStore) EgressLog(ctx context.Context, sandboxID string) (EgressLog, error) {
+	clause, args := scope(ctx, "tenant_id")
+	var (
+		out       EgressLog
+		destroyed sql.NullInt64
+	)
+	err := s.db.QueryRowContext(ctx, `SELECT dropped, destroyed_at FROM egress_logs WHERE sandbox_id = ?`+clause,
+		append([]any{sandboxID}, args...)...).Scan(&out.Dropped, &destroyed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return EgressLog{}, ErrNotFound
+	}
+	if err != nil {
+		return EgressLog{}, err
+	}
+	if destroyed.Valid {
+		at := time.Unix(destroyed.Int64, 0).UTC()
+		out.DestroyedAt = &at
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT host, port, decision, count, bytes_out, bytes_in, first_seen, last_seen
+		FROM egress_records WHERE sandbox_id = ? ORDER BY host, port, decision`, sandboxID)
+	if err != nil {
+		return EgressLog{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			row         EgressRecord
+			first, last int64
+		)
+		if err := rows.Scan(&row.Host, &row.Port, &row.Decision, &row.Count, &row.BytesOut, &row.BytesIn, &first, &last); err != nil {
+			return EgressLog{}, err
+		}
+		row.FirstSeen, row.LastSeen = time.Unix(first, 0).UTC(), time.Unix(last, 0).UTC()
+		out.Records = append(out.Records, row)
+	}
+	return out, rows.Err()
+}
+
+// PruneEgress crosses every tenant on purpose: the reconciler runs for the host.
+func (s *sqliteStore) PruneEgress(ctx context.Context, before time.Time) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM egress_logs WHERE destroyed_at IS NOT NULL AND destroyed_at < ?`, before.Unix())
+	return err
 }

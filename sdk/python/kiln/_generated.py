@@ -99,12 +99,17 @@ class GeneratedClient:
         """Read one sandbox with its published ports."""
         return self._json("GET", f"/v1/sandboxes/{id}")
 
-    def set_egress(self, id: str, egress_allow: list[str]) -> Any:
-        """Replace the egress policy of one sandbox. The answer comes after the host swaps the list and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it."""
+    def set_egress(self, id: str, egress_allow: Optional[list[str]] = None, observe: Optional[bool] = None) -> Any:
+        """Replace the egress policy of one sandbox. Send egress_allow or observe. The answer comes after the host swaps the policy and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it."""
         body = {k: v for k, v in {
             "egress_allow": egress_allow,
+            "observe": observe,
         }.items() if v is not None}
         return self._json("PUT", f"/v1/sandboxes/{id}/egress", body)
+
+    def egress_log(self, id: str) -> Any:
+        """Read the egress record: one row per destination, with its decision, counts and bytes. A row names a host, or an address when the connection named no host. A fork or a restore starts with no rows. The rows stay for 7 days after a destroy."""
+        return self._json("GET", f"/v1/sandboxes/{id}/egress/log")
 
     def exec(self, id: str, cmd: list[str], cwd: Optional[str] = None, env: Optional[dict[str, Any]] = None, timeout_seconds: Optional[int] = None) -> Any:
         """Run a command inside a sandbox. Accept text/event-stream to read the output as it runs."""

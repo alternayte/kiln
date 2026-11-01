@@ -31,6 +31,8 @@ type Entry struct {
 	// Credential records that a build carried a registry login. Its value
 	// never reaches this table.
 	Credential bool
+	// EgressMode names the mode a policy call asked for: observe or allow.
+	EgressMode string
 }
 
 // EnsureSchema creates the table. The gateway owns this store, so it creates
@@ -69,6 +71,13 @@ func (a *Audit) EnsureSchema(ctx context.Context) error {
 	if _, err = a.DB.ExecContext(ctx, add); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 		return err
 	}
+	add = `ALTER TABLE kiln_audit ADD COLUMN egress_mode TEXT`
+	if a.Driver == "postgres" {
+		add = `ALTER TABLE kiln_audit ADD COLUMN IF NOT EXISTS egress_mode TEXT`
+	}
+	if _, err = a.DB.ExecContext(ctx, add); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return err
+	}
 	return nil
 }
 
@@ -79,10 +88,10 @@ func (a *Audit) Record(ctx context.Context, e Entry) {
 		return
 	}
 	_, err := a.DB.ExecContext(context.WithoutCancel(ctx), a.rebind(`INSERT INTO kiln_audit (
-		tenant_id, user_id, key_id, method, path, status, duration_ms, at, credential
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		tenant_id, user_id, key_id, method, path, status, duration_ms, at, credential, egress_mode
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		e.TenantID, nullString(e.UserID), nullString(e.KeyID), e.Method, e.Path,
-		e.Status, e.Duration.Milliseconds(), e.At.Unix(), credentialFlag(e.Credential))
+		e.Status, e.Duration.Milliseconds(), e.At.Unix(), credentialFlag(e.Credential), nullString(e.EgressMode))
 	if err != nil {
 		log.Printf("gateway: audit: %v", err)
 	}

@@ -1,6 +1,46 @@
 {
   "components": {
     "schemas": {
+      "EgressLog": {
+        "properties": {
+          "dropped": {
+            "type": "integer"
+          },
+          "records": {
+            "items": {
+              "properties": {
+                "bytes_in": {
+                  "type": "integer"
+                },
+                "bytes_out": {
+                  "type": "integer"
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "decision": {
+                  "type": "string"
+                },
+                "first_seen": {
+                  "type": "string"
+                },
+                "host": {
+                  "type": "string"
+                },
+                "last_seen": {
+                  "type": "string"
+                },
+                "port": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "Error": {
         "properties": {
           "error": {
@@ -186,6 +226,9 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "egress_observe": {
+            "type": "boolean"
           },
           "env_keys": {
             "items": {
@@ -456,7 +499,7 @@
   "info": {
     "description": "Isolated Linux microVMs on one host, created from OCI images and forked into copies.",
     "title": "Kiln",
-    "version": "0.10.0"
+    "version": "0.11.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1196,11 +1239,11 @@
                       "type": "string"
                     },
                     "type": "array"
+                  },
+                  "observe": {
+                    "type": "boolean"
                   }
                 },
-                "required": [
-                  "egress_allow"
-                ],
                 "type": "object"
               }
             }
@@ -1269,7 +1312,86 @@
             "description": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised."
           }
         },
-        "summary": "Replace the egress policy of one sandbox. The answer comes after the host swaps the list and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it."
+        "summary": "Replace the egress policy of one sandbox. Send egress_allow or observe. The answer comes after the host swaps the policy and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it."
+      }
+    },
+    "/v1/sandboxes/{id}/egress/log": {
+      "get": {
+        "operationId": "egressLog",
+        "parameters": [
+          {
+            "description": "Sandbox id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EgressLog"
+                }
+              }
+            },
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised."
+          }
+        },
+        "summary": "Read the egress record: one row per destination, with its decision, counts and bytes. A row names a host, or an address when the connection named no host. A fork or a restore starts with no rows. The rows stay for 7 days after a destroy."
       }
     },
     "/v1/sandboxes/{id}/exec": {

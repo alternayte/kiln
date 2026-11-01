@@ -194,7 +194,7 @@ Answers 200 with `Sandbox`.
 
 `kiln sandboxes set-egress`
 
-Replace the egress policy of one sandbox. The answer comes after the host swaps the list and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it.
+Replace the egress policy of one sandbox. Send egress_allow or observe. The answer comes after the host swaps the policy and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it.
 
 Path:
 
@@ -202,9 +202,24 @@ Path:
 
 Body:
 
-- `egress_allow` (array of string, required): Hostnames the sandbox may reach. *.example.com matches every subdomain and not example.com. An empty list allows no egress.
+- `egress_allow` (array of string): Hostnames the sandbox may reach on port 443. The host reads the TLS name of each connection. *.example.com matches every subdomain and not example.com. An empty list allows no egress. This also ends observe.
+- `observe` (boolean): True lets any public TLS name through and records it, so one run of trusted code finds its list. A sandbox with env values answers conflict, and a fork or a snapshot of an observing sandbox answers conflict.
 
 Answers 200 with `Sandbox`.
+
+### egressLog
+
+`GET /v1/sandboxes/{id}/egress/log`
+
+`kiln egress`
+
+Read the egress record: one row per destination, with its decision, counts and bytes. A row names a host, or an address when the connection named no host. A fork or a restore starts with no rows. The rows stay for 7 days after a destroy.
+
+Path:
+
+- `id` (string): Sandbox id.
+
+Answers 200 with `EgressLog`.
 
 ### exec
 

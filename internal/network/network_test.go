@@ -193,7 +193,7 @@ func TestShortIDFitsInterfaceName(t *testing.T) {
 }
 
 func TestResolverRefusesNamesOutsideTheAllowlist(t *testing.T) {
-	r := &resolver{id: "test", allow: map[string]bool{"pypi.org": true}}
+	r := &resolver{id: "test", allow: map[string]bool{"pypi.org": true}, att: &Attachment{m: New("", "")}}
 	resp := r.handle(dnsQuery("example.com", dnsTypeA))
 	if resp == nil {
 		t.Fatal("no response")
@@ -231,7 +231,7 @@ func TestRuleForReadsKilnRulesOnly(t *testing.T) {
 // answer a host-originated connection, which is how the ingress reaches a
 // published port. Without it the final drop rule eats every reply.
 func TestInputRuleAcceptsEstablishedReplies(t *testing.T) {
-	script := inputRuleScript("kiln_abc_in", "kiln-abc", 7, 40000, 40001)
+	script := inputRuleScript("kiln_abc_in", "kiln-abc", 7, 40000, 40001, 0)
 	accept := strings.Index(script, "ct state established,related accept")
 	if accept < 0 {
 		t.Fatalf("the input chain has no established accept rule:\n%s", script)

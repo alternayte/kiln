@@ -105,7 +105,7 @@ func TestGateP4(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), gateTimeout)
 	defer cancel()
-	nm := network.New()
+	nm := network.New(kilnBin, root)
 	if err := nm.EnsureBase(ctx); err != nil {
 		t.Fatal(err)
 	}

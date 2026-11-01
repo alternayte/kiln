@@ -139,6 +139,11 @@ func (r *Reconciler) Sweep(ctx context.Context) (Report, error) {
 	r.failStuckTemplates(ctx, &report)
 	r.sweepOrphans(ctx, rows, keep, protected, host, &report)
 	r.sweepRouting(ctx, &report)
+	// A destroyed sandbox leaves its egress record for a caller to read, and
+	// no longer.
+	if err := r.Store.PruneEgress(ctx, r.now().Add(-sandbox.EgressRetention)); err != nil {
+		log.Printf("reconcile: prune egress records: %v", err)
+	}
 	if err := r.Sandboxes.ScheduleAll(ctx); err != nil {
 		return report, err
 	}
@@ -165,7 +170,7 @@ func (r *Reconciler) adopt(ctx context.Context, row store.Sandbox, host *hostSta
 		if tplErr != nil {
 			return tplErr
 		}
-		att, err = r.Network.Adopt(ctx, row.ID, row.TapName, row.Egress(tpl))
+		att, err = r.Network.Adopt(ctx, row.ID, row.TapName, network.Policy{Allow: row.Egress(tpl), Observe: row.EgressObserve})
 		if err != nil {
 			return err
 		}
@@ -300,6 +305,19 @@ func (r *Reconciler) sweepOrphans(ctx context.Context, rows []store.Sandbox, kee
 		}
 	}
 
+	// Egress guards without a row. A guard names no sandbox id, only its short
+	// form, so this check matches the chains below and not the ids above.
+	for short, pid := range host.guards {
+		if keptShorts[short] {
+			continue
+		}
+		report.Swept = append(report.Swept, "guard "+short)
+		if err := runtime.KillProcess(pid); err != nil {
+			log.Printf("reconcile: kill egress guard %s: %v", short, err)
+		}
+		_ = os.Remove(network.GuardSocket(r.Root, short))
+	}
+
 	// Chains and their allow sets without a row.
 	for _, short := range host.chains {
 		if keptShorts[short] {
@@ -325,6 +343,14 @@ func (r *Reconciler) destroyHost(ctx context.Context, id, tapName string, host *
 			if err := runtime.KillProcess(pid); err != nil {
 				log.Printf("reconcile: %s: kill snapfault: %v", id, err)
 			}
+		}
+		short := network.ShortID(id)
+		if pid := host.guards[short]; pid > 0 {
+			if err := runtime.KillProcess(pid); err != nil {
+				log.Printf("reconcile: %s: kill egress guard: %v", id, err)
+			}
+			delete(host.guards, short)
+			_ = os.Remove(network.GuardSocket(r.Root, short))
 		}
 	}
 	if tapName == "" {
@@ -352,6 +378,8 @@ func (r *Reconciler) destroyHost(ctx context.Context, id, tapName string, host *
 type hostState struct {
 	firecracker map[string]int
 	snapfault   map[string]int
+	// guards holds the egress guard of each short id.
+	guards map[string]int
 	// children lists every process in a kiln/<id> cgroup. Jailer appears here
 	// too, between its fork and the firecracker exec.
 	children map[string][]int
@@ -367,6 +395,7 @@ func (r *Reconciler) scan(ctx context.Context) *hostState {
 	h := &hostState{
 		firecracker: map[string]int{},
 		snapfault:   map[string]int{},
+		guards:      map[string]int{},
 		children:    map[string][]int{},
 		dirs:        map[string]bool{},
 		cgroups:     map[string]bool{},
@@ -389,6 +418,9 @@ func (r *Reconciler) scan(ctx context.Context) *hostState {
 				if id, ok := sandboxIDFromPath(r.Root, sock); ok {
 					h.snapfault[id] = pid
 				}
+			}
+			if short, ok := guardShort(r.Root, pid); ok {
+				h.guards[short] = pid
 			}
 		}
 	}
@@ -461,6 +493,31 @@ func snapfaultSocket(pid int) (string, bool) {
 		return "", false
 	}
 	return snapfaultSocketFromCmdline(string(b))
+}
+
+// guardShort returns the short id of an egress guard under this root.
+func guardShort(root string, pid int) (string, bool) {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return "", false
+	}
+	return guardShortFromCmdline(root, string(b))
+}
+
+// guardShortFromCmdline reads the short id out of a cmdline.
+func guardShortFromCmdline(root, cmdline string) (string, bool) {
+	args := strings.Split(strings.TrimSuffix(cmdline, "\x00"), "\x00")
+	if len(args) < 2 || args[1] != "egressguard" {
+		return "", false
+	}
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--sock" {
+			dir, file := filepath.Split(args[i+1])
+			short, ok := strings.CutSuffix(file, ".sock")
+			return short, ok && filepath.Clean(dir) == filepath.Join(root, "egress")
+		}
+	}
+	return "", false
 }
 
 // snapfaultSocketFromCmdline reads the --sock argument out of a cmdline.

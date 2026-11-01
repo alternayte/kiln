@@ -13,7 +13,7 @@ Kiln {{VERSION}} runs isolated Linux microVMs. A template is an OCI image built 
 
 1. Build and push the application image. Kiln builds no application image.
 2. Run `kiln preview up --image <image> --port <port> --start '<command>'`. It prints the URL when the application listens.
-3. On a failure, read the error and its `next` line. Run `kiln logs <id>` for the start command output and the build result.
+3. On a failure, read the error and its `next` line. Run `kiln logs <id>` for the start command output and the build result. Run `kiln egress <id>` when a network call fails: it lists each destination the host allowed or refused, and `kiln egress <id> --propose` prints a list to send to `kiln sandboxes set-egress`.
 4. Fix the cause and run step 2 again. The new preview replaces the previous one of this directory.
 5. Give the URL to the person. Run `kiln preview down` when the work ends.
 

@@ -136,6 +136,31 @@ type Sandbox struct {
 	// EgressAllow replaces the policy of the template. Nil means the template
 	// policy applies.
 	EgressAllow []string
+	// EgressObserve lets any TLS name through and records it.
+	EgressObserve bool
+}
+
+// DecisionDenied is the egress record decision for a refused destination.
+const DecisionDenied = "denied"
+
+// EgressRecord summarizes one destination of one sandbox.
+type EgressRecord struct {
+	Host      string
+	Port      int
+	Decision  string
+	Count     int64
+	BytesOut  int64
+	BytesIn   int64
+	FirstSeen time.Time
+	LastSeen  time.Time
+}
+
+// EgressLog is the whole egress record of one sandbox. Dropped counts the
+// records that had no room, so a gap stays visible.
+type EgressLog struct {
+	Records     []EgressRecord
+	Dropped     int64
+	DestroyedAt *time.Time
 }
 
 // Egress returns the policy in force on this sandbox.
@@ -228,7 +253,16 @@ type Store interface {
 	SetSandboxRuntime(ctx context.Context, id, tapName string, vsockCID *int, pid int) error
 	TouchSandbox(ctx context.Context, id string, at time.Time) error
 	// SetSandboxEgress replaces the egress policy of one sandbox.
-	SetSandboxEgress(ctx context.Context, id string, allow []string) error
+	SetSandboxEgress(ctx context.Context, id string, allow []string, observe bool) error
+	// RecordEgress adds to the egress record of one sandbox. It returns the
+	// tenant, and each host this call refused for the first time. A sandbox
+	// with no row, such as a build VM, records nothing.
+	RecordEgress(ctx context.Context, sandboxID string, rows []EgressRecord, dropped int64) (tenant string, firstDenied []string, err error)
+	// EgressLog returns the egress record of one sandbox. It returns
+	// ErrNotFound when the sandbox never recorded anything.
+	EgressLog(ctx context.Context, sandboxID string) (EgressLog, error)
+	// PruneEgress removes the record of each sandbox destroyed before a time.
+	PruneEgress(ctx context.Context, before time.Time) error
 	DestroySandbox(ctx context.Context, id string, at time.Time) error
 
 	CreateSnapshot(ctx context.Context, s Snapshot) error
@@ -284,6 +318,8 @@ type Caps struct {
 	MaxSandboxes     int
 	MaxTemplates     int
 	MaxSnapshotBytes int64
+	// NoObserve refuses egress observe mode to this tenant.
+	NoObserve bool
 }
 
 // Usage is what one tenant holds now. The host compares it with Caps before

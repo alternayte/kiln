@@ -128,7 +128,7 @@ export class GeneratedClient {
   }
 
   /** Snapshot a running sandbox and restore several copies of it. */
-  fork(id: string, body: { count: number; allow_secret_fork?: boolean; credentials?: Record<string, unknown>[]; metadata?: Record<string, unknown> }): Promise<unknown> {
+  fork(id: string, body: { count: number; allow_secret_fork?: boolean; point?: string; credentials?: Record<string, unknown>[]; metadata?: Record<string, unknown> }): Promise<unknown> {
     return this.json("POST", `/v1/sandboxes/${encodeURIComponent(String(id))}/fork`, body);
   }
 
@@ -174,6 +174,26 @@ export class GeneratedClient {
     return this.json("POST", `/v1/sandboxes/${encodeURIComponent(String(id))}/snapshot`, body);
   }
 
+  /** List the timeline points of one sandbox, oldest first, with id, label, time and bytes. merged counts the older points the limit folded into a point. */
+  listPoints(id: string): Promise<unknown> {
+    return this.json("GET", `/v1/sandboxes/${encodeURIComponent(String(id))}/timeline`);
+  }
+
+  /** Mark a timeline point: memory, processes and disk, held as a diff against the point before it. The guest pauses for the write. The template needs timeline: true, or this answers conflict, as a sandbox that observes egress does. A sandbox holds at most 32 points, and their bytes stay under twice the guest memory plus the disk size. At either limit Kiln merges the two oldest points. */
+  markPoint(id: string, body: { label?: string }): Promise<unknown> {
+    return this.json("POST", `/v1/sandboxes/${encodeURIComponent(String(id))}/timeline`, body);
+  }
+
+  /** Remove one timeline point. Kiln merges its pages into the next point, so the later points still restore. */
+  deletePoint(id: string, point: string): Promise<void> {
+    return this.json("DELETE", `/v1/sandboxes/${encodeURIComponent(String(id))}/timeline/${encodeURIComponent(String(point))}`);
+  }
+
+  /** Stop the guest and restore a timeline point under the same sandbox id and hostnames. Every later point goes, and open connections end. The current egress policy and credential bindings stay. The guest gets new entropy. */
+  rewindPoint(id: string, point: string): Promise<unknown> {
+    return this.json("POST", `/v1/sandboxes/${encodeURIComponent(String(id))}/timeline/${encodeURIComponent(String(point))}/rewind`);
+  }
+
   /** List the snapshots of this tenant. */
   listSnapshots(): Promise<unknown> {
     return this.json("GET", "/v1/snapshots");
@@ -200,7 +220,7 @@ export class GeneratedClient {
   }
 
   /** Build a template from an OCI image. The build runs after the answer. */
-  createTemplate(body: { name: string; image: string; vcpus: number; memory_mb: number; disk_mb: number; egress_allow: string[]; setup?: string[]; ttl_seconds?: number; start?: string[]; port?: number; services?: Record<string, unknown>[]; seed?: string[]; user?: string; credential?: Record<string, unknown> }): Promise<unknown> {
+  createTemplate(body: { name: string; image: string; vcpus: number; memory_mb: number; disk_mb: number; egress_allow: string[]; setup?: string[]; timeline?: boolean; ttl_seconds?: number; start?: string[]; port?: number; services?: Record<string, unknown>[]; seed?: string[]; user?: string; credential?: Record<string, unknown> }): Promise<unknown> {
     return this.json("POST", "/v1/templates", body);
   }
 

@@ -178,11 +178,11 @@ func (s *sqliteStore) StartTemplateBuild(ctx context.Context, t Template) error 
 	case errors.Is(err, sql.ErrNoRows):
 		if _, err := tx.ExecContext(ctx, `INSERT INTO templates (
 			tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-			egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services, timeline
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			tenantOf(ctx), t.Name, t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
 			encoded, t.State, nullString(t.Error), t.CreatedAt.Unix(), nullIntPtr(t.TTLSeconds),
-			nullString(encodeStart(t.Start)), nullInt(t.StartPort), nullString(t.User), nullString(encodeServices(t.Services)),
+			nullString(encodeStart(t.Start)), nullInt(t.StartPort), nullString(t.User), nullString(encodeServices(t.Services)), boolInt(t.Timeline),
 		); err != nil {
 			return err
 		}
@@ -194,11 +194,11 @@ func (s *sqliteStore) StartTemplateBuild(ctx context.Context, t Template) error 
 		if _, err := tx.ExecContext(ctx, `UPDATE templates SET
 			image_ref = ?, image_digest = ?, vcpus = ?, memory_mb = ?, disk_mb = ?,
 			egress_allow = ?, state = ?, error = NULL, created_at = ?, ttl_seconds = ?,
-			start_cmd = ?, start_port = ?, run_as = ?, services = ?
+			start_cmd = ?, start_port = ?, run_as = ?, services = ?, timeline = ?
 		WHERE tenant_id = ? AND name = ?`,
 			t.ImageRef, t.ImageDigest, t.VCPUs, t.MemoryMB, t.DiskMB,
 			encoded, t.State, t.CreatedAt.Unix(), nullIntPtr(t.TTLSeconds),
-			nullString(encodeStart(t.Start)), nullInt(t.StartPort), nullString(t.User), nullString(encodeServices(t.Services)), tenantOf(ctx), t.Name,
+			nullString(encodeStart(t.Start)), nullInt(t.StartPort), nullString(t.User), nullString(encodeServices(t.Services)), boolInt(t.Timeline), tenantOf(ctx), t.Name,
 		); err != nil {
 			return err
 		}
@@ -245,7 +245,7 @@ func (s *sqliteStore) GetTemplate(ctx context.Context, name string) (Template, e
 	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services, trusts_ca
+		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services, trusts_ca, timeline
 	FROM templates WHERE name = ?`+clause, append([]any{name}, args...)...)
 	t, err := scanTemplate(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -258,7 +258,7 @@ func (s *sqliteStore) ListTemplates(ctx context.Context) ([]Template, error) {
 	clause, args := scope(ctx, "tenant_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services, trusts_ca
+		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services, trusts_ca, timeline
 	FROM templates WHERE 1 = 1`+clause+` ORDER BY name`, args...)
 	if err != nil {
 		return nil, err
@@ -479,7 +479,7 @@ func scanTemplate(row scanner) (Template, error) {
 	)
 	if err := row.Scan(
 		&t.TenantID, &t.Name, &t.ImageRef, &t.ImageDigest, &t.VCPUs, &t.MemoryMB, &t.DiskMB,
-		&egress, &t.State, &message, &created, &ttl, &start, &port, &runAs, &svc, &t.TrustsCA,
+		&egress, &t.State, &message, &created, &ttl, &start, &port, &runAs, &svc, &t.TrustsCA, &t.Timeline,
 	); err != nil {
 		return Template{}, err
 	}
@@ -729,6 +729,9 @@ func (s *sqliteStore) DestroySandbox(ctx context.Context, id string, at time.Tim
 	}
 	// A destroyed row keeps its history and no credential.
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM credential_bindings WHERE sandbox_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM timeline_points WHERE sandbox_id = ?`, id); err != nil {
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE egress_logs SET destroyed_at = COALESCE(destroyed_at, ?)
@@ -1233,7 +1236,8 @@ func (s *sqliteStore) TenantUsage(ctx context.Context, id string) (Usage, error)
 		return Usage{}, err
 	}
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(sum(size_bytes), 0) FROM snapshots WHERE tenant_id = ?`, id).Scan(&u.SnapshotBytes); err != nil {
+		`SELECT (SELECT COALESCE(sum(size_bytes), 0) FROM snapshots WHERE tenant_id = ?)
+			+ (SELECT COALESCE(sum(size_bytes), 0) FROM timeline_points WHERE tenant_id = ?)`, id, id).Scan(&u.SnapshotBytes); err != nil {
 		return Usage{}, err
 	}
 	return u, nil
@@ -1258,7 +1262,7 @@ func scanTenant(row scanner) (Tenant, error) {
 func (s *sqliteStore) ListTemplatesPastTTL(ctx context.Context, now time.Time) ([]Template, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services, trusts_ca
+		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services, trusts_ca, timeline
 	FROM templates
 	WHERE ttl_seconds IS NOT NULL AND created_at + ttl_seconds <= ?
 	ORDER BY tenant_id, name`, now.Unix())
@@ -1608,4 +1612,104 @@ func (s *sqliteStore) SetTemplateTrustsCA(ctx context.Context, name string) erro
 	clause, args := scope(ctx, "tenant_id")
 	_, err := s.db.ExecContext(ctx, `UPDATE templates SET trusts_ca = 1 WHERE name = ?`+clause, append([]any{name}, args...)...)
 	return err
+}
+
+func (s *sqliteStore) CreateTimelinePoint(ctx context.Context, p TimelinePoint) (TimelinePoint, error) {
+	var egress any
+	if p.EgressAllow != nil {
+		encoded, err := json.Marshal(p.EgressAllow)
+		if err != nil {
+			return TimelinePoint{}, err
+		}
+		egress = string(encoded)
+	}
+	clause, args := scope(ctx, "tenant_id")
+	row := s.db.QueryRowContext(ctx, `INSERT INTO timeline_points (
+		id, sandbox_id, tenant_id, seq, label, kind, size_bytes, merged, secret_bearing, egress_allow, created_at
+	) SELECT ?, id, tenant_id,
+		(SELECT COALESCE(max(seq), 0) + 1 FROM timeline_points WHERE sandbox_id = ?),
+		?, ?, ?, ?, ?, ?, ?
+	FROM sandboxes WHERE id = ?`+clause+` RETURNING seq`,
+		append([]any{p.ID, p.SandboxID, p.Label, p.Kind, p.SizeBytes, p.Merged, boolInt(p.SecretBearing), egress, p.CreatedAt.Unix(), p.SandboxID}, args...)...)
+	if err := row.Scan(&p.Seq); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return TimelinePoint{}, ErrNotFound
+		}
+		return TimelinePoint{}, err
+	}
+	return p, nil
+}
+
+func (s *sqliteStore) ListTimelinePoints(ctx context.Context, sandboxID string) ([]TimelinePoint, error) {
+	clause, args := scope(ctx, "tenant_id")
+	rows, err := s.db.QueryContext(ctx, `SELECT id, sandbox_id, seq, label, kind, size_bytes, merged, secret_bearing, egress_allow, created_at
+		FROM timeline_points WHERE sandbox_id = ?`+clause+` ORDER BY seq`, append([]any{sandboxID}, args...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []TimelinePoint{}
+	for rows.Next() {
+		var (
+			p       TimelinePoint
+			egress  sql.NullString
+			created int64
+		)
+		if err := rows.Scan(&p.ID, &p.SandboxID, &p.Seq, &p.Label, &p.Kind, &p.SizeBytes, &p.Merged, &p.SecretBearing, &egress, &created); err != nil {
+			return nil, err
+		}
+		if egress.Valid {
+			if err := json.Unmarshal([]byte(egress.String), &p.EgressAllow); err != nil {
+				return nil, fmt.Errorf("store: point %s: egress_allow: %w", p.ID, err)
+			}
+		}
+		p.CreatedAt = time.Unix(created, 0).UTC()
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) UpdateTimelinePoint(ctx context.Context, p TimelinePoint) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE timeline_points SET kind = ?, size_bytes = ?, merged = ? WHERE id = ?`,
+		p.Kind, p.SizeBytes, p.Merged, p.ID)
+	return err
+}
+
+func (s *sqliteStore) ReplaceTimelinePoint(ctx context.Context, removeID string, keep TimelinePoint) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM timeline_points WHERE id = ?`, removeID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE timeline_points SET kind = ?, size_bytes = ?, merged = ? WHERE id = ?`,
+		keep.Kind, keep.SizeBytes, keep.Merged, keep.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *sqliteStore) DeleteTimelinePoints(ctx context.Context, ids []string) error {
+	for _, id := range ids {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM timeline_points WHERE id = ?`, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *sqliteStore) SetTimelineDiffOK(ctx context.Context, sandboxID string, ok bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sandboxes SET timeline_diff_ok = ? WHERE id = ?`, boolInt(ok), sandboxID)
+	return err
+}
+
+func (s *sqliteStore) TimelineDiffOK(ctx context.Context, sandboxID string) (bool, error) {
+	var ok bool
+	err := s.db.QueryRowContext(ctx, `SELECT timeline_diff_ok FROM sandboxes WHERE id = ?`, sandboxID).Scan(&ok)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return ok, err
 }

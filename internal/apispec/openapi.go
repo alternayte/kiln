@@ -205,12 +205,17 @@ func schemas() map[string]any {
 			"vcpus": num, "memory_mb": num, "disk_mb": num, "ttl_seconds": num, "user": str,
 			"start": map[string]any{"type": "array", "items": str}, "port": num,
 			"egress_allow":   map[string]any{"type": "array", "items": str},
-			"snapshot_bytes": num, "sandboxes": num, "created_at": str,
+			"snapshot_bytes": num, "sandboxes": num, "created_at": str, "timeline": map[string]any{"type": "boolean"},
 			"services": map[string]any{"type": "array", "items": object(map[string]any{"name": str, "image": str, "port": num})},
 		}),
 		"TemplateState": object(map[string]any{"name": str, "state": str}),
 		"TemplateList":  list("Template"),
 		"Sandbox":       sandbox,
+		"TimelinePoint": object(map[string]any{
+			"id": str, "label": str, "kind": str, "bytes": num, "merged": num, "created_at": str,
+			"secret_bearing": map[string]any{"type": "boolean"},
+		}),
+		"TimelinePointList": object(map[string]any{"points": list("TimelinePoint")}),
 		"EgressLog": object(map[string]any{
 			"dropped": num,
 			"records": map[string]any{"type": "array", "items": object(map[string]any{

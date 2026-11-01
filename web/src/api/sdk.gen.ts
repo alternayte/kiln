@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, CreateTemplateData, CreateTemplateErrors, CreateTemplateResponses, CreateViewerData, CreateViewerErrors, CreateViewerResponses, DeleteRegistryData, DeleteRegistryErrors, DeleteRegistryResponses, DeleteSandboxData, DeleteSandboxErrors, DeleteSandboxResponses, DeleteSnapshotData, DeleteSnapshotErrors, DeleteSnapshotResponses, DeleteTemplateData, DeleteTemplateErrors, DeleteTemplateResponses, DeleteViewerData, DeleteViewerErrors, DeleteViewerResponses, EgressLogData, EgressLogErrors, EgressLogResponses, EgressRequestsData, EgressRequestsErrors, EgressRequestsResponses, EventsData, EventsErrors, EventsResponse, EventsResponses, ExecData, ExecErrors, ExecResponses, ForkData, ForkErrors, ForkResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, GetSnapshotData, GetSnapshotErrors, GetSnapshotResponses, GetTemplateData, GetTemplateErrors, GetTemplateResponses, HealthData, HealthErrors, HealthResponses, ListRegistriesData, ListRegistriesErrors, ListRegistriesResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, ListSnapshotsData, ListSnapshotsErrors, ListSnapshotsResponses, ListTemplatesData, ListTemplatesErrors, ListTemplatesResponses, ListViewersData, ListViewersErrors, ListViewersResponses, LogsData, LogsErrors, LogsResponses, PublishData, PublishErrors, PublishResponses, PutRegistryData, PutRegistryErrors, PutRegistryResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadProcessData, ReadProcessErrors, ReadProcessResponses, RestoreData, RestoreErrors, RestoreResponses, RetireData, RetireErrors, RetireResponses, SetCredentialsData, SetCredentialsErrors, SetCredentialsResponses, SetEgressData, SetEgressErrors, SetEgressResponses, SignalProcessData, SignalProcessErrors, SignalProcessResponses, SnapshotData, SnapshotErrors, SnapshotResponses, StartProcessData, StartProcessErrors, StartProcessResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
+import type { CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, CreateTemplateData, CreateTemplateErrors, CreateTemplateResponses, CreateViewerData, CreateViewerErrors, CreateViewerResponses, DeletePointData, DeletePointErrors, DeletePointResponses, DeleteRegistryData, DeleteRegistryErrors, DeleteRegistryResponses, DeleteSandboxData, DeleteSandboxErrors, DeleteSandboxResponses, DeleteSnapshotData, DeleteSnapshotErrors, DeleteSnapshotResponses, DeleteTemplateData, DeleteTemplateErrors, DeleteTemplateResponses, DeleteViewerData, DeleteViewerErrors, DeleteViewerResponses, EgressLogData, EgressLogErrors, EgressLogResponses, EgressRequestsData, EgressRequestsErrors, EgressRequestsResponses, EventsData, EventsErrors, EventsResponse, EventsResponses, ExecData, ExecErrors, ExecResponses, ForkData, ForkErrors, ForkResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, GetSnapshotData, GetSnapshotErrors, GetSnapshotResponses, GetTemplateData, GetTemplateErrors, GetTemplateResponses, HealthData, HealthErrors, HealthResponses, ListPointsData, ListPointsErrors, ListPointsResponses, ListRegistriesData, ListRegistriesErrors, ListRegistriesResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, ListSnapshotsData, ListSnapshotsErrors, ListSnapshotsResponses, ListTemplatesData, ListTemplatesErrors, ListTemplatesResponses, ListViewersData, ListViewersErrors, ListViewersResponses, LogsData, LogsErrors, LogsResponses, MarkPointData, MarkPointErrors, MarkPointResponses, PublishData, PublishErrors, PublishResponses, PutRegistryData, PutRegistryErrors, PutRegistryResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadProcessData, ReadProcessErrors, ReadProcessResponses, RestoreData, RestoreErrors, RestoreResponses, RetireData, RetireErrors, RetireResponses, RewindPointData, RewindPointErrors, RewindPointResponses, SetCredentialsData, SetCredentialsErrors, SetCredentialsResponses, SetEgressData, SetEgressErrors, SetEgressResponses, SignalProcessData, SignalProcessErrors, SignalProcessResponses, SnapshotData, SnapshotErrors, SnapshotResponses, StartProcessData, StartProcessErrors, StartProcessResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -273,6 +273,46 @@ export const snapshot = <ThrowOnError extends boolean = false>(options: Options<
         'Content-Type': 'application/json',
         ...options.headers
     }
+});
+
+/**
+ * List the timeline points of one sandbox, oldest first, with id, label, time and bytes. merged counts the older points the limit folded into a point.
+ */
+export const listPoints = <ThrowOnError extends boolean = false>(options: Options<ListPointsData, ThrowOnError>) => (options.client ?? client).get<ListPointsResponses, ListPointsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
+    url: '/v1/sandboxes/{id}/timeline',
+    ...options
+});
+
+/**
+ * Mark a timeline point: memory, processes and disk, held as a diff against the point before it. The guest pauses for the write. The template needs timeline: true, or this answers conflict, as a sandbox that observes egress does. A sandbox holds at most 32 points, and their bytes stay under twice the guest memory plus the disk size. At either limit Kiln merges the two oldest points.
+ */
+export const markPoint = <ThrowOnError extends boolean = false>(options: Options<MarkPointData, ThrowOnError>) => (options.client ?? client).post<MarkPointResponses, MarkPointErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
+    url: '/v1/sandboxes/{id}/timeline',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Remove one timeline point. Kiln merges its pages into the next point, so the later points still restore.
+ */
+export const deletePoint = <ThrowOnError extends boolean = false>(options: Options<DeletePointData, ThrowOnError>) => (options.client ?? client).delete<DeletePointResponses, DeletePointErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
+    url: '/v1/sandboxes/{id}/timeline/{point}',
+    ...options
+});
+
+/**
+ * Stop the guest and restore a timeline point under the same sandbox id and hostnames. Every later point goes, and open connections end. The current egress policy and credential bindings stay. The guest gets new entropy.
+ */
+export const rewindPoint = <ThrowOnError extends boolean = false>(options: Options<RewindPointData, ThrowOnError>) => (options.client ?? client).post<RewindPointResponses, RewindPointErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
+    url: '/v1/sandboxes/{id}/timeline/{point}/rewind',
+    ...options
 });
 
 /**

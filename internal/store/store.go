@@ -80,6 +80,9 @@ type Template struct {
 	TrustsCA bool
 	// User is who everything a caller asks for runs as. Empty is root.
 	User string
+	// Timeline makes each sandbox of this template track dirty pages, so it can
+	// take timeline points.
+	Timeline bool
 }
 
 // Registry is one tenant's credential for one image registry. The token is
@@ -229,6 +232,30 @@ type Snapshot struct {
 	EgressAllow []string
 }
 
+// A timeline point holds all of memory or only the pages changed since the
+// point before it.
+const (
+	PointFull = "full"
+	PointDiff = "diff"
+)
+
+// TimelinePoint is one marked state of one sandbox. Seq orders the chain.
+type TimelinePoint struct {
+	ID        string
+	SandboxID string
+	Seq       int64
+	Label     string
+	Kind      string
+	SizeBytes int64
+	// Merged counts the older points the cap folded into this one.
+	Merged        int
+	SecretBearing bool
+	// EgressAllow is the policy in force at the point. Nil means the template
+	// policy applied.
+	EgressAllow []string
+	CreatedAt   time.Time
+}
+
 // Published is one hostname a sandbox port is served on.
 type Published struct {
 	SandboxID string
@@ -332,6 +359,22 @@ type Store interface {
 	DeleteSnapshot(ctx context.Context, id string) error
 	// CountRestoredChildren counts live sandboxes restored from one snapshot.
 	CountRestoredChildren(ctx context.Context, snapshotID string) (int, error)
+
+	// CreateTimelinePoint adds a point after the newest one and sets its Seq.
+	CreateTimelinePoint(ctx context.Context, p TimelinePoint) (TimelinePoint, error)
+	// ListTimelinePoints returns the chain of one sandbox, oldest first.
+	ListTimelinePoints(ctx context.Context, sandboxID string) ([]TimelinePoint, error)
+	// UpdateTimelinePoint stores the kind, size and merge count of one point.
+	UpdateTimelinePoint(ctx context.Context, p TimelinePoint) error
+	// ReplaceTimelinePoint removes one point and stores the point that took its
+	// pages, in one transaction.
+	ReplaceTimelinePoint(ctx context.Context, removeID string, keep TimelinePoint) error
+	// DeleteTimelinePoints removes the named points.
+	DeleteTimelinePoints(ctx context.Context, ids []string) error
+	// SetTimelineDiffOK records whether the next point of a sandbox can be a diff.
+	SetTimelineDiffOK(ctx context.Context, sandboxID string, ok bool) error
+	// TimelineDiffOK reads that record.
+	TimelineDiffOK(ctx context.Context, sandboxID string) (bool, error)
 
 	// PublishSandbox inserts one preview. A subdomain another row already
 	// holds is ErrConflict, and the caller draws a new one.

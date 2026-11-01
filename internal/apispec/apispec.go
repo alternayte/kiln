@@ -110,6 +110,8 @@ func Operations() []Operation {
 				{Name: "setup", Type: "array", Items: "string", Doc: "Commands that run once while the template builds."},
 				{Name: "egress_allow", Type: "array", Items: "string", Required: true,
 					Doc: "Hostnames a sandbox may reach. *.example.com matches every subdomain and not example.com. An empty list allows no egress."},
+				{Name: "timeline", Type: "boolean",
+					Doc: "Let each sandbox of this template take timeline points. Dirty page tracking adds a cost to guest writes, so only a template that uses it pays."},
 				{Name: "ttl_seconds", Type: "integer",
 					Doc: "Seconds until the host deletes this template with its snapshot and its sandboxes. A preview environment sets one, because nothing comes back to delete it."},
 				{Name: "start", Type: "array", Items: "string",
@@ -276,10 +278,41 @@ func Operations() []Operation {
 			Body: []Field{
 				{Name: "count", Type: "integer", Required: true, Doc: "Number of copies."},
 				{Name: "allow_secret_fork", Type: "boolean", Doc: "Allow a fork of a sandbox that holds secrets."},
+				{Name: "point", Type: "string", Doc: "Timeline point to fork from. The sandbox does not change, and a sleeping one stays asleep. The copies start with the egress policy of the point."},
 				{Name: "credentials", Type: "array", Items: "object", Doc: "Credential bindings of each new sandbox, in the form setCredentials takes. A copy starts with none, and a snapshot holds none."},
 				{Name: "metadata", Type: "object", Doc: "Metadata of the new sandboxes. It replaces the metadata of the origin sandbox, which they keep without this field."},
 			},
 			Returns: "SandboxList",
+		},
+		{
+			ID: "markPoint", Command: "timeline mark", Method: "POST", Path: "/v1/sandboxes/{id}/timeline", Status: 201,
+			Summary: "Mark a timeline point: memory, processes and disk, held as a diff against the point before it. The guest pauses for the write. The template needs timeline: true, or this answers conflict, as a sandbox that observes egress does. A sandbox holds at most 32 points, and their bytes stay under twice the guest memory plus the disk size. At either limit Kiln merges the two oldest points.",
+			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
+			Body:    []Field{{Name: "label", Type: "string", Doc: "Name for this point, at most 200 bytes."}},
+			Returns: "TimelinePoint",
+		},
+		{
+			ID: "listPoints", Command: "timeline list", Method: "GET", Path: "/v1/sandboxes/{id}/timeline", Status: 200,
+			Summary: "List the timeline points of one sandbox, oldest first, with id, label, time and bytes. merged counts the older points the limit folded into a point.",
+			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
+			Returns: "TimelinePointList",
+		},
+		{
+			ID: "deletePoint", Command: "timeline delete", Method: "DELETE", Path: "/v1/sandboxes/{id}/timeline/{point}", Status: 204,
+			Summary: "Remove one timeline point. Kiln merges its pages into the next point, so the later points still restore.",
+			Params: []Field{
+				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
+				{Name: "point", Type: "string", Required: true, Doc: "Point id."},
+			},
+		},
+		{
+			ID: "rewindPoint", Command: "timeline rewind", Method: "POST", Path: "/v1/sandboxes/{id}/timeline/{point}/rewind", Status: 200,
+			Summary: "Stop the guest and restore a timeline point under the same sandbox id and hostnames. Every later point goes, and open connections end. The current egress policy and credential bindings stay. The guest gets new entropy.",
+			Params: []Field{
+				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
+				{Name: "point", Type: "string", Required: true, Doc: "Point id."},
+			},
+			Returns: "Sandbox",
 		},
 		{
 			ID: "publish", Command: "sandboxes publish", Method: "POST", Path: "/v1/sandboxes/{id}/publish", Status: 201,

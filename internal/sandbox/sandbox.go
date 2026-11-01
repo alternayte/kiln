@@ -190,10 +190,10 @@ func (r CreateRequest) validate() error {
 // listed snapshot, the image a fork wrote for its children, or a sandbox's
 // own sleep image.
 type image struct {
-	dir        string
-	template   store.Template
-	snapshotID string
-	secret     bool
+	dir           string
+	template      store.Template
+	snapshotID    string
+	secretBearing bool
 	// fromTemplate marks the template's own snapshot, which comes from a
 	// fresh VM. A sleep image and a fork image restore memory that already
 	// holds the running application, so only this one starts it.
@@ -377,6 +377,7 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 		},
 		StatePath:  img.statePath(),
 		UffdSocket: sock,
+		TrackDirty: img.template.Timeline,
 	})
 	if err != nil {
 		return store.Sandbox{}, err
@@ -459,6 +460,9 @@ func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Sna
 	}
 	dir := filepath.Join(m.cfg.Root, "snapshots", snapID)
 	var files runtime.SnapshotFiles
+	if err := m.cfg.Store.SetTimelineDiffOK(ctx, id, false); err != nil {
+		return store.Snapshot{}, err
+	}
 	m.fillPages(id)
 	if stop {
 		if err := m.cfg.Runtime.Pause(ctx, vm); err != nil {
@@ -557,13 +561,17 @@ func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bo
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, err
 	}
+	if err := m.cfg.Store.SetTimelineDiffOK(ctx, id, false); err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, err
+	}
 	m.fillPages(id)
 	files, err := m.cfg.Runtime.SnapshotWithDisk(ctx, vm, dir)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, err
 	}
-	img := image{dir: dir, template: tpl, snapshotID: snapID, secret: row.SecretBearing}
+	img := image{dir: dir, template: tpl, snapshotID: snapID, secretBearing: row.SecretBearing}
 	img.egress = row.EgressAllow
 	if err := m.cfg.Store.CreateSnapshot(ctx, store.Snapshot{
 		ID:              snapID,
@@ -633,12 +641,12 @@ func (m *Manager) RestoreSnapshot(ctx context.Context, snapshotID string, count 
 		return nil, err
 	}
 	img := image{
-		dir:        filepath.Join(m.cfg.Root, "snapshots", snapshotID),
-		template:   tpl,
-		snapshotID: snapshotID,
-		secret:     snap.SecretBearing,
-		egress:     snap.EgressAllow,
-		bindings:   sealed,
+		dir:           filepath.Join(m.cfg.Root, "snapshots", snapshotID),
+		template:      tpl,
+		snapshotID:    snapshotID,
+		secretBearing: snap.SecretBearing,
+		egress:        snap.EgressAllow,
+		bindings:      sealed,
 	}
 	m.touch(ctx, origin)
 	if metadata != nil {
@@ -731,7 +739,7 @@ func (m *Manager) makeCopies(ctx context.Context, img image, base store.Sandbox,
 			LastActiveAt:  now,
 			Metadata:      base.Metadata,
 			CreatedAt:     now,
-			SecretBearing: img.secret,
+			SecretBearing: img.secretBearing,
 			EnvKeys:       base.EnvKeys,
 			EgressAllow:   img.egress,
 		})

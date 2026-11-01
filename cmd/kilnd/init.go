@@ -90,7 +90,8 @@ func cmdInit(args []string) error {
 		}
 	}
 
-	if !firecrackerAtPin(filepath.Join(binDir, "firecracker")) || !fileExists(filepath.Join(binDir, "jailer")) {
+	if !firecrackerAtPin(filepath.Join(binDir, "firecracker")) || !fileExists(filepath.Join(binDir, "jailer")) ||
+		!fileExists(filepath.Join(binDir, "snapshot-editor")) {
 		archive := filepath.Join(root, "firecracker-"+firecrackerVersion+"-"+arch+".tgz")
 		if err := fetch(firecrackerURL, archive, firecrackerSHA256, 0o600); err != nil {
 			return err
@@ -280,7 +281,7 @@ func fileSHA256(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// extractBinaries installs firecracker and jailer from the release tarball.
+// extractBinaries installs firecracker, jailer and snapshot-editor from the release tarball.
 // It matches entry names by prefix, so a version bump needs no code change.
 func extractBinaries(archive, binDir string) error {
 	f, err := os.Open(archive)
@@ -316,6 +317,8 @@ func extractBinaries(archive, binDir string) error {
 			name = "firecracker"
 		case strings.HasPrefix(base, "jailer-v"):
 			name = "jailer"
+		case strings.HasPrefix(base, "snapshot-editor-v"):
+			name = "snapshot-editor"
 		default:
 			continue
 		}
@@ -324,7 +327,7 @@ func extractBinaries(archive, binDir string) error {
 		}
 		found[name] = true
 	}
-	for _, name := range []string{"firecracker", "jailer"} {
+	for _, name := range []string{"firecracker", "jailer", "snapshot-editor"} {
 		if !found[name] {
 			return fmt.Errorf("%s: no %s entry", archive, name)
 		}

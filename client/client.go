@@ -729,3 +729,42 @@ func (c *Client) EgressRequests(ctx context.Context, id string) (EgressRequests,
 	err := c.do(ctx, http.MethodGet, "/v1/sandboxes/"+url.PathEscape(id)+"/egress/requests", nil, &out)
 	return out, err
 }
+
+// TimelinePoint is one marked state of one sandbox.
+type TimelinePoint struct {
+	ID            string    `json:"id"`
+	Label         string    `json:"label,omitempty"`
+	Kind          string    `json:"kind"`
+	Bytes         int64     `json:"bytes"`
+	Merged        int       `json:"merged,omitempty"`
+	SecretBearing bool      `json:"secret_bearing,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// MarkPoint marks a timeline point on one sandbox.
+func (c *Client) MarkPoint(ctx context.Context, id, label string) (TimelinePoint, error) {
+	var out TimelinePoint
+	err := c.do(ctx, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/timeline", map[string]any{"label": label}, &out)
+	return out, err
+}
+
+// Points lists the timeline points of one sandbox, oldest first.
+func (c *Client) Points(ctx context.Context, id string) ([]TimelinePoint, error) {
+	var out struct {
+		Points []TimelinePoint `json:"points"`
+	}
+	err := c.do(ctx, http.MethodGet, "/v1/sandboxes/"+url.PathEscape(id)+"/timeline", nil, &out)
+	return out.Points, err
+}
+
+// DeletePoint removes one timeline point.
+func (c *Client) DeletePoint(ctx context.Context, id, point string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/sandboxes/"+url.PathEscape(id)+"/timeline/"+url.PathEscape(point), nil, nil)
+}
+
+// RewindPoint restores one timeline point under the same sandbox id.
+func (c *Client) RewindPoint(ctx context.Context, id, point string) (Sandbox, error) {
+	var out Sandbox
+	err := c.do(ctx, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/timeline/"+url.PathEscape(point)+"/rewind", nil, &out)
+	return out, err
+}

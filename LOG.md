@@ -653,3 +653,11 @@ the tenant of its template on an operator call; a reconciler failure detaches th
 attachment, so its guard does not restart; a guard restart whose rules fail stops
 that guard; an address family the host cannot route no longer uses a whole dial;
 a call the agent of an old template does not know answers `conflict`.
+
+Done: `docs/specs/sandbox-timeline.md`. `POST /v1/sandboxes/{id}/timeline` marks a
+point on a sandbox of a template with `timeline: true`. The first point is a full
+snapshot and later points are diffs. `GET` lists the chain, `DELETE` merges a point
+into the next one, `rewind` restores a point under the same id and hostnames, and
+`fork` takes `point`. A wake, a snapshot or a fork of the origin resets the dirty
+pages, so the next point after one is a full snapshot. `kilnd init` installs
+`snapshot-editor`. The measured numbers the spec asks for are not recorded yet.

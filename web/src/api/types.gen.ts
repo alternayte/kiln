@@ -172,6 +172,7 @@ export type Template = {
     snapshot_bytes?: number;
     start?: Array<string>;
     state?: string;
+    timeline?: boolean;
     ttl_seconds?: number;
     user?: string;
     vcpus?: number;
@@ -196,6 +197,20 @@ export type Tenant = {
 };
 
 export type TenantList = Array<Tenant>;
+
+export type TimelinePoint = {
+    bytes?: number;
+    created_at?: string;
+    id?: string;
+    kind?: string;
+    label?: string;
+    merged?: number;
+    secret_bearing?: boolean;
+};
+
+export type TimelinePointList = {
+    points?: Array<TimelinePoint>;
+};
 
 export type Viewer = {
     created_at?: string;
@@ -969,6 +984,7 @@ export type ForkData = {
         metadata?: {
             [key: string]: unknown;
         };
+        point?: string;
     };
     path: {
         /**
@@ -1373,6 +1389,200 @@ export type SnapshotResponses = {
 
 export type SnapshotResponse = SnapshotResponses[keyof SnapshotResponses];
 
+export type ListPointsData = {
+    body?: never;
+    path: {
+        /**
+         * Sandbox id.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/v1/sandboxes/{id}/timeline';
+};
+
+export type ListPointsErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
+     */
+    429: Error;
+};
+
+export type ListPointsError = ListPointsErrors[keyof ListPointsErrors];
+
+export type ListPointsResponses = {
+    /**
+     * The call succeeded.
+     */
+    200: TimelinePointList;
+};
+
+export type ListPointsResponse = ListPointsResponses[keyof ListPointsResponses];
+
+export type MarkPointData = {
+    body: {
+        label?: string;
+    };
+    path: {
+        /**
+         * Sandbox id.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/v1/sandboxes/{id}/timeline';
+};
+
+export type MarkPointErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
+     */
+    429: Error;
+};
+
+export type MarkPointError = MarkPointErrors[keyof MarkPointErrors];
+
+export type MarkPointResponses = {
+    /**
+     * The call succeeded.
+     */
+    201: TimelinePoint;
+};
+
+export type MarkPointResponse = MarkPointResponses[keyof MarkPointResponses];
+
+export type DeletePointData = {
+    body?: never;
+    path: {
+        /**
+         * Sandbox id.
+         */
+        id: string;
+        /**
+         * Point id.
+         */
+        point: string;
+    };
+    query?: never;
+    url: '/v1/sandboxes/{id}/timeline/{point}';
+};
+
+export type DeletePointErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
+     */
+    429: Error;
+};
+
+export type DeletePointError = DeletePointErrors[keyof DeletePointErrors];
+
+export type DeletePointResponses = {
+    /**
+     * The call succeeded.
+     */
+    204: void;
+};
+
+export type DeletePointResponse = DeletePointResponses[keyof DeletePointResponses];
+
+export type RewindPointData = {
+    body?: never;
+    path: {
+        /**
+         * Sandbox id.
+         */
+        id: string;
+        /**
+         * Point id.
+         */
+        point: string;
+    };
+    query?: never;
+    url: '/v1/sandboxes/{id}/timeline/{point}/rewind';
+};
+
+export type RewindPointErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
+     */
+    429: Error;
+};
+
+export type RewindPointError = RewindPointErrors[keyof RewindPointErrors];
+
+export type RewindPointResponses = {
+    /**
+     * The call succeeded.
+     */
+    200: Sandbox;
+};
+
+export type RewindPointResponse = RewindPointResponses[keyof RewindPointResponses];
+
 export type ListSnapshotsData = {
     body?: never;
     path?: never;
@@ -1619,6 +1829,7 @@ export type CreateTemplateData = {
         }>;
         setup?: Array<string>;
         start?: Array<string>;
+        timeline?: boolean;
         ttl_seconds?: number;
         user?: string;
         vcpus: number;

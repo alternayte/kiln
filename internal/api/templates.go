@@ -24,6 +24,8 @@ type createTemplateRequest struct {
 	// Services run beside the application, and Seed runs once they are ready.
 	Services []templateServiceRequest `json:"services"`
 	Seed     []string                 `json:"seed"`
+	// Timeline lets each sandbox take timeline points.
+	Timeline bool `json:"timeline"`
 	// Credential pulls the images of this build and goes no further.
 	Credential *templateCredential `json:"credential"`
 }
@@ -64,6 +66,7 @@ type templateResponse struct {
 	User          string    `json:"user,omitempty"`
 	// Services holds each name, image and port, and never the env.
 	Services []store.TemplateService `json:"services,omitempty"`
+	Timeline bool                    `json:"timeline,omitempty"`
 }
 
 func templateJSON(info template.Info) templateResponse {
@@ -82,6 +85,7 @@ func templateJSON(info template.Info) templateResponse {
 		State:         info.State,
 		Error:         info.Error,
 		SnapshotBytes: info.SnapshotBytes,
+		Timeline:      info.Timeline,
 		Sandboxes:     info.Sandboxes,
 		CreatedAt:     info.CreatedAt,
 		TTLSeconds:    info.TTLSeconds,
@@ -120,6 +124,7 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 		StartPort:   req.Port,
 		User:        req.User,
 		Seed:        req.Seed,
+		Timeline:    req.Timeline,
 	}
 	for _, service := range req.Services {
 		build.Services = append(build.Services, template.ServiceRequest{

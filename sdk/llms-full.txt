@@ -336,6 +336,7 @@ Body:
 
 - `count` (integer, required): Number of copies.
 - `allow_secret_fork` (boolean): Allow a fork of a sandbox that holds secrets.
+- `point` (string): Timeline point to fork from. The sandbox does not change, and a sleeping one stays asleep. The copies start with the egress policy of the point.
 - `credentials` (array of object): Credential bindings of each new sandbox, in the form setCredentials takes. A copy starts with none, and a snapshot holds none.
 - `metadata` (object): Metadata of the new sandboxes. It replaces the metadata of the origin sandbox, which they keep without this field.
 
@@ -484,6 +485,68 @@ Path:
 
 Answers 101 with no body.
 
+### listPoints
+
+`GET /v1/sandboxes/{id}/timeline`
+
+`kiln timeline list`
+
+List the timeline points of one sandbox, oldest first, with id, label, time and bytes. merged counts the older points the limit folded into a point.
+
+Path:
+
+- `id` (string): Sandbox id.
+
+Answers 200 with `TimelinePointList`.
+
+### markPoint
+
+`POST /v1/sandboxes/{id}/timeline`
+
+`kiln timeline mark`
+
+Mark a timeline point: memory, processes and disk, held as a diff against the point before it. The guest pauses for the write. The template needs timeline: true, or this answers conflict, as a sandbox that observes egress does. A sandbox holds at most 32 points, and their bytes stay under twice the guest memory plus the disk size. At either limit Kiln merges the two oldest points.
+
+Path:
+
+- `id` (string): Sandbox id.
+
+Body:
+
+- `label` (string): Name for this point, at most 200 bytes.
+
+Answers 201 with `TimelinePoint`.
+
+### deletePoint
+
+`DELETE /v1/sandboxes/{id}/timeline/{point}`
+
+`kiln timeline delete`
+
+Remove one timeline point. Kiln merges its pages into the next point, so the later points still restore.
+
+Path:
+
+- `id` (string): Sandbox id.
+- `point` (string): Point id.
+
+Answers 204 with no body.
+
+### rewindPoint
+
+`POST /v1/sandboxes/{id}/timeline/{point}/rewind`
+
+`kiln timeline rewind`
+
+Stop the guest and restore a timeline point under the same sandbox id and hostnames. Every later point goes, and open connections end. The current egress policy and credential bindings stay. The guest gets new entropy.
+
+Path:
+
+- `id` (string): Sandbox id.
+- `point` (string): Point id.
+
+Answers 200 with `Sandbox`.
+
 ### listSnapshots
 
 `GET /v1/snapshots`
@@ -570,6 +633,7 @@ Body:
 - `disk_mb` (integer, required): Disk of every sandbox from this template.
 - `setup` (array of string): Commands that run once while the template builds.
 - `egress_allow` (array of string, required): Hostnames a sandbox may reach. *.example.com matches every subdomain and not example.com. An empty list allows no egress.
+- `timeline` (boolean): Let each sandbox of this template take timeline points. Dirty page tracking adds a cost to guest writes, so only a template that uses it pays.
 - `ttl_seconds` (integer): Seconds until the host deletes this template with its snapshot and its sandboxes. A preview environment sets one, because nothing comes back to delete it.
 - `start` (array of string): Command that runs the application. Kiln ignores what the image says to run, so a template that serves an application names this. It runs once, when a sandbox restores from this template.
 - `port` (integer): Port the application listens on. Creating a sandbox answers only once the guest accepts a connection there. Required with start. With no start, the application runs the command its image names.

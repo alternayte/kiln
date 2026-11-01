@@ -27,6 +27,8 @@ type copyRequest struct {
 	Metadata        json.RawMessage `json:"metadata"`
 	// Credentials binds each copy. A copy starts with none.
 	Credentials []credentialJSON `json:"credentials"`
+	// Point forks from a timeline point. Restore does not read it.
+	Point string `json:"point"`
 }
 
 // sandboxRef names one copy without repeating the whole sandbox.
@@ -108,7 +110,12 @@ func (s *Server) forkSandbox(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalid, err.Error())
 		return
 	}
-	copies, err := s.Sandboxes.Fork(r.Context(), r.PathValue("id"), req.Count, req.AllowSecretFork, metadata, credentialInputs(req.Credentials))
+	var copies []store.Sandbox
+	if req.Point != "" {
+		copies, err = s.Sandboxes.ForkPoint(r.Context(), r.PathValue("id"), req.Point, req.Count, req.AllowSecretFork, metadata, credentialInputs(req.Credentials))
+	} else {
+		copies, err = s.Sandboxes.Fork(r.Context(), r.PathValue("id"), req.Count, req.AllowSecretFork, metadata, credentialInputs(req.Credentials))
+	}
 	if err != nil {
 		s.writeErr(w, err)
 		return

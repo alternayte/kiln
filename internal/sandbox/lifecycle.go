@@ -267,6 +267,10 @@ func (m *Manager) sleepLocked(ctx context.Context, id string) error {
 		return err
 	}
 	dir := filepath.Join(runtime.SandboxDir(m.cfg.Root, id), "sleep")
+	// A woken VM counts dirty pages from the sleep image, not from a point.
+	if err := m.cfg.Store.SetTimelineDiffOK(ctx, id, false); err != nil {
+		return err
+	}
 	m.fillPages(id)
 	if err := m.cfg.Runtime.Pause(ctx, vm); err != nil {
 		return err

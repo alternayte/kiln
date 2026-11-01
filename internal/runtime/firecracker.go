@@ -36,6 +36,9 @@ type Firecracker struct {
 	root        string
 	firecracker string
 	jailer      string
+	// snapshotEditor merges diff snapshots. Only a timeline runs it, so a host
+	// without it still starts.
+	snapshotEditor string
 }
 
 // New returns the Firecracker runtime. Config paths default to the Kiln root.
@@ -54,7 +57,10 @@ func New(cfg Config) (*Firecracker, error) {
 			return nil, fmt.Errorf("runtime: %w", err)
 		}
 	}
-	return &Firecracker{root: cfg.Root, firecracker: cfg.Firecracker, jailer: cfg.Jailer}, nil
+	return &Firecracker{
+		root: cfg.Root, firecracker: cfg.Firecracker, jailer: cfg.Jailer,
+		snapshotEditor: filepath.Join(cfg.Root, "bin", "snapshot-editor"),
+	}, nil
 }
 
 // VM is one running microVM.
@@ -137,7 +143,7 @@ func (f *Firecracker) loadSnapshot(ctx context.Context, spec RestoreSpec, vm *VM
 		"snapshot_path":     "/snapshots/state",
 		"mem_backend":       map[string]any{"backend_path": "/run/uffd.sock", "backend_type": "Uffd"},
 		"resume_vm":         false,
-		"track_dirty_pages": false,
+		"track_dirty_pages": spec.TrackDirty,
 	}
 	if spec.TAPName != "" {
 		load["network_overrides"] = []map[string]string{
@@ -274,13 +280,17 @@ func (f *Firecracker) Snapshot(ctx context.Context, vm *VM, dir string) (Snapsho
 // VM into dir. The VM stays paused. Firecracker cannot abandon the write, so
 // the caller's cancel does not apply, only a deadline from the memory size.
 func (f *Firecracker) SnapshotPaused(ctx context.Context, vm *VM, dir string) (SnapshotFiles, error) {
+	return f.snapshotPaused(ctx, vm, dir, "Full")
+}
+
+func (f *Firecracker) snapshotPaused(ctx context.Context, vm *VM, dir, kind string) (SnapshotFiles, error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), snapshotTimeout(vm.MemoryMiB))
 	defer cancel()
 	out := SnapshotFiles{}
 	err := vm.api.put(ctx, "/snapshot/create", map[string]any{
 		"snapshot_path": "/snapshots/state",
 		"mem_file_path": "/snapshots/mem",
-		"snapshot_type": "Full",
+		"snapshot_type": kind,
 	})
 	if err == nil {
 		err = os.MkdirAll(dir, 0o750)
@@ -310,6 +320,34 @@ func (f *Firecracker) SnapshotWithDisk(ctx context.Context, vm *VM, dir string) 
 		err = resumeErr
 	}
 	return files, err
+}
+
+// SnapshotDiff pauses a VM, writes the pages changed since its last snapshot and
+// its state into dir with a copy of its writable drive, and resumes it. The
+// memory file is sparse: a hole is a page that did not change.
+func (f *Firecracker) SnapshotDiff(ctx context.Context, vm *VM, dir string) (SnapshotFiles, error) {
+	if err := f.Pause(ctx, vm); err != nil {
+		return SnapshotFiles{}, err
+	}
+	files, err := f.snapshotPaused(ctx, vm, dir, "Diff")
+	if err == nil {
+		files.OverlayPath, err = f.CopyOverlay(ctx, vm, dir)
+	}
+	if resumeErr := f.Resume(ctx, vm); err == nil {
+		err = resumeErr
+	}
+	return files, err
+}
+
+// RebaseMemory writes the pages a diff holds over a memory file. The memory
+// file can be a diff too, and its holes stay holes where the diff has one.
+func (f *Firecracker) RebaseMemory(ctx context.Context, memory, diff string) error {
+	out, err := exec.CommandContext(ctx, f.snapshotEditor, "edit-memory", "rebase",
+		"--memory-path", memory, "--diff-path", diff).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("runtime: snapshot-editor: %w: %s", err, out)
+	}
+	return nil
 }
 
 // CopyOverlay copies the writable drive of a paused VM into dir.

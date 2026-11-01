@@ -458,6 +458,9 @@
           "state": {
             "type": "string"
           },
+          "timeline": {
+            "type": "boolean"
+          },
           "ttl_seconds": {
             "type": "integer"
           },
@@ -521,6 +524,43 @@
           "$ref": "#/components/schemas/Tenant"
         },
         "type": "array"
+      },
+      "TimelinePoint": {
+        "properties": {
+          "bytes": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "merged": {
+            "type": "integer"
+          },
+          "secret_bearing": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "TimelinePointList": {
+        "properties": {
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/TimelinePoint"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
       },
       "Viewer": {
         "properties": {
@@ -1958,6 +1998,9 @@
                   "metadata": {
                     "additionalProperties": true,
                     "type": "object"
+                  },
+                  "point": {
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -2687,6 +2730,346 @@
         "summary": "Snapshot a sandbox. With stop the sandbox sleeps and keeps its hostnames."
       }
     },
+    "/v1/sandboxes/{id}/timeline": {
+      "get": {
+        "operationId": "listPoints",
+        "parameters": [
+          {
+            "description": "Sandbox id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelinePointList"
+                }
+              }
+            },
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised."
+          }
+        },
+        "summary": "List the timeline points of one sandbox, oldest first, with id, label, time and bytes. merged counts the older points the limit folded into a point."
+      },
+      "post": {
+        "operationId": "markPoint",
+        "parameters": [
+          {
+            "description": "Sandbox id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelinePoint"
+                }
+              }
+            },
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised."
+          }
+        },
+        "summary": "Mark a timeline point: memory, processes and disk, held as a diff against the point before it. The guest pauses for the write. The template needs timeline: true, or this answers conflict, as a sandbox that observes egress does. A sandbox holds at most 32 points, and their bytes stay under twice the guest memory plus the disk size. At either limit Kiln merges the two oldest points."
+      }
+    },
+    "/v1/sandboxes/{id}/timeline/{point}": {
+      "delete": {
+        "operationId": "deletePoint",
+        "parameters": [
+          {
+            "description": "Sandbox id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Point id.",
+            "in": "path",
+            "name": "point",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised."
+          }
+        },
+        "summary": "Remove one timeline point. Kiln merges its pages into the next point, so the later points still restore."
+      }
+    },
+    "/v1/sandboxes/{id}/timeline/{point}/rewind": {
+      "post": {
+        "operationId": "rewindPoint",
+        "parameters": [
+          {
+            "description": "Sandbox id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Point id.",
+            "in": "path",
+            "name": "point",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sandbox"
+                }
+              }
+            },
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised."
+          }
+        },
+        "summary": "Stop the guest and restore a timeline point under the same sandbox id and hostnames. Every later point goes, and open connections end. The current egress policy and credential bindings stay. The guest gets new entropy."
+      }
+    },
     "/v1/snapshots": {
       "get": {
         "operationId": "listSnapshots",
@@ -3136,6 +3519,9 @@
                       "type": "string"
                     },
                     "type": "array"
+                  },
+                  "timeline": {
+                    "type": "boolean"
                   },
                   "ttl_seconds": {
                     "type": "integer"

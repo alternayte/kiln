@@ -46,6 +46,9 @@ type RestoreSpec struct {
 	// UffdSocket is the host path of the UFFD socket that the page fault
 	// source listens on.
 	UffdSocket string
+	// TrackDirty makes the VM record changed pages, so it can write a diff
+	// snapshot. It adds a cost to every write the guest makes.
+	TrackDirty bool
 }
 
 // AdoptSpec names a microVM whose process survived a daemon restart. The
@@ -81,6 +84,9 @@ type Runtime interface {
 	// SnapshotPaused writes a full snapshot of an already paused VM and leaves
 	// it paused. The caller resumes or stops it.
 	SnapshotPaused(ctx context.Context, vm *VM, dir string) (SnapshotFiles, error)
+	// SnapshotDiff is SnapshotWithDisk with only the pages changed since the
+	// last snapshot of this VM. The VM must have been restored with TrackDirty.
+	SnapshotDiff(ctx context.Context, vm *VM, dir string) (SnapshotFiles, error)
 	Stop(ctx context.Context, vm *VM) error
 	// StopPaused kills an already paused VM without resuming it. The saved
 	// memory image stays the truth of the sandbox.

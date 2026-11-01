@@ -132,11 +132,12 @@ class GeneratedClient:
         }.items() if v is not None}
         return self._json("POST", f"/v1/sandboxes/{id}/exec", body)
 
-    def fork(self, id: str, count: int, allow_secret_fork: Optional[bool] = None, credentials: Optional[list[dict[str, Any]]] = None, metadata: Optional[dict[str, Any]] = None) -> Any:
+    def fork(self, id: str, count: int, allow_secret_fork: Optional[bool] = None, point: Optional[str] = None, credentials: Optional[list[dict[str, Any]]] = None, metadata: Optional[dict[str, Any]] = None) -> Any:
         """Snapshot a running sandbox and restore several copies of it."""
         body = {k: v for k, v in {
             "count": count,
             "allow_secret_fork": allow_secret_fork,
+            "point": point,
             "credentials": credentials,
             "metadata": metadata,
         }.items() if v is not None}
@@ -189,6 +190,25 @@ class GeneratedClient:
         }.items() if v is not None}
         return self._json("POST", f"/v1/sandboxes/{id}/snapshot", body)
 
+    def list_points(self, id: str) -> Any:
+        """List the timeline points of one sandbox, oldest first, with id, label, time and bytes. merged counts the older points the limit folded into a point."""
+        return self._json("GET", f"/v1/sandboxes/{id}/timeline")
+
+    def mark_point(self, id: str, label: Optional[str] = None) -> Any:
+        """Mark a timeline point: memory, processes and disk, held as a diff against the point before it. The guest pauses for the write. The template needs timeline: true, or this answers conflict, as a sandbox that observes egress does. A sandbox holds at most 32 points, and their bytes stay under twice the guest memory plus the disk size. At either limit Kiln merges the two oldest points."""
+        body = {k: v for k, v in {
+            "label": label,
+        }.items() if v is not None}
+        return self._json("POST", f"/v1/sandboxes/{id}/timeline", body)
+
+    def delete_point(self, id: str, point: str) -> Any:
+        """Remove one timeline point. Kiln merges its pages into the next point, so the later points still restore."""
+        return self._json("DELETE", f"/v1/sandboxes/{id}/timeline/{point}")
+
+    def rewind_point(self, id: str, point: str) -> Any:
+        """Stop the guest and restore a timeline point under the same sandbox id and hostnames. Every later point goes, and open connections end. The current egress policy and credential bindings stay. The guest gets new entropy."""
+        return self._json("POST", f"/v1/sandboxes/{id}/timeline/{point}/rewind")
+
     def list_snapshots(self) -> Any:
         """List the snapshots of this tenant."""
         return self._json("GET", "/v1/snapshots")
@@ -215,7 +235,7 @@ class GeneratedClient:
         """List the templates of this tenant."""
         return self._json("GET", "/v1/templates")
 
-    def create_template(self, name: str, image: str, vcpus: int, memory_mb: int, disk_mb: int, egress_allow: list[str], setup: Optional[list[str]] = None, ttl_seconds: Optional[int] = None, start: Optional[list[str]] = None, port: Optional[int] = None, services: Optional[list[dict[str, Any]]] = None, seed: Optional[list[str]] = None, user: Optional[str] = None, credential: Optional[dict[str, Any]] = None) -> Any:
+    def create_template(self, name: str, image: str, vcpus: int, memory_mb: int, disk_mb: int, egress_allow: list[str], setup: Optional[list[str]] = None, timeline: Optional[bool] = None, ttl_seconds: Optional[int] = None, start: Optional[list[str]] = None, port: Optional[int] = None, services: Optional[list[dict[str, Any]]] = None, seed: Optional[list[str]] = None, user: Optional[str] = None, credential: Optional[dict[str, Any]] = None) -> Any:
         """Build a template from an OCI image. The build runs after the answer."""
         body = {k: v for k, v in {
             "name": name,
@@ -225,6 +245,7 @@ class GeneratedClient:
             "disk_mb": disk_mb,
             "setup": setup,
             "egress_allow": egress_allow,
+            "timeline": timeline,
             "ttl_seconds": ttl_seconds,
             "start": start,
             "port": port,

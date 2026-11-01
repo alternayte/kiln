@@ -52,6 +52,8 @@ type BuildRequest struct {
 	// Services run beside the application, and Seed runs once they are ready.
 	Services []ServiceRequest
 	Seed     []string
+	// Timeline lets each sandbox of this template take timeline points.
+	Timeline bool
 	// Credential pulls the images of this build. It lives in memory for the
 	// build and reaches no row, no manifest, no event and no log.
 	Credential *Credential
@@ -294,6 +296,7 @@ func (m *Manager) Start(ctx context.Context, req BuildRequest) error {
 		Start:       req.Start,
 		StartPort:   req.StartPort,
 		User:        req.User,
+		Timeline:    req.Timeline,
 	}
 	for _, service := range req.Services {
 		row.Services = append(row.Services, store.TemplateService{Name: service.Name, Image: service.Image, Port: service.Port})

@@ -185,12 +185,19 @@ sudo rm /usr/local/bin/kiln
 sudo rm /etc/systemd/system/kiln.service
 sudo install -m644 infra/kilnd.service /etc/systemd/system/kilnd.service
 sudo systemctl daemon-reload
+sudo KILN_ROOT=/var/lib/kiln kilnd init
 sudo systemctl enable --now kilnd
 ```
 
-A drop-in under `/etc/systemd/system/kiln.service.d`, such as the data disk one
-below, moves to `kilnd.service.d`. Install the `kiln` client over the removed
-path if you use it on the host.
+`kilnd init` installs the guest agent of this release and keeps `config.json`.
+A template with services does not build on the older agent.
+
+A host that runs the binary from `/var/lib/kiln/bin/kiln` removes that path in
+place of `/usr/local/bin/kiln`. A drop-in under
+`/etc/systemd/system/kiln.service.d`, such as the data disk one below, moves to
+`kilnd.service.d`. A unit that names `kiln.service`, such as `Before=` in a
+firewall unit, changes to `kilnd.service`. Install the `kiln` client over the
+removed path if you use it on the host.
 
 ## Put the data on a large disk
 

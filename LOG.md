@@ -668,3 +668,26 @@ seconds. Each sandbox now has its own conntrack zone, and the `sec` gate asks fr
 one source port in two sandboxes. This is not proven to be the cause of the DNS
 failure in release run 41352301252. The resolver now logs an upstream SERVFAIL, so
 the next occurrence names that layer or rules it out.
+
+Measured: `sandbox-timeline` on the Dedibox, v0.13.2, one run, a 4096 MB guest with
+2 vCPUs and 3 GB held in a process.
+
+| Step | Call | Guest paused | Point bytes |
+|---|---|---|---|
+| Full point | 35.4 s | 9.5 s, after 25.9 s of page fill | 4298 MB |
+| Diff, nothing changed on purpose | 0.38 s | 0.33 s | 4 MB |
+| Diff after 64 MiB | 1.08 s | 1.00 s | 76 MB |
+| Diff after 256 MiB | 3.15 s | 3.09 s | 278 MB |
+| Diff after 1024 MiB | 10.16 s | 10.10 s | 1085 MB |
+
+Pause is the logged write time, which holds the guest paused and copies the drive.
+A rewind that merged a chain of 5 points took 64.7 s, and a second rewind that read
+the kept result took 1.28 s. A fork of one copy from that point took 0.74 s.
+
+Dirty page tracking under load: three passes that write each page of 2048 MiB, from
+Python, with no tracking and with it. Warm passes took 5.54 s and 5.63 s with no
+tracking, and 6.16 s and 5.90 s with it, about 8% on this one pattern. The first
+pass took about 50 s either way, because it faults in the memory.
+
+Not recorded: how long Factoree model calls last, from its `AgentSession` rows, so
+the model-wait parking condition has no answer yet.

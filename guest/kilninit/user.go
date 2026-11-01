@@ -137,6 +137,9 @@ func processEnv(extra map[string]string) []string {
 		merged["USER"] = u.name
 		merged["LOGNAME"] = u.name
 	}
+	for k, v := range trustEnv() {
+		merged[k] = v
+	}
 	for k, v := range injectedSecrets() {
 		merged[k] = v
 	}

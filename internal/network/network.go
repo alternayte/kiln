@@ -44,6 +44,8 @@ type Manager struct {
 	// OnRecords takes the egress records of one sandbox, and the count of
 	// records that had no room. A sandbox manager sets it before any attach.
 	OnRecords func(id string, records []Record, dropped int64)
+	// OnRequests takes the request log of one sandbox's bound hosts.
+	OnRequests func(id string, rows []RequestRecord, dropped int64)
 	// OnGuardExit takes the id of a sandbox whose guard died.
 	OnGuardExit func(id string)
 
@@ -53,6 +55,9 @@ type Manager struct {
 	held        map[string]map[recordKey]*Record
 	heldCount   int
 	heldDropped map[string]int64
+
+	heldRequests        map[string][]RequestRecord
+	heldRequestsDropped map[string]int64
 }
 
 // New returns the network manager. binary is the kilnd executable that runs
@@ -61,6 +66,7 @@ func New(binary, root string) *Manager {
 	return &Manager{
 		binary: binary, root: root,
 		shorts: map[string]string{}, held: map[string]map[recordKey]*Record{}, heldDropped: map[string]int64{},
+		heldRequests: map[string][]RequestRecord{}, heldRequestsDropped: map[string]int64{},
 	}
 }
 
@@ -668,6 +674,23 @@ func (a *Attachment) SetEgress(ctx context.Context, policy Policy) error {
 		}
 	}
 	return a.cutGuestConnections(ctx)
+}
+
+// SetBindings replaces the credentials of one live attachment. A rotation takes
+// effect on the next request. A host that gains or loses its binding ends only
+// its own connections, because a client's open connection to it would otherwise
+// stay undecrypted or keep a stale proxy.
+func (a *Attachment) SetBindings(ctx context.Context, policy Policy, cutHosts []string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.done {
+		return fmt.Errorf("network: sandbox %s has no live link", a.ID)
+	}
+	a.policy = policy
+	if a.guard == nil {
+		return nil
+	}
+	return a.guard.apply(ctx, policy, false, cutHosts...)
 }
 
 // cutGuestConnections deletes the conntrack entries of the flows the guest

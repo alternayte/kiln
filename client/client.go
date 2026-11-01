@@ -243,6 +243,8 @@ type Sandbox struct {
 	EgressAllow  []string        `json:"egress_allow"`
 	// EgressObserve lets any TLS name through and records it.
 	EgressObserve bool `json:"egress_observe"`
+	// Credentials names each binding, with no value.
+	Credentials []Credential `json:"credentials"`
 }
 
 // SetEgress replaces the egress policy of one sandbox. It returns after the
@@ -681,4 +683,49 @@ func escapePath(path string) string {
 		parts[i] = url.PathEscape(part)
 	}
 	return strings.Join(parts, "/")
+}
+
+// Credential is one credential binding. Value is sent and never returned.
+type Credential struct {
+	Name    string   `json:"name"`
+	Host    string   `json:"host"`
+	Header  string   `json:"header"`
+	Value   string   `json:"value,omitempty"`
+	Path    string   `json:"path,omitempty"`
+	Methods []string `json:"methods,omitempty"`
+}
+
+// SetCredentials replaces the credential bindings of one sandbox.
+func (c *Client) SetCredentials(ctx context.Context, id string, credentials []Credential) (Sandbox, error) {
+	if credentials == nil {
+		credentials = []Credential{}
+	}
+	var out Sandbox
+	err := c.do(ctx, http.MethodPut, "/v1/sandboxes/"+url.PathEscape(id)+"/credentials",
+		map[string]any{"credentials": credentials}, &out)
+	return out, err
+}
+
+// EgressRequest is one request a guard read on a bound host.
+type EgressRequest struct {
+	Method  string    `json:"method"`
+	Host    string    `json:"host"`
+	Path    string    `json:"path"`
+	Status  int       `json:"status"`
+	Binding string    `json:"binding"`
+	At      time.Time `json:"at"`
+}
+
+// EgressRequests is the request log of one sandbox. Dropped counts the requests
+// that had no room.
+type EgressRequests struct {
+	Requests []EgressRequest `json:"requests"`
+	Dropped  int64           `json:"dropped"`
+}
+
+// EgressRequests reads the request log of one sandbox.
+func (c *Client) EgressRequests(ctx context.Context, id string) (EgressRequests, error) {
+	var out EgressRequests
+	err := c.do(ctx, http.MethodGet, "/v1/sandboxes/"+url.PathEscape(id)+"/egress/requests", nil, &out)
+	return out, err
 }

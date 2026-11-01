@@ -193,6 +193,7 @@ type egressRecordJSON struct {
 	BytesIn   int64     `json:"bytes_in"`
 	FirstSeen time.Time `json:"first_seen"`
 	LastSeen  time.Time `json:"last_seen"`
+	Binding   string    `json:"binding,omitempty"`
 }
 
 // egressLogJSON is the whole egress record. Dropped counts what had no room.
@@ -213,6 +214,7 @@ func (s *Server) getEgressLog(w http.ResponseWriter, r *http.Request) {
 		out.Records = append(out.Records, egressRecordJSON{
 			Host: row.Host, Port: row.Port, Decision: row.Decision, Count: row.Count,
 			BytesOut: row.BytesOut, BytesIn: row.BytesIn, FirstSeen: row.FirstSeen, LastSeen: row.LastSeen,
+			Binding: row.Binding,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

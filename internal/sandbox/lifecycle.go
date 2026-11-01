@@ -490,11 +490,19 @@ func (m *Manager) Forget(id string) {
 	unlock := m.lockOps(id)
 	defer unlock()
 	m.mu.Lock()
+	att := m.attrs[id]
 	delete(m.vms, id)
 	delete(m.pages, id)
 	delete(m.attrs, id)
 	m.mu.Unlock()
 	m.stopTimer(id)
+	// The caller removes the host resources next. A live attachment would see
+	// its guard die and start another one.
+	if att != nil {
+		if err := att.Detach(context.Background()); err != nil {
+			log.Printf("sandbox: %s: detach: %v", id, err)
+		}
+	}
 }
 
 // watchStart records how the application ended. Nothing restarts it: a crash

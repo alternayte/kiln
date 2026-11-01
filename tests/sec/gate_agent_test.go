@@ -432,7 +432,7 @@ func checkEgressChange(t *testing.T, ctx context.Context, st store.Store, sbx *s
 	}
 	assertReach(t, ctx, sbx, sb.ID, "pypi.org", false)
 	assertReach(t, ctx, sbx, sb.ID, "www.python.org", true)
-	copies, err := sbx.Fork(ctx, sb.ID, 1, false, map[string]any{"run": "fork"})
+	copies, err := sbx.Fork(ctx, sb.ID, 1, false, map[string]any{"run": "fork"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,7 +444,7 @@ func checkEgressChange(t *testing.T, ctx context.Context, st store.Store, sbx *s
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored, err := sbx.RestoreSnapshot(ctx, snap.ID, 1, false, map[string]any{"run": "restore"})
+	restored, err := sbx.RestoreSnapshot(ctx, snap.ID, 1, false, map[string]any{"run": "restore"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,9 @@
           "records": {
             "items": {
               "properties": {
+                "binding": {
+                  "type": "string"
+                },
                 "bytes_in": {
                   "type": "integer"
                 },
@@ -31,6 +34,40 @@
                   "type": "string"
                 },
                 "port": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "EgressRequests": {
+        "properties": {
+          "dropped": {
+            "type": "integer"
+          },
+          "requests": {
+            "items": {
+              "properties": {
+                "at": {
+                  "type": "string"
+                },
+                "binding": {
+                  "type": "string"
+                },
+                "host": {
+                  "type": "string"
+                },
+                "method": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "status": {
                   "type": "integer"
                 }
               },
@@ -220,6 +257,32 @@
         "properties": {
           "created_at": {
             "type": "string"
+          },
+          "credentials": {
+            "items": {
+              "properties": {
+                "header": {
+                  "type": "string"
+                },
+                "host": {
+                  "type": "string"
+                },
+                "methods": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
           },
           "egress_allow": {
             "items": {
@@ -499,7 +562,7 @@
   "info": {
     "description": "Isolated Linux microVMs on one host, created from OCI images and forked into copies.",
     "title": "Kiln",
-    "version": "0.11.0"
+    "version": "0.12.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1215,6 +1278,106 @@
         "summary": "Read one sandbox with its published ports."
       }
     },
+    "/v1/sandboxes/{id}/credentials": {
+      "put": {
+        "operationId": "setCredentials",
+        "parameters": [
+          {
+            "description": "Sandbox id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "credentials": {
+                    "items": {
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "credentials"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sandbox"
+                }
+              }
+            },
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised."
+          }
+        },
+        "summary": "Replace the credential bindings of one sandbox. A request from the sandbox to a bound host leaves with the header that Kiln sets, and the value never enters the guest. A value is never returned. A rotation is a new call. A sleeping sandbox takes the change without a wake. A template built before credential bindings answers conflict and must be rebuilt."
+      }
+    },
     "/v1/sandboxes/{id}/egress": {
       "put": {
         "operationId": "setEgress",
@@ -1392,6 +1555,85 @@
           }
         },
         "summary": "Read the egress record: one row per destination, with its decision, counts and bytes. A row names a host, or an address when the connection named no host. A fork or a restore starts with no rows. The rows stay for 7 days after a destroy."
+      }
+    },
+    "/v1/sandboxes/{id}/egress/requests": {
+      "get": {
+        "operationId": "egressRequests",
+        "parameters": [
+          {
+            "description": "Sandbox id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EgressRequests"
+                }
+              }
+            },
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised."
+          }
+        },
+        "summary": "Read the request log of the bound hosts of one sandbox: method, host, path with no query string, status, binding and time. It holds no header value and no body. It holds at most 10000 rows, and dropped counts the rest. The rows stay for 7 days after a destroy."
       }
     },
     "/v1/sandboxes/{id}/exec": {
@@ -1706,6 +1948,12 @@
                   },
                   "count": {
                     "type": "integer"
+                  },
+                  "credentials": {
+                    "items": {
+                      "type": "object"
+                    },
+                    "type": "array"
                   },
                   "metadata": {
                     "additionalProperties": true,
@@ -2680,6 +2928,12 @@
                   },
                   "count": {
                     "type": "integer"
+                  },
+                  "credentials": {
+                    "items": {
+                      "type": "object"
+                    },
+                    "type": "array"
                   },
                   "metadata": {
                     "additionalProperties": true,

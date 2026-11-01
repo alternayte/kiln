@@ -54,6 +54,8 @@ const (
 	OpStartOutput = "start_output"
 	// OpCheckUser asks whether the image holds a user, while a template builds.
 	OpCheckUser = "check_user"
+	// OpTrustCA adds a certificate to the trust store while a template builds.
+	OpTrustCA = "trust_ca"
 	// The detached process operations.
 	OpProcessStart  = "process_start"
 	OpProcessRead   = "process_read"
@@ -121,6 +123,8 @@ const (
 
 // Request is one host request.
 type Request struct {
+	// CertPEM is the certificate of OpTrustCA.
+	CertPEM        string            `json:"cert_pem,omitempty"`
 	Op             string            `json:"op"`
 	Cmd            []string          `json:"cmd,omitempty"`
 	Cwd            string            `json:"cwd,omitempty"`

@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"strconv"
@@ -55,25 +56,51 @@ type guardServer struct {
 	// generation rises with each cut, so a connection that dialled under an
 	// older policy does not start.
 	generation int64
+	// bound holds each host this guard terminates TLS on.
+	bound map[string]*boundHost
 
 	connsMu sync.Mutex
-	conns   map[net.Conn]struct{}
+	// conns names the host of each open connection, once the guard knows it.
+	conns map[net.Conn]string
 
 	recordsMu sync.Mutex
 	records   map[recordKey]*Record
 	dropped   int64
 	inflight  map[int64]sentBatch
 	batch     int64
+	requests  []RequestRecord
+	// requestsDropped counts the requests that had no room.
+	requestsDropped int64
 
 	clientMu sync.Mutex
 	client   net.Conn
 	enc      *json.Encoder
+
+	// resolve and dial reach a destination. A test replaces them.
+	resolve func(context.Context, string) ([]netip.Addr, error)
+	dial    func(context.Context, []netip.Addr) (net.Conn, error)
+	// upstreamTLS verifies a bound host. Nil uses this host's system roots.
+	upstreamTLS   *tls.Config
+	proxyListener *connListener
+	transport     *http.Transport
+}
+
+// newGuardServer holds no policy, so it refuses everything at first.
+func newGuardServer(cancel context.CancelFunc) *guardServer {
+	return &guardServer{
+		cancel: cancel, allow: map[string]bool{}, bound: map[string]*boundHost{},
+		conns: map[net.Conn]string{}, records: map[recordKey]*Record{}, inflight: map[int64]sentBatch{},
+		resolve: resolvePublic, dial: dialAny,
+	}
 }
 
 // sentBatch is a report no daemon has acknowledged.
 type sentBatch struct {
 	records []Record
 	dropped int64
+
+	requests        []RequestRecord
+	requestsDropped int64
 }
 
 // ServeGuard runs until the context ends or the daemon sends a stop. It holds
@@ -81,10 +108,8 @@ type sentBatch struct {
 func ServeGuard(ctx context.Context, cfg GuardConfig) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	g := &guardServer{
-		cancel: cancel, allow: map[string]bool{},
-		conns: map[net.Conn]struct{}{}, records: map[recordKey]*Record{}, inflight: map[int64]sentBatch{},
-	}
+	g := newGuardServer(cancel)
+	g.startProxy(ctx)
 	lc := net.ListenConfig{Control: bindControl(cfg.Tap, cfg.Mark)}
 	ln, err := lc.Listen(ctx, "tcp4", net.JoinHostPort(runtime.GuestGateway, "0"))
 	if err != nil {
@@ -202,16 +227,26 @@ func (g *guardServer) setPolicy(cmd guardCommand) {
 	}
 	g.policyMu.Lock()
 	g.allow, g.observe = names, cmd.Observe
+	g.bound = parseBound(cmd.Bindings, cmd.Leaves)
 	if cmd.Cut {
 		g.generation++
 	}
 	g.policyMu.Unlock()
-	if cmd.Cut {
+	cutHosts := make(map[string]bool, len(cmd.CutHosts))
+	for _, host := range cmd.CutHosts {
+		cutHosts[host] = true
+	}
+	if cmd.Cut || len(cutHosts) > 0 {
 		g.connsMu.Lock()
-		for conn := range g.conns {
-			conn.Close()
+		for conn, host := range g.conns {
+			if cmd.Cut || cutHosts[host] {
+				conn.Close()
+			}
 		}
 		g.connsMu.Unlock()
+		if g.transport != nil {
+			g.transport.CloseIdleConnections()
+		}
 	}
 }
 
@@ -230,7 +265,7 @@ func (g *guardServer) decide(name string) (decision string, generation int64) {
 
 // track adds a connection to what a cut closes, unless the policy moved past
 // the generation it passed under.
-func (g *guardServer) track(generation int64, conns ...net.Conn) bool {
+func (g *guardServer) track(generation int64, host string, conns ...net.Conn) bool {
 	g.policyMu.RLock()
 	defer g.policyMu.RUnlock()
 	if generation != g.generation {
@@ -239,7 +274,7 @@ func (g *guardServer) track(generation int64, conns ...net.Conn) bool {
 	g.connsMu.Lock()
 	defer g.connsMu.Unlock()
 	for _, conn := range conns {
-		g.conns[conn] = struct{}{}
+		g.conns[conn] = host
 	}
 	return true
 }
@@ -259,7 +294,7 @@ func (g *guardServer) handle(ctx context.Context, conn net.Conn) {
 	g.connsMu.Lock()
 	full := len(g.conns) >= 2*maxGuardConns
 	if !full {
-		g.conns[conn] = struct{}{}
+		g.conns[conn] = ""
 	}
 	g.connsMu.Unlock()
 	if full {
@@ -283,7 +318,7 @@ func (g *guardServer) handle(ctx context.Context, conn net.Conn) {
 	}
 	lookup, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
-	addrs, err := resolvePublic(lookup, name)
+	addrs, err := g.resolve(lookup, name)
 	if errors.Is(err, errNonPublic) {
 		log.Printf("egress guard: %s: %v", name, err)
 		g.refuse(conn, name, originalPort)
@@ -293,13 +328,24 @@ func (g *guardServer) handle(ctx context.Context, conn net.Conn) {
 		log.Printf("egress guard: %s: %v", name, err)
 		return
 	}
-	upstream, err := dialAny(lookup, addrs)
+	// A bound host is terminated here, and the guard dials for each request. The
+	// lookup above already refused a name that left the public network.
+	if decision == DecisionAllowed && g.boundFor(name) != nil {
+		if !g.track(generation, name, conn) {
+			return
+		}
+		now := time.Now().Unix()
+		g.record(Record{Host: name, Port: originalPort, Decision: decision, Count: 1, First: now, Last: now})
+		g.serveBound(ctx, conn, name, decision, hello)
+		return
+	}
+	upstream, err := g.dial(lookup, addrs)
 	if err != nil {
 		log.Printf("egress guard: %s: %v", name, err)
 		return
 	}
 	defer upstream.Close()
-	if !g.track(generation, upstream) {
+	if !g.track(generation, name, conn, upstream) {
 		return
 	}
 	defer g.untrack(upstream)
@@ -366,7 +412,7 @@ func (g *guardServer) pipe(dst, src net.Conn, count func(int64)) {
 func (g *guardServer) record(rec Record) {
 	g.recordsMu.Lock()
 	defer g.recordsMu.Unlock()
-	if !merge(g.records, recordKey{rec.Host, rec.Port, rec.Decision}, rec, maxGuardRecords-len(g.records)) {
+	if !merge(g.records, recordKey{rec.Host, rec.Port, rec.Decision, rec.Binding}, rec, maxGuardRecords-len(g.records)) {
 		if rec.Count > 0 {
 			g.dropped += rec.Count
 		}
@@ -376,11 +422,17 @@ func (g *guardServer) record(rec Record) {
 // restore puts one unacknowledged report back. The caller holds recordsMu.
 func (g *guardServer) restore(sent sentBatch) {
 	for _, rec := range sent.records {
-		if !merge(g.records, recordKey{rec.Host, rec.Port, rec.Decision}, rec, maxGuardRecords-len(g.records)) {
+		if !merge(g.records, recordKey{rec.Host, rec.Port, rec.Decision, rec.Binding}, rec, maxGuardRecords-len(g.records)) {
 			g.dropped += max(rec.Count, 1)
 		}
 	}
 	g.dropped += sent.dropped
+	if room := maxGuardRequests - len(g.requests); len(sent.requests) > room {
+		g.requestsDropped += int64(len(sent.requests) - room)
+		sent.requests = sent.requests[:room]
+	}
+	g.requests = append(g.requests, sent.requests...)
+	g.requestsDropped += sent.requestsDropped
 }
 
 func (g *guardServer) flushLoop(ctx context.Context) {
@@ -404,11 +456,12 @@ func (g *guardServer) flush() {
 		return
 	}
 	g.recordsMu.Lock()
-	if len(g.records) == 0 && g.dropped == 0 {
+	if len(g.records) == 0 && g.dropped == 0 && len(g.requests) == 0 && g.requestsDropped == 0 {
 		g.recordsMu.Unlock()
 		return
 	}
-	sent := sentBatch{records: make([]Record, 0, len(g.records)), dropped: g.dropped}
+	sent := sentBatch{records: make([]Record, 0, len(g.records)), dropped: g.dropped, requests: g.requests, requestsDropped: g.requestsDropped}
+	g.requests, g.requestsDropped = nil, 0
 	for _, rec := range g.records {
 		sent.records = append(sent.records, *rec)
 	}
@@ -418,7 +471,10 @@ func (g *guardServer) flush() {
 	g.inflight[batch] = sent
 	g.recordsMu.Unlock()
 	_ = g.client.SetWriteDeadline(time.Now().Add(guardAnswer))
-	if err := g.enc.Encode(guardReport{Batch: batch, Records: sent.records, Dropped: sent.dropped}); err != nil {
+	if err := g.enc.Encode(guardReport{
+		Batch: batch, Records: sent.records, Dropped: sent.dropped,
+		Requests: sent.requests, RequestsDropped: sent.requestsDropped,
+	}); err != nil {
 		log.Printf("egress guard: report: %v", err)
 	}
 }
@@ -532,10 +588,11 @@ func resolvePublic(ctx context.Context, name string) ([]netip.Addr, error) {
 	return addrs, nil
 }
 
-// dialAny connects to the first address that answers.
+// dialAny connects to the first address that answers. Each address gets a share
+// of the time, so an address family this host cannot route does not use it all.
 func dialAny(ctx context.Context, addrs []netip.Addr) (net.Conn, error) {
 	var last error
-	var d net.Dialer
+	d := net.Dialer{Timeout: dialTimeout / time.Duration(len(addrs))}
 	for _, addr := range addrs {
 		conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(addr.Unmap().String(), strconv.Itoa(originalPort)))
 		if err == nil {

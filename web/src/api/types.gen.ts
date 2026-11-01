@@ -7,6 +7,7 @@ export type ClientOptions = {
 export type EgressLog = {
     dropped?: number;
     records?: Array<{
+        binding?: string;
         bytes_in?: number;
         bytes_out?: number;
         count?: number;
@@ -15,6 +16,18 @@ export type EgressLog = {
         host?: string;
         last_seen?: string;
         port?: number;
+    }>;
+};
+
+export type EgressRequests = {
+    dropped?: number;
+    requests?: Array<{
+        at?: string;
+        binding?: string;
+        host?: string;
+        method?: string;
+        path?: string;
+        status?: number;
     }>;
 };
 
@@ -89,6 +102,13 @@ export type RegistryList = Array<Registry>;
 
 export type Sandbox = {
     created_at?: string;
+    credentials?: Array<{
+        header?: string;
+        host?: string;
+        methods?: Array<string>;
+        name?: string;
+        path?: string;
+    }>;
     egress_allow?: Array<string>;
     egress_observe?: boolean;
     env_keys?: Array<string>;
@@ -595,6 +615,56 @@ export type GetSandboxResponses = {
 
 export type GetSandboxResponse = GetSandboxResponses[keyof GetSandboxResponses];
 
+export type SetCredentialsData = {
+    body: {
+        credentials: Array<{
+            [key: string]: unknown;
+        }>;
+    };
+    path: {
+        /**
+         * Sandbox id.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/v1/sandboxes/{id}/credentials';
+};
+
+export type SetCredentialsErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
+     */
+    429: Error;
+};
+
+export type SetCredentialsError = SetCredentialsErrors[keyof SetCredentialsErrors];
+
+export type SetCredentialsResponses = {
+    /**
+     * The call succeeded.
+     */
+    200: Sandbox;
+};
+
+export type SetCredentialsResponse = SetCredentialsResponses[keyof SetCredentialsResponses];
+
 export type SetEgressData = {
     body: {
         egress_allow?: Array<string>;
@@ -689,6 +759,52 @@ export type EgressLogResponses = {
 };
 
 export type EgressLogResponse = EgressLogResponses[keyof EgressLogResponses];
+
+export type EgressRequestsData = {
+    body?: never;
+    path: {
+        /**
+         * Sandbox id.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/v1/sandboxes/{id}/egress/requests';
+};
+
+export type EgressRequestsErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
+     */
+    429: Error;
+};
+
+export type EgressRequestsError = EgressRequestsErrors[keyof EgressRequestsErrors];
+
+export type EgressRequestsResponses = {
+    /**
+     * The call succeeded.
+     */
+    200: EgressRequests;
+};
+
+export type EgressRequestsResponse = EgressRequestsResponses[keyof EgressRequestsResponses];
 
 export type ExecData = {
     body: {
@@ -847,6 +963,9 @@ export type ForkData = {
     body: {
         allow_secret_fork?: boolean;
         count: number;
+        credentials?: Array<{
+            [key: string]: unknown;
+        }>;
         metadata?: {
             [key: string]: unknown;
         };
@@ -1391,6 +1510,9 @@ export type RestoreData = {
     body: {
         allow_secret_fork?: boolean;
         count: number;
+        credentials?: Array<{
+            [key: string]: unknown;
+        }>;
         metadata?: {
             [key: string]: unknown;
         };

@@ -54,6 +54,8 @@ func serve(conn net.Conn) {
 		runTerminal(conn, &req)
 	case guestproto.OpCheckUser:
 		runCheckUser(conn, &req)
+	case guestproto.OpTrustCA:
+		runTrustCA(conn, &req)
 	case guestproto.OpProcessStart:
 		runProcessStart(conn, &req)
 	case guestproto.OpProcessRead:

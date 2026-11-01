@@ -69,6 +69,8 @@ type sandboxResponse struct {
 	EgressAllow []string `json:"egress_allow"`
 	// EgressObserve lets any TLS name through and records it.
 	EgressObserve bool `json:"egress_observe"`
+	// Credentials names each binding. A value is never returned.
+	Credentials []credentialJSON `json:"credentials"`
 }
 
 type execResponse struct {
@@ -107,6 +109,16 @@ func (s *Server) sandboxJSON(ctx context.Context, sb store.Sandbox) (sandboxResp
 	out.EgressAllow, _ = s.Sandboxes.EgressOf(ctx, sb)
 	if out.EgressAllow == nil {
 		out.EgressAllow = []string{}
+	}
+	bindings, err := s.Sandboxes.Credentials(ctx, sb.ID)
+	if err != nil {
+		return sandboxResponse{}, err
+	}
+	out.Credentials = []credentialJSON{}
+	for _, b := range bindings {
+		out.Credentials = append(out.Credentials, credentialJSON{
+			Name: b.Name, Host: b.Host, Header: b.Header, Path: b.Path, Methods: b.Methods,
+		})
 	}
 	rows, err := s.Sandboxes.Published(ctx, sb.ID)
 	if err != nil {

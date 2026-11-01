@@ -37,6 +37,10 @@ const guardAnswer = 5 * time.Second
 type Policy struct {
 	Allow   []string
 	Observe bool
+	// Bindings and Leaves are the credentials of this sandbox and the certificate
+	// of each host they name.
+	Bindings []Binding
+	Leaves   []Leaf
 }
 
 // Record is a summary of one destination over some period. A later record for
@@ -50,6 +54,8 @@ type Record struct {
 	BytesIn  int64  `json:"bytes_in"`
 	First    int64  `json:"first"`
 	Last     int64  `json:"last"`
+	// Binding names the credential binding of an injected row.
+	Binding string `json:"binding,omitempty"`
 }
 
 // guardCommand is one line from the daemon to a guard.
@@ -58,6 +64,11 @@ type guardCommand struct {
 	Allow   []string `json:"allow,omitempty"`
 	Observe bool     `json:"observe,omitempty"`
 	Cut     bool     `json:"cut,omitempty"`
+	// Bindings and Leaves replace what the guard holds. CutHosts ends each open
+	// connection to a host whose binding appeared or went away.
+	Bindings []Binding `json:"bindings,omitempty"`
+	Leaves   []Leaf    `json:"leaves,omitempty"`
+	CutHosts []string  `json:"cut_hosts,omitempty"`
 	// Batch acknowledges the records of one report.
 	Batch int64 `json:"batch,omitempty"`
 	// Stop asks for the last report and an exit.
@@ -72,6 +83,9 @@ type guardReport struct {
 	Batch   int64    `json:"batch,omitempty"`
 	Records []Record `json:"records,omitempty"`
 	Dropped int64    `json:"dropped,omitempty"`
+	// Requests is the request log of bound hosts since the last report.
+	Requests        []RequestRecord `json:"requests,omitempty"`
+	RequestsDropped int64           `json:"requests_dropped,omitempty"`
 	// Replaced tells a daemon that a newer one took this guard.
 	Replaced bool `json:"replaced,omitempty"`
 }
@@ -105,14 +119,17 @@ func (l *guardLink) send(cmd guardCommand) error {
 // apply sends one policy and returns once the guard holds it. A guard that dies
 // on the way is no failure: egress fails closed and its successor reads the
 // policy from the attachment.
-func (l *guardLink) apply(ctx context.Context, policy Policy, cut bool) error {
+func (l *guardLink) apply(ctx context.Context, policy Policy, cut bool, cutHosts ...string) error {
 	l.seqMu.Lock()
 	l.seq++
 	seq := l.seq
 	done := make(chan struct{})
 	l.waits[seq] = done
 	l.seqMu.Unlock()
-	if err := l.send(guardCommand{Seq: seq, Allow: policy.Allow, Observe: policy.Observe, Cut: cut}); err != nil {
+	if err := l.send(guardCommand{
+		Seq: seq, Allow: policy.Allow, Observe: policy.Observe, Cut: cut,
+		Bindings: policy.Bindings, Leaves: policy.Leaves, CutHosts: cutHosts,
+	}); err != nil {
 		select {
 		case <-l.closed:
 			return nil
@@ -232,6 +249,7 @@ func (a *Attachment) readGuard(link *guardLink, dec *json.Decoder) {
 		}
 		if report.Batch > 0 {
 			a.m.add(a.ID, report.Records, report.Dropped)
+			a.m.addRequests(a.ID, report.Requests, report.RequestsDropped)
 			_ = link.send(guardCommand{Batch: report.Batch})
 		}
 	}
@@ -266,7 +284,10 @@ func (a *Attachment) guardLost(link *guardLink) {
 		ctx, cancel := context.WithTimeout(context.Background(), guardStart+guardAnswer)
 		err := a.startGuard(ctx)
 		if err == nil {
-			err = a.rewriteDNS(ctx)
+			if err = a.rewriteDNS(ctx); err != nil {
+				// The next attempt starts its own guard.
+				a.stopGuard()
+			}
 		}
 		cancel()
 		if err == nil {
@@ -336,7 +357,7 @@ func (m *Manager) add(id string, records []Record, dropped int64) {
 		m.held[id] = held
 	}
 	for _, rec := range records {
-		key := recordKey{rec.Host, rec.Port, rec.Decision}
+		key := recordKey{rec.Host, rec.Port, rec.Decision, rec.Binding}
 		_, known := held[key]
 		if !merge(held, key, rec, reportBatch-m.heldCount) {
 			dropped += max(rec.Count, 1)
@@ -356,6 +377,23 @@ type recordKey struct {
 	host     string
 	port     int
 	decision string
+	binding  string
+}
+
+// addRequests holds the request log of one sandbox until the next write. The
+// bound on the reports of a guard also bounds what is held here for each.
+func (m *Manager) addRequests(id string, rows []RequestRecord, dropped int64) {
+	if len(rows) == 0 && dropped == 0 {
+		return
+	}
+	m.reportMu.Lock()
+	defer m.reportMu.Unlock()
+	if room := reportBatch - len(m.heldRequests[id]); len(rows) > room {
+		dropped += int64(len(rows) - room)
+		rows = rows[:room]
+	}
+	m.heldRequests[id] = append(m.heldRequests[id], rows...)
+	m.heldRequestsDropped[id] += dropped
 }
 
 // merge adds a record to a map that takes room more keys. It reports false when
@@ -396,7 +434,18 @@ func (m *Manager) Flush() {
 	held, dropped := m.held, m.heldDropped
 	m.held, m.heldDropped = map[string]map[recordKey]*Record{}, map[string]int64{}
 	m.heldCount = 0
+	requests, requestsDropped := m.heldRequests, m.heldRequestsDropped
+	m.heldRequests, m.heldRequestsDropped = map[string][]RequestRecord{}, map[string]int64{}
 	m.reportMu.Unlock()
+	if m.OnRequests != nil {
+		for id, rows := range requests {
+			m.OnRequests(id, rows, requestsDropped[id])
+			delete(requestsDropped, id)
+		}
+		for id, n := range requestsDropped {
+			m.OnRequests(id, nil, n)
+		}
+	}
 	if m.OnRecords == nil {
 		return
 	}

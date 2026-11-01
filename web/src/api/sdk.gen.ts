@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, CreateTemplateData, CreateTemplateErrors, CreateTemplateResponses, CreateViewerData, CreateViewerErrors, CreateViewerResponses, DeleteRegistryData, DeleteRegistryErrors, DeleteRegistryResponses, DeleteSandboxData, DeleteSandboxErrors, DeleteSandboxResponses, DeleteSnapshotData, DeleteSnapshotErrors, DeleteSnapshotResponses, DeleteTemplateData, DeleteTemplateErrors, DeleteTemplateResponses, DeleteViewerData, DeleteViewerErrors, DeleteViewerResponses, EgressLogData, EgressLogErrors, EgressLogResponses, EventsData, EventsErrors, EventsResponse, EventsResponses, ExecData, ExecErrors, ExecResponses, ForkData, ForkErrors, ForkResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, GetSnapshotData, GetSnapshotErrors, GetSnapshotResponses, GetTemplateData, GetTemplateErrors, GetTemplateResponses, HealthData, HealthErrors, HealthResponses, ListRegistriesData, ListRegistriesErrors, ListRegistriesResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, ListSnapshotsData, ListSnapshotsErrors, ListSnapshotsResponses, ListTemplatesData, ListTemplatesErrors, ListTemplatesResponses, ListViewersData, ListViewersErrors, ListViewersResponses, LogsData, LogsErrors, LogsResponses, PublishData, PublishErrors, PublishResponses, PutRegistryData, PutRegistryErrors, PutRegistryResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadProcessData, ReadProcessErrors, ReadProcessResponses, RestoreData, RestoreErrors, RestoreResponses, RetireData, RetireErrors, RetireResponses, SetEgressData, SetEgressErrors, SetEgressResponses, SignalProcessData, SignalProcessErrors, SignalProcessResponses, SnapshotData, SnapshotErrors, SnapshotResponses, StartProcessData, StartProcessErrors, StartProcessResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
+import type { CreateSandboxData, CreateSandboxErrors, CreateSandboxResponses, CreateTemplateData, CreateTemplateErrors, CreateTemplateResponses, CreateViewerData, CreateViewerErrors, CreateViewerResponses, DeleteRegistryData, DeleteRegistryErrors, DeleteRegistryResponses, DeleteSandboxData, DeleteSandboxErrors, DeleteSandboxResponses, DeleteSnapshotData, DeleteSnapshotErrors, DeleteSnapshotResponses, DeleteTemplateData, DeleteTemplateErrors, DeleteTemplateResponses, DeleteViewerData, DeleteViewerErrors, DeleteViewerResponses, EgressLogData, EgressLogErrors, EgressLogResponses, EgressRequestsData, EgressRequestsErrors, EgressRequestsResponses, EventsData, EventsErrors, EventsResponse, EventsResponses, ExecData, ExecErrors, ExecResponses, ForkData, ForkErrors, ForkResponses, GetSandboxData, GetSandboxErrors, GetSandboxResponses, GetSnapshotData, GetSnapshotErrors, GetSnapshotResponses, GetTemplateData, GetTemplateErrors, GetTemplateResponses, HealthData, HealthErrors, HealthResponses, ListRegistriesData, ListRegistriesErrors, ListRegistriesResponses, ListSandboxesData, ListSandboxesErrors, ListSandboxesResponses, ListSnapshotsData, ListSnapshotsErrors, ListSnapshotsResponses, ListTemplatesData, ListTemplatesErrors, ListTemplatesResponses, ListViewersData, ListViewersErrors, ListViewersResponses, LogsData, LogsErrors, LogsResponses, PublishData, PublishErrors, PublishResponses, PutRegistryData, PutRegistryErrors, PutRegistryResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadProcessData, ReadProcessErrors, ReadProcessResponses, RestoreData, RestoreErrors, RestoreResponses, RetireData, RetireErrors, RetireResponses, SetCredentialsData, SetCredentialsErrors, SetCredentialsResponses, SetEgressData, SetEgressErrors, SetEgressResponses, SignalProcessData, SignalProcessErrors, SignalProcessResponses, SnapshotData, SnapshotErrors, SnapshotResponses, StartProcessData, StartProcessErrors, StartProcessResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -108,6 +108,19 @@ export const getSandbox = <ThrowOnError extends boolean = false>(options: Option
 });
 
 /**
+ * Replace the credential bindings of one sandbox. A request from the sandbox to a bound host leaves with the header that Kiln sets, and the value never enters the guest. A value is never returned. A rotation is a new call. A sleeping sandbox takes the change without a wake. A template built before credential bindings answers conflict and must be rebuilt.
+ */
+export const setCredentials = <ThrowOnError extends boolean = false>(options: Options<SetCredentialsData, ThrowOnError>) => (options.client ?? client).put<SetCredentialsResponses, SetCredentialsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
+    url: '/v1/sandboxes/{id}/credentials',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * Replace the egress policy of one sandbox. Send egress_allow or observe. The answer comes after the host swaps the policy and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it.
  */
 export const setEgress = <ThrowOnError extends boolean = false>(options: Options<SetEgressData, ThrowOnError>) => (options.client ?? client).put<SetEgressResponses, SetEgressErrors, ThrowOnError>({
@@ -126,6 +139,15 @@ export const setEgress = <ThrowOnError extends boolean = false>(options: Options
 export const egressLog = <ThrowOnError extends boolean = false>(options: Options<EgressLogData, ThrowOnError>) => (options.client ?? client).get<EgressLogResponses, EgressLogErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
     url: '/v1/sandboxes/{id}/egress/log',
+    ...options
+});
+
+/**
+ * Read the request log of the bound hosts of one sandbox: method, host, path with no query string, status, binding and time. It holds no header value and no body. It holds at most 10000 rows, and dropped counts the rest. The rows stay for 7 days after a destroy.
+ */
+export const egressRequests = <ThrowOnError extends boolean = false>(options: Options<EgressRequestsData, ThrowOnError>) => (options.client ?? client).get<EgressRequestsResponses, EgressRequestsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { scheme: 'bearer', type: 'http' }],
+    url: '/v1/sandboxes/{id}/egress/requests',
     ...options
 });
 

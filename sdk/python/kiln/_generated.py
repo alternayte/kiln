@@ -99,6 +99,13 @@ class GeneratedClient:
         """Read one sandbox with its published ports."""
         return self._json("GET", f"/v1/sandboxes/{id}")
 
+    def set_credentials(self, id: str, credentials: list[dict[str, Any]]) -> Any:
+        """Replace the credential bindings of one sandbox. A request from the sandbox to a bound host leaves with the header that Kiln sets, and the value never enters the guest. A value is never returned. A rotation is a new call. A sleeping sandbox takes the change without a wake. A template built before credential bindings answers conflict and must be rebuilt."""
+        body = {k: v for k, v in {
+            "credentials": credentials,
+        }.items() if v is not None}
+        return self._json("PUT", f"/v1/sandboxes/{id}/credentials", body)
+
     def set_egress(self, id: str, egress_allow: Optional[list[str]] = None, observe: Optional[bool] = None) -> Any:
         """Replace the egress policy of one sandbox. Send egress_allow or observe. The answer comes after the host swaps the policy and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it."""
         body = {k: v for k, v in {
@@ -111,6 +118,10 @@ class GeneratedClient:
         """Read the egress record: one row per destination, with its decision, counts and bytes. A row names a host, or an address when the connection named no host. A fork or a restore starts with no rows. The rows stay for 7 days after a destroy."""
         return self._json("GET", f"/v1/sandboxes/{id}/egress/log")
 
+    def egress_requests(self, id: str) -> Any:
+        """Read the request log of the bound hosts of one sandbox: method, host, path with no query string, status, binding and time. It holds no header value and no body. It holds at most 10000 rows, and dropped counts the rest. The rows stay for 7 days after a destroy."""
+        return self._json("GET", f"/v1/sandboxes/{id}/egress/requests")
+
     def exec(self, id: str, cmd: list[str], cwd: Optional[str] = None, env: Optional[dict[str, Any]] = None, timeout_seconds: Optional[int] = None) -> Any:
         """Run a command inside a sandbox. Accept text/event-stream to read the output as it runs."""
         body = {k: v for k, v in {
@@ -121,11 +132,12 @@ class GeneratedClient:
         }.items() if v is not None}
         return self._json("POST", f"/v1/sandboxes/{id}/exec", body)
 
-    def fork(self, id: str, count: int, allow_secret_fork: Optional[bool] = None, metadata: Optional[dict[str, Any]] = None) -> Any:
+    def fork(self, id: str, count: int, allow_secret_fork: Optional[bool] = None, credentials: Optional[list[dict[str, Any]]] = None, metadata: Optional[dict[str, Any]] = None) -> Any:
         """Snapshot a running sandbox and restore several copies of it."""
         body = {k: v for k, v in {
             "count": count,
             "allow_secret_fork": allow_secret_fork,
+            "credentials": credentials,
             "metadata": metadata,
         }.items() if v is not None}
         return self._json("POST", f"/v1/sandboxes/{id}/fork", body)
@@ -189,11 +201,12 @@ class GeneratedClient:
         """Read one snapshot."""
         return self._json("GET", f"/v1/snapshots/{id}")
 
-    def restore(self, id: str, count: int, allow_secret_fork: Optional[bool] = None, metadata: Optional[dict[str, Any]] = None) -> Any:
+    def restore(self, id: str, count: int, allow_secret_fork: Optional[bool] = None, credentials: Optional[list[dict[str, Any]]] = None, metadata: Optional[dict[str, Any]] = None) -> Any:
         """Restore a snapshot into one or more new sandboxes."""
         body = {k: v for k, v in {
             "count": count,
             "allow_secret_fork": allow_secret_fork,
+            "credentials": credentials,
             "metadata": metadata,
         }.items() if v is not None}
         return self._json("POST", f"/v1/snapshots/{id}/restore", body)

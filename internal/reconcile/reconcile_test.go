@@ -1,6 +1,11 @@
 package reconcile
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/alternayte/kiln/internal/store"
+)
 
 func TestParseTapsReadsKilnDevicesOnly(t *testing.T) {
 	out := `1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
@@ -83,5 +88,20 @@ func TestRouteDevice(t *testing.T) {
 	}
 	if got := routeDevice("blackhole 172.31.0.0/30"); got != "" {
 		t.Fatalf("routeDevice without a device = %q", got)
+	}
+}
+
+// A failed row with nothing left on the host is not swept again at each start.
+func TestSweepOrphansSkipsAFailedRowWithNoHostResource(t *testing.T) {
+	r := &Reconciler{Root: t.TempDir()}
+	rows := []store.Sandbox{{ID: "failedrow", State: store.SandboxFailed}}
+	host := &hostState{
+		firecracker: map[string]int{}, snapfault: map[string]int{}, guards: map[string]int{},
+		children: map[string][]int{}, dirs: map[string]bool{}, cgroups: map[string]bool{},
+	}
+	var report Report
+	r.sweepOrphans(context.Background(), rows, map[string]store.Sandbox{}, map[string]bool{}, host, &report)
+	if len(report.Swept) != 0 {
+		t.Fatalf("Swept = %v, want none", report.Swept)
 	}
 }

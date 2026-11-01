@@ -36,6 +36,16 @@ The preview sleeps after its idle deadline and wakes on the next request, so an 
 
 Egress is deny by default. A preview that reaches a database or an API needs those hostnames in `egress_allow`, and nothing else is reachable from inside it.
 
+## Credentials
+
+`PUT /v1/sandboxes/{id}/credentials` binds a credential to one exact host. A request from the sandbox to that host leaves with the header that Kiln sets, and the value never enters the guest, so the sandbox forks and restores with no `allow_secret_fork`. A fork or a restore starts with no binding and takes its own `credentials` list.
+
+- The guard terminates TLS only on a bound host. A client with a pinned certificate or a fixed root list fails there, and that caller keeps `env`.
+- A provider-scoped key is stronger than a `path` prefix, because provider routing can differ from the prefix.
+- Kiln does not scrub responses, because a scrub misses an encoded value. Do not bind a host that echoes headers.
+- A CLI that refuses to start without a key takes a placeholder in `env`, such as `OPENAI_API_KEY=placeholder`. The guard replaces the header on the wire.
+- A template built before this feature answers `conflict`. Build it again.
+
 ## The kiln command
 
 `kiln` is the client for Linux and macOS. It reads `KILN_URL` and `KILN_API_KEY`, and has one command for each operation below. `--json` prints JSON, and `kiln init` writes the Kiln skill and the MCP entry into a repository.

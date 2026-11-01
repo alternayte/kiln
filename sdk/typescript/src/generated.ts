@@ -102,6 +102,11 @@ export class GeneratedClient {
     return this.json("GET", `/v1/sandboxes/${encodeURIComponent(String(id))}`);
   }
 
+  /** Replace the credential bindings of one sandbox. A request from the sandbox to a bound host leaves with the header that Kiln sets, and the value never enters the guest. A value is never returned. A rotation is a new call. A sleeping sandbox takes the change without a wake. A template built before credential bindings answers conflict and must be rebuilt. */
+  setCredentials(id: string, body: { credentials: Record<string, unknown>[] }): Promise<unknown> {
+    return this.json("PUT", `/v1/sandboxes/${encodeURIComponent(String(id))}/credentials`, body);
+  }
+
   /** Replace the egress policy of one sandbox. Send egress_allow or observe. The answer comes after the host swaps the policy and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it. */
   setEgress(id: string, body: { egress_allow?: string[]; observe?: boolean }): Promise<unknown> {
     return this.json("PUT", `/v1/sandboxes/${encodeURIComponent(String(id))}/egress`, body);
@@ -112,13 +117,18 @@ export class GeneratedClient {
     return this.json("GET", `/v1/sandboxes/${encodeURIComponent(String(id))}/egress/log`);
   }
 
+  /** Read the request log of the bound hosts of one sandbox: method, host, path with no query string, status, binding and time. It holds no header value and no body. It holds at most 10000 rows, and dropped counts the rest. The rows stay for 7 days after a destroy. */
+  egressRequests(id: string): Promise<unknown> {
+    return this.json("GET", `/v1/sandboxes/${encodeURIComponent(String(id))}/egress/requests`);
+  }
+
   /** Run a command inside a sandbox. Accept text/event-stream to read the output as it runs. */
   exec(id: string, body: { cmd: string[]; cwd?: string; env?: Record<string, unknown>; timeout_seconds?: number }): Promise<unknown> {
     return this.json("POST", `/v1/sandboxes/${encodeURIComponent(String(id))}/exec`, body);
   }
 
   /** Snapshot a running sandbox and restore several copies of it. */
-  fork(id: string, body: { count: number; allow_secret_fork?: boolean; metadata?: Record<string, unknown> }): Promise<unknown> {
+  fork(id: string, body: { count: number; allow_secret_fork?: boolean; credentials?: Record<string, unknown>[]; metadata?: Record<string, unknown> }): Promise<unknown> {
     return this.json("POST", `/v1/sandboxes/${encodeURIComponent(String(id))}/fork`, body);
   }
 
@@ -180,7 +190,7 @@ export class GeneratedClient {
   }
 
   /** Restore a snapshot into one or more new sandboxes. */
-  restore(id: string, body: { count: number; allow_secret_fork?: boolean; metadata?: Record<string, unknown> }): Promise<unknown> {
+  restore(id: string, body: { count: number; allow_secret_fork?: boolean; credentials?: Record<string, unknown>[]; metadata?: Record<string, unknown> }): Promise<unknown> {
     return this.json("POST", `/v1/snapshots/${encodeURIComponent(String(id))}/restore`, body);
   }
 

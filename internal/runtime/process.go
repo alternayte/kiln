@@ -65,6 +65,13 @@ func (vm *VM) CheckUser(ctx context.Context, user string) error {
 	return err
 }
 
+// TrustCA adds a certificate to the trust store of the root, while a template
+// builds.
+func (vm *VM) TrustCA(ctx context.Context, certPEM string) error {
+	_, _, _, err := vm.ask(ctx, guestproto.Request{Op: guestproto.OpTrustCA, CertPEM: certPEM})
+	return err
+}
+
 // StartProcess starts a detached process and returns its id once it runs.
 func (vm *VM) StartProcess(ctx context.Context, req ProcessRequest) (string, error) {
 	res, _, _, err := vm.ask(ctx, guestproto.Request{

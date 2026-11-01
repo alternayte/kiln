@@ -25,6 +25,8 @@ type copyRequest struct {
 	Count           int             `json:"count"`
 	AllowSecretFork bool            `json:"allow_secret_fork"`
 	Metadata        json.RawMessage `json:"metadata"`
+	// Credentials binds each copy. A copy starts with none.
+	Credentials []credentialJSON `json:"credentials"`
 }
 
 // sandboxRef names one copy without repeating the whole sandbox.
@@ -106,7 +108,7 @@ func (s *Server) forkSandbox(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalid, err.Error())
 		return
 	}
-	copies, err := s.Sandboxes.Fork(r.Context(), r.PathValue("id"), req.Count, req.AllowSecretFork, metadata)
+	copies, err := s.Sandboxes.Fork(r.Context(), r.PathValue("id"), req.Count, req.AllowSecretFork, metadata, credentialInputs(req.Credentials))
 	if err != nil {
 		s.writeErr(w, err)
 		return
@@ -163,7 +165,7 @@ func (s *Server) restoreSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalid, err.Error())
 		return
 	}
-	copies, err := s.Sandboxes.RestoreSnapshot(r.Context(), r.PathValue("id"), req.Count, req.AllowSecretFork, metadata)
+	copies, err := s.Sandboxes.RestoreSnapshot(r.Context(), r.PathValue("id"), req.Count, req.AllowSecretFork, metadata, credentialInputs(req.Credentials))
 	if err != nil {
 		s.writeErr(w, err)
 		return

@@ -172,7 +172,8 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// carriesCredential reports whether a template build carries a registry login,
+// carriesCredential reports whether a call carries a registry login or a
+// credential binding,
 // and leaves the body for the host to read. The value goes no further than
 // this function.
 func carriesCredential(r *http.Request) bool {
@@ -188,12 +189,14 @@ func carriesCredential(r *http.Request) bool {
 		return false
 	}
 	var probe struct {
-		Credential json.RawMessage `json:"credential"`
+		Credential  json.RawMessage `json:"credential"`
+		Credentials json.RawMessage `json:"credentials"`
 	}
 	if json.Unmarshal(body, &probe) != nil {
 		return false
 	}
-	return len(probe.Credential) > 0 && string(probe.Credential) != "null"
+	held := func(raw json.RawMessage) bool { return len(raw) > 0 && string(raw) != "null" }
+	return held(probe.Credential) || held(probe.Credentials)
 }
 
 // egressModeOf names the egress mode a policy call asks for, and leaves the body

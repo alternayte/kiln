@@ -69,6 +69,9 @@ type Config struct {
 	// Zone is the preview zone. Published hostnames sit under it. An empty
 	// zone refuses every publish.
 	Zone string
+	// SealKey seals each credential binding and each tenant CA key before they
+	// reach the database.
+	SealKey []byte
 	// Now returns the current time. Tests set it.
 	Now func() time.Time
 }
@@ -116,6 +119,7 @@ func New(cfg Config) *Manager {
 	}
 	if cfg.Network != nil {
 		cfg.Network.OnRecords = m.recordEgress
+		cfg.Network.OnRequests = m.recordRequests
 		cfg.Network.OnGuardExit = m.egressGuardExited
 	}
 	return m
@@ -197,6 +201,9 @@ type image struct {
 	// egress is the policy a copy of this image starts with. Nil is the
 	// template policy.
 	egress []string
+	// bindings are the credentials each copy of this image starts with. A
+	// snapshot holds none, so its caller names them.
+	bindings []store.CredentialBinding
 }
 
 func (i image) memPath() string   { return filepath.Join(i.dir, "mem") }
@@ -219,7 +226,16 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (store.Sandbox,
 	if err := req.validate(); err != nil {
 		return store.Sandbox{}, err
 	}
-	tpl, err := m.cfg.Store.GetTemplate(ctx, req.Template)
+	// The new row belongs to this tenant, so its template must too. An operator
+	// call names no tenant and writes the default one.
+	tenant, ok := store.TenantFrom(ctx)
+	if !ok {
+		tenant = store.DefaultTenant
+	}
+	tpl, err := m.cfg.Store.GetTemplate(store.WithTenant(ctx, tenant), req.Template)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.Sandbox{}, fmt.Errorf("%w: tenant %q has no template %q", store.ErrNotFound, tenant, req.Template)
+	}
 	if err != nil {
 		return store.Sandbox{}, err
 	}
@@ -327,7 +343,7 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 			return store.Sandbox{}, err
 		}
 	}
-	att, err := m.cfg.Network.Attach(ctx, row.ID, network.Policy{Allow: row.Egress(img.template), Observe: row.EgressObserve})
+	att, err := m.cfg.Network.Attach(ctx, row.ID, m.PolicyOf(ctx, row, img.template))
 	if err != nil {
 		return store.Sandbox{}, err
 	}
@@ -505,7 +521,7 @@ func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Sna
 // image. Every copy gets a fresh overlay and its own page-fault source. A
 // failure at any copy destroys every copy made in the call. A sleeping source
 // wakes first.
-func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bool, metadata map[string]any) ([]store.Sandbox, error) {
+func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bool, metadata map[string]any, credentials []CredentialInput) ([]store.Sandbox, error) {
 	if count < 1 {
 		return nil, invalidf("count must be greater than zero")
 	}
@@ -526,6 +542,10 @@ func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bo
 		return nil, errObserving
 	}
 	tpl, err := m.cfg.Store.GetTemplate(ctx, row.TemplateName)
+	if err != nil {
+		return nil, err
+	}
+	sealed, err := m.sealCopyCredentials(credentials, tpl, row.Egress(tpl))
 	if err != nil {
 		return nil, err
 	}
@@ -568,6 +588,7 @@ func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bo
 			return nil, err
 		}
 	}
+	img.bindings = sealed
 	copies, err := m.makeCopies(ctx, img, row, count)
 	if err != nil {
 		m.reapSnapshot(context.WithoutCancel(ctx), snapID)
@@ -579,7 +600,7 @@ func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bo
 // RestoreSnapshot copies a listed snapshot into count new sandboxes. The
 // copies inherit the lifecycle of the sandbox the snapshot came from, and its
 // metadata when metadata is nil.
-func (m *Manager) RestoreSnapshot(ctx context.Context, snapshotID string, count int, allowSecret bool, metadata map[string]any) ([]store.Sandbox, error) {
+func (m *Manager) RestoreSnapshot(ctx context.Context, snapshotID string, count int, allowSecret bool, metadata map[string]any, credentials []CredentialInput) ([]store.Sandbox, error) {
 	if count < 1 {
 		return nil, invalidf("count must be greater than zero")
 	}
@@ -603,12 +624,21 @@ func (m *Manager) RestoreSnapshot(ctx context.Context, snapshotID string, count 
 	if err != nil {
 		return nil, err
 	}
+	allow := snap.EgressAllow
+	if allow == nil {
+		allow = tpl.EgressAllow
+	}
+	sealed, err := m.sealCopyCredentials(credentials, tpl, allow)
+	if err != nil {
+		return nil, err
+	}
 	img := image{
 		dir:        filepath.Join(m.cfg.Root, "snapshots", snapshotID),
 		template:   tpl,
 		snapshotID: snapshotID,
 		secret:     snap.SecretBearing,
 		egress:     snap.EgressAllow,
+		bindings:   sealed,
 	}
 	m.touch(ctx, origin)
 	if metadata != nil {
@@ -674,6 +704,8 @@ func encodeMetadata(metadata map[string]any) (string, error) {
 // failure destroys every copy this call made and reports ErrPartial, so the
 // caller can never be left with a partial fork.
 func (m *Manager) makeCopies(ctx context.Context, img image, base store.Sandbox, count int) ([]store.Sandbox, error) {
+	// A copy belongs to the tenant of its origin, also on an operator call.
+	ctx = store.WithTenant(ctx, img.template.TenantID)
 	made := make([]store.Sandbox, 0, count)
 	fail := func(err error) ([]store.Sandbox, error) {
 		for _, sb := range made {
@@ -712,6 +744,9 @@ func (m *Manager) makeCopies(ctx context.Context, img image, base store.Sandbox,
 		}
 		m.event(ctx, id, "", store.SandboxCreating, "fork", now)
 		made = append(made, row)
+		if err := m.cfg.Store.SetCredentials(ctx, id, img.bindings); err != nil {
+			return fail(err)
+		}
 		stored, err := m.restore(ctx, img, row, nil, restoreOptions{from: store.SandboxCreating, reason: "restored"})
 		m.clearActive(id)
 		if err != nil {
@@ -1116,4 +1151,16 @@ func (m *Manager) templateDir(tpl store.Template) string {
 		tenant = store.DefaultTenant
 	}
 	return filepath.Join(m.cfg.Root, "templates", tenant, tpl.Name)
+}
+
+// sealCopyCredentials checks the bindings a fork or a restore names. A copy
+// starts with no binding unless its caller gives one.
+func (m *Manager) sealCopyCredentials(list []CredentialInput, tpl store.Template, allow []string) ([]store.CredentialBinding, error) {
+	if len(list) == 0 {
+		return nil, nil
+	}
+	if err := requireTrust(tpl); err != nil {
+		return nil, err
+	}
+	return m.sealCredentials(list, allow)
 }

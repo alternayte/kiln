@@ -638,3 +638,18 @@ Egress records also cap at 4096 destinations per sandbox, with the rest counted
 as `dropped`, because a guest chooses any number of names.
 
 Next: `docs/specs/credential-injection.md`. It terminates TLS in this guard.
+
+Done: `docs/specs/credential-injection.md`. `PUT /v1/sandboxes/{id}/credentials`
+binds a sealed credential to one exact host, and the guard of that sandbox
+terminates TLS on that host alone and sets the header on each matching request.
+A tenant holds one CA, a template build adds it to the application root, and
+a template built before this returns `conflict` on the call. `GET
+/v1/sandboxes/{id}/egress/requests` reads the per-request log. A fork or a restore
+starts with no binding and takes its own `credentials` list.
+
+Also fixed here: a failed row no longer counts as swept at each start; an operator
+create names only its own tenant's template and answers `not_found`; a copy takes
+the tenant of its template on an operator call; a reconciler failure detaches the
+attachment, so its guard does not restart; a guard restart whose rules fail stops
+that guard; an address family the host cannot route no longer uses a whole dial;
+a call the agent of an old template does not know answers `conflict`.

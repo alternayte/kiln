@@ -35,6 +35,9 @@ func (m *Manager) SetEgress(ctx context.Context, id string, allow []string) (sto
 	if err != nil {
 		return store.Sandbox{}, err
 	}
+	if err := m.checkEgressKeepsBindings(ctx, row.ID, allow); err != nil {
+		return store.Sandbox{}, err
+	}
 	return m.applyEgress(ctx, row, allow, network.Policy{Allow: allow})
 }
 
@@ -137,6 +140,13 @@ func (m *Manager) ObserveEgress(ctx context.Context, id string) (store.Sandbox, 
 	if row.SecretBearing {
 		return store.Sandbox{}, fmt.Errorf("%w: a sandbox that holds env values cannot observe", store.ErrConflict)
 	}
+	bindings, err := m.cfg.Store.Credentials(ctx, row.ID)
+	if err != nil {
+		return store.Sandbox{}, err
+	}
+	if len(bindings) > 0 {
+		return store.Sandbox{}, fmt.Errorf("%w: a sandbox that holds a credential cannot observe", store.ErrConflict)
+	}
 	allow, err := m.EgressOf(ctx, row)
 	if err != nil {
 		return store.Sandbox{}, err
@@ -190,6 +200,13 @@ func (m *Manager) applyEgress(ctx context.Context, row store.Sandbox, stored []s
 	if att == nil {
 		return row, nil
 	}
+	// A policy change keeps the credentials the row holds.
+	tpl, err := m.cfg.Store.GetTemplate(ctx, row.TemplateName)
+	if err != nil {
+		return store.Sandbox{}, err
+	}
+	whole := m.PolicyOf(ctx, row, tpl)
+	policy.Bindings, policy.Leaves = whole.Bindings, whole.Leaves
 	if err := att.SetEgress(ctx, policy); err != nil {
 		return store.Sandbox{}, err
 	}

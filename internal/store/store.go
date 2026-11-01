@@ -75,6 +75,9 @@ type Template struct {
 	// Services are the images that run beside the application. A service's env
 	// stays out of this row.
 	Services []TemplateService
+	// TrustsCA says the application root trusts the tenant CA, so a sandbox of
+	// this template can take a credential binding.
+	TrustsCA bool
 	// User is who everything a caller asks for runs as. Empty is root.
 	User string
 }
@@ -153,6 +156,45 @@ type EgressRecord struct {
 	BytesIn   int64
 	FirstSeen time.Time
 	LastSeen  time.Time
+	// Binding names the credential binding of an injected row.
+	Binding string
+}
+
+// EgressRequest is one request a guard read on a bound host. It holds no query
+// string, no header value and no body.
+type EgressRequest struct {
+	Method  string
+	Host    string
+	Path    string
+	Status  int
+	Binding string
+	At      time.Time
+}
+
+// EgressRequests is the request log of one sandbox. Dropped counts the requests
+// that had no room, so a gap stays visible.
+type EgressRequests struct {
+	Requests    []EgressRequest
+	Dropped     int64
+	DestroyedAt *time.Time
+}
+
+// CredentialBinding ties one sealed credential to one exact host of one
+// sandbox. The sealed value leaves the daemon only for that sandbox's guard.
+type CredentialBinding struct {
+	Name        string
+	Host        string
+	Header      string
+	ValueSealed string
+	Path        string
+	Methods     []string
+}
+
+// TenantCA is the certificate authority of one tenant. Only the daemon opens
+// its key.
+type TenantCA struct {
+	CertPEM   string
+	KeySealed string
 }
 
 // EgressLog is the whole egress record of one sandbox. Dropped counts the
@@ -261,6 +303,23 @@ type Store interface {
 	// EgressLog returns the egress record of one sandbox. It returns
 	// ErrNotFound when the sandbox never recorded anything.
 	EgressLog(ctx context.Context, sandboxID string) (EgressLog, error)
+	// RecordEgressRequests adds to the request log of one sandbox, up to a cap,
+	// and counts the rest as dropped.
+	RecordEgressRequests(ctx context.Context, sandboxID string, rows []EgressRequest, dropped int64) error
+	// ReadEgressRequests returns the request log of one sandbox.
+	ReadEgressRequests(ctx context.Context, sandboxID string) (EgressRequests, error)
+	// SetCredentials replaces every binding of one sandbox.
+	SetCredentials(ctx context.Context, sandboxID string, rows []CredentialBinding) error
+	// Credentials returns the bindings of one sandbox, in name order.
+	Credentials(ctx context.Context, sandboxID string) ([]CredentialBinding, error)
+	// TenantCA returns the CA of one tenant, or ErrNotFound.
+	TenantCA(ctx context.Context, tenant string) (TenantCA, error)
+	// PutTenantCA stores a CA unless the tenant holds one. It returns the CA the
+	// tenant holds afterwards, so two first callers agree.
+	PutTenantCA(ctx context.Context, tenant string, ca TenantCA) (TenantCA, error)
+	// SetTemplateTrustsCA records that a template's application root trusts its
+	// tenant's CA.
+	SetTemplateTrustsCA(ctx context.Context, name string) error
 	// PruneEgress removes the record of each sandbox destroyed before a time.
 	PruneEgress(ctx context.Context, before time.Time) error
 	DestroySandbox(ctx context.Context, id string, at time.Time) error

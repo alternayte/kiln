@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/alternayte/kiln/internal/guestproto"
 	"github.com/alternayte/kiln/internal/runtime"
@@ -79,6 +80,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sandboxes/{id}/terminal", s.terminalSandbox)
 	mux.HandleFunc("PUT /v1/sandboxes/{id}/egress", s.setSandboxEgress)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/egress/log", s.getEgressLog)
+	mux.HandleFunc("GET /v1/sandboxes/{id}/egress/requests", s.getEgressRequests)
+	mux.HandleFunc("PUT /v1/sandboxes/{id}/credentials", s.setSandboxCredentials)
 	mux.HandleFunc("POST /v1/sandboxes/{id}/processes", s.startProcess)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/processes/{pid}", s.readProcess)
 	mux.HandleFunc("DELETE /v1/sandboxes/{id}/processes/{pid}", s.signalProcess)
@@ -182,6 +185,11 @@ func (s *Server) writeErr(w http.ResponseWriter, err error) {
 		case guestproto.CodeNotFound:
 			writeError(w, http.StatusNotFound, CodeNotFound, ee.Message)
 		case guestproto.CodeInvalid:
+			// The agent of an older template does not know a newer operation.
+			if strings.HasPrefix(ee.Message, "unknown op ") {
+				writeError(w, http.StatusConflict, CodeConflict, "this sandbox's template is too old for this call: rebuild the template")
+				return
+			}
 			writeError(w, http.StatusBadRequest, CodeInvalid, ee.Message)
 		default:
 			writeError(w, http.StatusInternalServerError, CodeInternal, ee.Message)

@@ -198,7 +198,7 @@ func TestSecEgressGuard(t *testing.T) {
 	})
 
 	t.Run("ForkStartsEmpty", func(t *testing.T) {
-		copies, err := sbx.Fork(ctx, sb.ID, 1, false, nil)
+		copies, err := sbx.Fork(ctx, sb.ID, 1, false, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -277,7 +277,7 @@ func TestSecEgressGuard(t *testing.T) {
 			t.Fatal("observe reached the metadata address")
 		}
 		waitRecord(t, ctx, sbx, sb.ID, func(rows []store.EgressRecord) bool { return hasRow(rows, otherName, 443, "observed") })
-		if _, err := sbx.Fork(ctx, sb.ID, 1, false, nil); !errors.Is(err, store.ErrConflict) {
+		if _, err := sbx.Fork(ctx, sb.ID, 1, false, nil, nil); !errors.Is(err, store.ErrConflict) {
 			t.Errorf("a fork while observing: %v", err)
 		}
 		if _, err := sbx.Snapshot(ctx, sb.ID, false); !errors.Is(err, store.ErrConflict) {

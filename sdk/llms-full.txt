@@ -36,6 +36,16 @@ The preview sleeps after its idle deadline and wakes on the next request, so an 
 
 Egress is deny by default. A preview that reaches a database or an API needs those hostnames in `egress_allow`, and nothing else is reachable from inside it.
 
+## Credentials
+
+`PUT /v1/sandboxes/{id}/credentials` binds a credential to one exact host. A request from the sandbox to that host leaves with the header that Kiln sets, and the value never enters the guest, so the sandbox forks and restores with no `allow_secret_fork`. A fork or a restore starts with no binding and takes its own `credentials` list.
+
+- The guard terminates TLS only on a bound host. A client with a pinned certificate or a fixed root list fails there, and that caller keeps `env`.
+- A provider-scoped key is stronger than a `path` prefix, because provider routing can differ from the prefix.
+- Kiln does not scrub responses, because a scrub misses an encoded value. Do not bind a host that echoes headers.
+- A CLI that refuses to start without a key takes a placeholder in `env`, such as `OPENAI_API_KEY=placeholder`. The guard replaces the header on the wire.
+- A template built before this feature answers `conflict`. Build it again.
+
 ## The kiln command
 
 `kiln` is the client for Linux and macOS. It reads `KILN_URL` and `KILN_API_KEY`, and has one command for each operation below. `--json` prints JSON, and `kiln init` writes the Kiln skill and the MCP entry into a repository.
@@ -188,6 +198,24 @@ Path:
 
 Answers 200 with `Sandbox`.
 
+### setCredentials
+
+`PUT /v1/sandboxes/{id}/credentials`
+
+`kiln sandboxes set-credentials`
+
+Replace the credential bindings of one sandbox. A request from the sandbox to a bound host leaves with the header that Kiln sets, and the value never enters the guest. A value is never returned. A rotation is a new call. A sleeping sandbox takes the change without a wake. A template built before credential bindings answers conflict and must be rebuilt.
+
+Path:
+
+- `id` (string): Sandbox id.
+
+Body:
+
+- `credentials` (array of object, required): At most 16 bindings: name, host (one exact name that egress_allow covers), header, value, and optional path (a prefix) and methods. A request that does not match leaves with no key and with that header removed. An empty list removes every binding.
+
+Answers 200 with `Sandbox`.
+
 ### setEgress
 
 `PUT /v1/sandboxes/{id}/egress`
@@ -220,6 +248,20 @@ Path:
 - `id` (string): Sandbox id.
 
 Answers 200 with `EgressLog`.
+
+### egressRequests
+
+`GET /v1/sandboxes/{id}/egress/requests`
+
+`kiln egress-requests`
+
+Read the request log of the bound hosts of one sandbox: method, host, path with no query string, status, binding and time. It holds no header value and no body. It holds at most 10000 rows, and dropped counts the rest. The rows stay for 7 days after a destroy.
+
+Path:
+
+- `id` (string): Sandbox id.
+
+Answers 200 with `EgressRequests`.
 
 ### exec
 
@@ -294,6 +336,7 @@ Body:
 
 - `count` (integer, required): Number of copies.
 - `allow_secret_fork` (boolean): Allow a fork of a sandbox that holds secrets.
+- `credentials` (array of object): Credential bindings of each new sandbox, in the form setCredentials takes. A copy starts with none, and a snapshot holds none.
 - `metadata` (object): Metadata of the new sandboxes. It replaces the metadata of the origin sandbox, which they keep without this field.
 
 Answers 201 with `SandboxList`.
@@ -495,6 +538,7 @@ Body:
 
 - `count` (integer, required): Number of sandboxes.
 - `allow_secret_fork` (boolean): Allow a restore of a snapshot that holds secrets.
+- `credentials` (array of object): Credential bindings of each new sandbox, in the form setCredentials takes. A copy starts with none, and a snapshot holds none.
 - `metadata` (object): Metadata of the new sandboxes. It replaces the metadata of the origin sandbox, which they keep without this field.
 
 Answers 201 with `SandboxList`.

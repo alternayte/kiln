@@ -214,6 +214,22 @@ func Operations() []Operation {
 			Returns: "EgressLog",
 		},
 		{
+			ID: "setCredentials", Command: "sandboxes set-credentials", Method: "PUT", Path: "/v1/sandboxes/{id}/credentials", Status: 200,
+			Summary: "Replace the credential bindings of one sandbox. A request from the sandbox to a bound host leaves with the header that Kiln sets, and the value never enters the guest. A value is never returned. A rotation is a new call. A sleeping sandbox takes the change without a wake. A template built before credential bindings answers conflict and must be rebuilt.",
+			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
+			Body: []Field{
+				{Name: "credentials", Type: "array", Items: "object", Required: true,
+					Doc: "At most 16 bindings: name, host (one exact name that egress_allow covers), header, value, and optional path (a prefix) and methods. A request that does not match leaves with no key and with that header removed. An empty list removes every binding."},
+			},
+			Returns: "Sandbox",
+		},
+		{
+			ID: "egressRequests", Command: "egress-requests", Method: "GET", Path: "/v1/sandboxes/{id}/egress/requests", Status: 200,
+			Summary: "Read the request log of the bound hosts of one sandbox: method, host, path with no query string, status, binding and time. It holds no header value and no body. It holds at most 10000 rows, and dropped counts the rest. The rows stay for 7 days after a destroy.",
+			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
+			Returns: "EgressRequests",
+		},
+		{
 			ID: "startProcess", Command: "processes start", Method: "POST", Path: "/v1/sandboxes/{id}/processes", Status: 201,
 			Summary: "Start a detached process and answer once it runs. It has no deadline, it outlives this request, and the sandbox does not sleep while it runs.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
@@ -260,6 +276,7 @@ func Operations() []Operation {
 			Body: []Field{
 				{Name: "count", Type: "integer", Required: true, Doc: "Number of copies."},
 				{Name: "allow_secret_fork", Type: "boolean", Doc: "Allow a fork of a sandbox that holds secrets."},
+				{Name: "credentials", Type: "array", Items: "object", Doc: "Credential bindings of each new sandbox, in the form setCredentials takes. A copy starts with none, and a snapshot holds none."},
 				{Name: "metadata", Type: "object", Doc: "Metadata of the new sandboxes. It replaces the metadata of the origin sandbox, which they keep without this field."},
 			},
 			Returns: "SandboxList",
@@ -322,6 +339,7 @@ func Operations() []Operation {
 			Body: []Field{
 				{Name: "count", Type: "integer", Required: true, Doc: "Number of sandboxes."},
 				{Name: "allow_secret_fork", Type: "boolean", Doc: "Allow a restore of a snapshot that holds secrets."},
+				{Name: "credentials", Type: "array", Items: "object", Doc: "Credential bindings of each new sandbox, in the form setCredentials takes. A copy starts with none, and a snapshot holds none."},
 				{Name: "metadata", Type: "object", Doc: "Metadata of the new sandboxes. It replaces the metadata of the origin sandbox, which they keep without this field."},
 			},
 			Returns: "SandboxList",

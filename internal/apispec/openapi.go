@@ -6,7 +6,7 @@ import (
 )
 
 // Version is the semver of this contract. It rises with the binary.
-const Version = "0.11.0"
+const Version = "0.12.0"
 
 // OpenAPI returns the OpenAPI 3.1 document of the tenant API. The operator
 // routes stay out: a tenant never reaches them, and the SDKs never call them.
@@ -191,6 +191,9 @@ func schemas() map[string]any {
 		"env_keys":       map[string]any{"type": "array", "items": str},
 		"egress_allow":   map[string]any{"type": "array", "items": str},
 		"egress_observe": map[string]any{"type": "boolean"},
+		"credentials": map[string]any{"type": "array", "items": object(map[string]any{
+			"name": str, "host": str, "header": str, "path": str, "methods": map[string]any{"type": "array", "items": str},
+		})},
 	})
 	return map[string]any{
 		"Error": object(map[string]any{
@@ -212,7 +215,13 @@ func schemas() map[string]any {
 			"dropped": num,
 			"records": map[string]any{"type": "array", "items": object(map[string]any{
 				"host": str, "port": num, "decision": str, "count": num,
-				"bytes_out": num, "bytes_in": num, "first_seen": str, "last_seen": str,
+				"bytes_out": num, "bytes_in": num, "first_seen": str, "last_seen": str, "binding": str,
+			})},
+		}),
+		"EgressRequests": object(map[string]any{
+			"dropped": num,
+			"requests": map[string]any{"type": "array", "items": object(map[string]any{
+				"method": str, "host": str, "path": str, "status": num, "binding": str, "at": str,
 			})},
 		}),
 		"SandboxList": list("Sandbox"),

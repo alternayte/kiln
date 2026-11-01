@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/alternayte/kiln/internal/guestproto"
+	"github.com/alternayte/kiln/internal/hostca"
 	"github.com/alternayte/kiln/internal/network"
 	"github.com/alternayte/kiln/internal/runtime"
 	"github.com/alternayte/kiln/internal/store"
@@ -634,6 +635,10 @@ func (m *Manager) runSetup(ctx context.Context, setupVM *runtime.VM, req BuildRe
 			return err
 		}
 	}
+	if err := m.trustTenantCA(ctx, setupVM, req); err != nil {
+		_ = m.stopVM(ctx, setupVM)
+		return err
+	}
 	// A sandbox from a template with no such user cannot run anything.
 	if req.User != "" {
 		if err := setupVM.CheckUser(ctx, req.User); err != nil {
@@ -745,4 +750,25 @@ func (m *Manager) now() time.Time {
 		return m.Now()
 	}
 	return time.Now().UTC()
+}
+
+// trustTenantCA adds the tenant CA to the application root, after every setup
+// command, so a command that installs or rebuilds the trust store keeps it. A
+// host with no sealing key builds a template that takes no credential binding.
+func (m *Manager) trustTenantCA(ctx context.Context, vm *runtime.VM, req BuildRequest) error {
+	if len(m.SealKey) == 0 {
+		return nil
+	}
+	tenant, ok := store.TenantFrom(ctx)
+	if !ok {
+		tenant = store.DefaultTenant
+	}
+	ca, err := hostca.TenantCA(ctx, m.Store, m.SealKey, tenant)
+	if err != nil {
+		return fmt.Errorf("tenant CA: %w", err)
+	}
+	if err := vm.TrustCA(ctx, ca.CertPEM); err != nil {
+		return fmt.Errorf("trust the tenant CA: %w", err)
+	}
+	return m.Store.SetTemplateTrustsCA(ctx, req.Name)
 }

@@ -90,6 +90,7 @@ func cmdServe() error {
 	sbx := sandbox.New(sandbox.Config{
 		Root:       root,
 		Store:      st,
+		SealKey:    sealKey,
 		Runtime:    rt,
 		Network:    nm,
 		Pages:      func() snapshot.PageFaultSource { return &snapshot.Process{Binary: exe} },

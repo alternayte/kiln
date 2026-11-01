@@ -170,7 +170,7 @@ func (r *Reconciler) adopt(ctx context.Context, row store.Sandbox, host *hostSta
 		if tplErr != nil {
 			return tplErr
 		}
-		att, err = r.Network.Adopt(ctx, row.ID, row.TapName, network.Policy{Allow: row.Egress(tpl), Observe: row.EgressObserve})
+		att, err = r.Network.Adopt(ctx, row.ID, row.TapName, r.Sandboxes.PolicyOf(ctx, row, tpl))
 		if err != nil {
 			return err
 		}
@@ -269,11 +269,6 @@ func (r *Reconciler) sweepOrphans(ctx context.Context, rows []store.Sandbox, kee
 	}
 	for id := range host.cgroups {
 		ids[id] = true
-	}
-	for _, row := range rows {
-		if row.DestroyedAt == nil && row.State == store.SandboxFailed {
-			ids[row.ID] = true
-		}
 	}
 	ordered := make([]string, 0, len(ids))
 	for id := range ids {

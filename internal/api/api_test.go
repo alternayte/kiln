@@ -479,3 +479,21 @@ func TestEventsReplayIsPaged(t *testing.T) {
 		t.Fatalf("the replay took %s; the pages waited for a tick each", took)
 	}
 }
+
+// A template of another tenant is not found by an operator call that names no
+// tenant, because the new row would belong to the default tenant.
+func TestCreateOperatorCallStaysInItsTenant(t *testing.T) {
+	ts, st := testServer(t)
+	ctx := store.WithTenant(context.Background(), "other")
+	if err := st.CreateTenant(context.Background(), store.Tenant{ID: "other", Name: "Other"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateTemplate(ctx, store.Template{Name: "shell", ImageRef: "x", EgressAllow: []string{}, State: store.TemplateReady, CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	resp, body := call(t, http.MethodPost, ts.URL+"/v1/sandboxes", serverToken,
+		`{"template":"shell","lifecycle":"ephemeral","idle_seconds":60}`)
+	if resp.StatusCode != http.StatusNotFound || errorCode(t, body) != CodeNotFound {
+		t.Fatalf("status %d, body %s; want not_found", resp.StatusCode, body)
+	}
+}

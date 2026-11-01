@@ -245,7 +245,7 @@ func (s *sqliteStore) GetTemplate(ctx context.Context, name string) (Template, e
 	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services
+		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services, trusts_ca
 	FROM templates WHERE name = ?`+clause, append([]any{name}, args...)...)
 	t, err := scanTemplate(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -258,7 +258,7 @@ func (s *sqliteStore) ListTemplates(ctx context.Context) ([]Template, error) {
 	clause, args := scope(ctx, "tenant_id")
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services
+		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services, trusts_ca
 	FROM templates WHERE 1 = 1`+clause+` ORDER BY name`, args...)
 	if err != nil {
 		return nil, err
@@ -479,7 +479,7 @@ func scanTemplate(row scanner) (Template, error) {
 	)
 	if err := row.Scan(
 		&t.TenantID, &t.Name, &t.ImageRef, &t.ImageDigest, &t.VCPUs, &t.MemoryMB, &t.DiskMB,
-		&egress, &t.State, &message, &created, &ttl, &start, &port, &runAs, &svc,
+		&egress, &t.State, &message, &created, &ttl, &start, &port, &runAs, &svc, &t.TrustsCA,
 	); err != nil {
 		return Template{}, err
 	}
@@ -726,6 +726,10 @@ func (s *sqliteStore) DestroySandbox(ctx context.Context, id string, at time.Tim
 	}
 	if changed == 0 {
 		return ErrNotFound
+	}
+	// A destroyed row keeps its history and no credential.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM credential_bindings WHERE sandbox_id = ?`, id); err != nil {
+		return err
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE egress_logs SET destroyed_at = COALESCE(destroyed_at, ?)
 		WHERE sandbox_id = ?`, at.Unix(), id)
@@ -1254,7 +1258,7 @@ func scanTenant(row scanner) (Tenant, error) {
 func (s *sqliteStore) ListTemplatesPastTTL(ctx context.Context, now time.Time) ([]Template, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		tenant_id, name, image_ref, image_digest, vcpus, memory_mb, disk_mb,
-		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services
+		egress_allow, state, error, created_at, ttl_seconds, start_cmd, start_port, run_as, services, trusts_ca
 	FROM templates
 	WHERE ttl_seconds IS NOT NULL AND created_at + ttl_seconds <= ?
 	ORDER BY tenant_id, name`, now.Unix())
@@ -1373,10 +1377,10 @@ func (s *sqliteStore) RecordEgress(ctx context.Context, sandboxID string, rows [
 	for _, row := range rows {
 		var known, deniedBefore int
 		if err := tx.QueryRowContext(ctx, `SELECT
-			count(CASE WHEN port = ? AND decision = ? THEN 1 END),
+			count(CASE WHEN port = ? AND decision = ? AND binding = ? THEN 1 END),
 			count(CASE WHEN decision = ? THEN 1 END)
 		FROM egress_records WHERE sandbox_id = ? AND host = ?`,
-			row.Port, row.Decision, DecisionDenied, sandboxID, row.Host).Scan(&known, &deniedBefore); err != nil {
+			row.Port, row.Decision, row.Binding, DecisionDenied, sandboxID, row.Host).Scan(&known, &deniedBefore); err != nil {
 			return "", nil, err
 		}
 		if known == 0 && held >= maxEgressRows {
@@ -1390,14 +1394,14 @@ func (s *sqliteStore) RecordEgress(ctx context.Context, sandboxID string, rows [
 			first = append(first, row.Host)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO egress_records (
-			sandbox_id, host, port, decision, count, bytes_out, bytes_in, first_seen, last_seen
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (sandbox_id, host, port, decision) DO UPDATE SET
+			sandbox_id, host, port, decision, binding, count, bytes_out, bytes_in, first_seen, last_seen
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (sandbox_id, host, port, decision, binding) DO UPDATE SET
 			count = count + excluded.count,
 			bytes_out = bytes_out + excluded.bytes_out,
 			bytes_in = bytes_in + excluded.bytes_in,
 			last_seen = max(last_seen, excluded.last_seen)`,
-			sandboxID, row.Host, row.Port, row.Decision, row.Count, row.BytesOut, row.BytesIn,
+			sandboxID, row.Host, row.Port, row.Decision, row.Binding, row.Count, row.BytesOut, row.BytesIn,
 			row.FirstSeen.Unix(), row.LastSeen.Unix()); err != nil {
 			return "", nil, err
 		}
@@ -1428,8 +1432,8 @@ func (s *sqliteStore) EgressLog(ctx context.Context, sandboxID string) (EgressLo
 		at := time.Unix(destroyed.Int64, 0).UTC()
 		out.DestroyedAt = &at
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT host, port, decision, count, bytes_out, bytes_in, first_seen, last_seen
-		FROM egress_records WHERE sandbox_id = ? ORDER BY host, port, decision`, sandboxID)
+	rows, err := s.db.QueryContext(ctx, `SELECT host, port, decision, binding, count, bytes_out, bytes_in, first_seen, last_seen
+		FROM egress_records WHERE sandbox_id = ? ORDER BY host, port, decision, binding`, sandboxID)
 	if err != nil {
 		return EgressLog{}, err
 	}
@@ -1439,7 +1443,7 @@ func (s *sqliteStore) EgressLog(ctx context.Context, sandboxID string) (EgressLo
 			row         EgressRecord
 			first, last int64
 		)
-		if err := rows.Scan(&row.Host, &row.Port, &row.Decision, &row.Count, &row.BytesOut, &row.BytesIn, &first, &last); err != nil {
+		if err := rows.Scan(&row.Host, &row.Port, &row.Decision, &row.Binding, &row.Count, &row.BytesOut, &row.BytesIn, &first, &last); err != nil {
 			return EgressLog{}, err
 		}
 		row.FirstSeen, row.LastSeen = time.Unix(first, 0).UTC(), time.Unix(last, 0).UTC()
@@ -1451,5 +1455,157 @@ func (s *sqliteStore) EgressLog(ctx context.Context, sandboxID string) (EgressLo
 // PruneEgress crosses every tenant on purpose: the reconciler runs for the host.
 func (s *sqliteStore) PruneEgress(ctx context.Context, before time.Time) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM egress_logs WHERE destroyed_at IS NOT NULL AND destroyed_at < ?`, before.Unix())
+	return err
+}
+
+// maxEgressRequests bounds the request log of one sandbox.
+const maxEgressRequests = 10000
+
+func (s *sqliteStore) RecordEgressRequests(ctx context.Context, sandboxID string, rows []EgressRequest, dropped int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO egress_logs (sandbox_id, tenant_id, destroyed_at)
+		SELECT id, tenant_id, destroyed_at FROM sandboxes WHERE id = ?
+		ON CONFLICT (sandbox_id) DO NOTHING`, sandboxID); err != nil {
+		return err
+	}
+	var held int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM egress_requests WHERE sandbox_id = ?`, sandboxID).Scan(&held); err != nil {
+		return err
+	}
+	var known int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM egress_logs WHERE sandbox_id = ?`, sandboxID).Scan(&known); err != nil {
+		return err
+	}
+	// A build VM has no row and no record.
+	if known == 0 {
+		return nil
+	}
+	for _, row := range rows {
+		if held >= maxEgressRequests {
+			dropped++
+			continue
+		}
+		held++
+		if _, err := tx.ExecContext(ctx, `INSERT INTO egress_requests (sandbox_id, method, host, path, status, binding, at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`, sandboxID, row.Method, row.Host, row.Path, row.Status, row.Binding, row.At.Unix()); err != nil {
+			return err
+		}
+	}
+	if dropped > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE egress_logs SET requests_dropped = requests_dropped + ? WHERE sandbox_id = ?`, dropped, sandboxID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *sqliteStore) ReadEgressRequests(ctx context.Context, sandboxID string) (EgressRequests, error) {
+	clause, args := scope(ctx, "tenant_id")
+	var (
+		out       EgressRequests
+		destroyed sql.NullInt64
+	)
+	err := s.db.QueryRowContext(ctx, `SELECT requests_dropped, destroyed_at FROM egress_logs WHERE sandbox_id = ?`+clause,
+		append([]any{sandboxID}, args...)...).Scan(&out.Dropped, &destroyed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return EgressRequests{}, ErrNotFound
+	}
+	if err != nil {
+		return EgressRequests{}, err
+	}
+	if destroyed.Valid {
+		at := time.Unix(destroyed.Int64, 0).UTC()
+		out.DestroyedAt = &at
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT method, host, path, status, binding, at
+		FROM egress_requests WHERE sandbox_id = ? ORDER BY id`, sandboxID)
+	if err != nil {
+		return EgressRequests{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			row EgressRequest
+			at  int64
+		)
+		if err := rows.Scan(&row.Method, &row.Host, &row.Path, &row.Status, &row.Binding, &at); err != nil {
+			return EgressRequests{}, err
+		}
+		row.At = time.Unix(at, 0).UTC()
+		out.Requests = append(out.Requests, row)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) SetCredentials(ctx context.Context, sandboxID string, rows []CredentialBinding) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM credential_bindings WHERE sandbox_id = ?`, sandboxID); err != nil {
+		return err
+	}
+	for _, row := range rows {
+		methods, err := json.Marshal(row.Methods)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO credential_bindings (sandbox_id, name, host, header, value_sealed, path, methods)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`, sandboxID, row.Name, row.Host, row.Header, row.ValueSealed, row.Path, string(methods)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *sqliteStore) Credentials(ctx context.Context, sandboxID string) ([]CredentialBinding, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name, host, header, value_sealed, path, methods
+		FROM credential_bindings WHERE sandbox_id = ? ORDER BY name`, sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CredentialBinding
+	for rows.Next() {
+		var (
+			row     CredentialBinding
+			methods string
+		)
+		if err := rows.Scan(&row.Name, &row.Host, &row.Header, &row.ValueSealed, &row.Path, &methods); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(methods), &row.Methods); err != nil {
+			return nil, fmt.Errorf("store: binding %s: methods: %w", row.Name, err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) TenantCA(ctx context.Context, tenant string) (TenantCA, error) {
+	var ca TenantCA
+	err := s.db.QueryRowContext(ctx, `SELECT cert_pem, key_sealed FROM tenant_cas WHERE tenant_id = ?`, tenant).Scan(&ca.CertPEM, &ca.KeySealed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TenantCA{}, ErrNotFound
+	}
+	return ca, err
+}
+
+func (s *sqliteStore) PutTenantCA(ctx context.Context, tenant string, ca TenantCA) (TenantCA, error) {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO tenant_cas (tenant_id, cert_pem, key_sealed) VALUES (?, ?, ?)
+		ON CONFLICT (tenant_id) DO NOTHING`, tenant, ca.CertPEM, ca.KeySealed); err != nil {
+		return TenantCA{}, err
+	}
+	return s.TenantCA(ctx, tenant)
+}
+
+func (s *sqliteStore) SetTemplateTrustsCA(ctx context.Context, name string) error {
+	clause, args := scope(ctx, "tenant_id")
+	_, err := s.db.ExecContext(ctx, `UPDATE templates SET trusts_ca = 1 WHERE name = ?`+clause, append([]any{name}, args...)...)
 	return err
 }

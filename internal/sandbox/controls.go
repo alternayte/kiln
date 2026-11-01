@@ -243,7 +243,7 @@ func (m *Manager) recordEgress(id string, records []network.Record, dropped int6
 	rows := make([]store.EgressRecord, 0, len(records))
 	for _, rec := range records {
 		rows = append(rows, store.EgressRecord{
-			Host: rec.Host, Port: rec.Port, Decision: rec.Decision, Count: rec.Count,
+			Host: rec.Host, Port: rec.Port, Decision: rec.Decision, Binding: rec.Binding, Count: rec.Count,
 			BytesOut: rec.BytesOut, BytesIn: rec.BytesIn,
 			FirstSeen: time.Unix(rec.First, 0).UTC(), LastSeen: time.Unix(rec.Last, 0).UTC(),
 		})

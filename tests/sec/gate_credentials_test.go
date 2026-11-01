@@ -178,7 +178,10 @@ func TestSecCredentials(t *testing.T) {
 		}
 	})
 	t.Run("RedirectCarriesNoKey", func(t *testing.T) {
-		status, _ := get(t, sb.ID, "https://"+boundName+"/redirect-to?url=https%3A%2F%2F"+unboundName+"%2Fheaders", "")
+		// httpbin refuses a redirect to another site, so this proves the guard
+		// returns a redirect and does not follow it. OtherHostGetsNoKey covers the
+		// next request the guest makes.
+		status, _ := get(t, sb.ID, "https://"+boundName+"/status/302", "")
 		if status != "302" {
 			t.Errorf("the guard answered %s, want the provider's redirect", status)
 		}

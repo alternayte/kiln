@@ -288,6 +288,7 @@ func (m *Manager) sleepLocked(ctx context.Context, id string) error {
 	m.release(context.WithoutCancel(ctx), id, true)
 	row.State = store.SandboxSleeping
 	m.arm(row)
+	m.cfg.Metrics.Sleeps.Add(1)
 	return nil
 }
 
@@ -341,6 +342,7 @@ func (m *Manager) wakeLocked(ctx context.Context, id string) (store.Sandbox, err
 		m.failWaking(ctx, id, err.Error())
 		return store.Sandbox{}, err
 	}
+	m.cfg.Metrics.Wakes.Add(1)
 	return running, nil
 }
 

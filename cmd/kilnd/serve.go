@@ -18,6 +18,7 @@ import (
 	"github.com/alternayte/kiln/internal/api"
 	"github.com/alternayte/kiln/internal/hostca"
 	"github.com/alternayte/kiln/internal/ingress"
+	"github.com/alternayte/kiln/internal/metrics"
 	"github.com/alternayte/kiln/internal/network"
 	"github.com/alternayte/kiln/internal/reconcile"
 	"github.com/alternayte/kiln/internal/runtime"
@@ -74,6 +75,7 @@ func cmdServe() error {
 	if err != nil {
 		return fmt.Errorf("serve: %w", err)
 	}
+	counts := &metrics.Host{}
 	nm := network.New(exe, root)
 	if err := nm.EnsureBase(ctx); err != nil {
 		return err
@@ -85,6 +87,7 @@ func cmdServe() error {
 		Network:    nm,
 		Builder:    template.Builder{KilninitPath: kilninit},
 		SealKey:    sealKey,
+		Metrics:    counts,
 		KernelPath: filepath.Join(root, "kernel", "vmlinux-"+kernelVersion),
 	}
 	sbx := sandbox.New(sandbox.Config{
@@ -97,6 +100,7 @@ func cmdServe() error {
 		KernelPath: mgr.KernelPath,
 		Secrets:    cfg.Secrets,
 		Zone:       cfg.Zone,
+		Metrics:    counts,
 	})
 
 	// The sweep runs before the listener: a restart adopts the microVMs the

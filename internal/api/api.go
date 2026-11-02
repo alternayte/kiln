@@ -114,6 +114,7 @@ func (s *Server) Handler() http.Handler {
 	// token. Everything under /v1 keeps the bearer check.
 	root := http.NewServeMux()
 	root.HandleFunc("GET /{$}", s.statusPage)
+	root.Handle("GET /metrics", s.auth(http.HandlerFunc(s.metricsPage)))
 	root.Handle("/v1/", s.auth(mux))
 	return root
 }

@@ -19,6 +19,7 @@ import (
 
 	"github.com/alternayte/kiln/internal/guestproto"
 	"github.com/alternayte/kiln/internal/hostca"
+	"github.com/alternayte/kiln/internal/metrics"
 	"github.com/alternayte/kiln/internal/network"
 	"github.com/alternayte/kiln/internal/runtime"
 	"github.com/alternayte/kiln/internal/store"
@@ -224,6 +225,8 @@ type Manager struct {
 
 	// KernelPath is the pinned vmlinux the build VM boots.
 	KernelPath string
+	// Metrics counts failed builds. Nil counts nothing.
+	Metrics *metrics.Host
 	// Now returns the current time. Tests set it.
 	Now func() time.Time
 
@@ -414,6 +417,9 @@ func (m *Manager) build(ctx context.Context, req BuildRequest) {
 		state = store.TemplateFailed
 		message = err.Error()
 		reason = "build failed"
+		if m.Metrics != nil {
+			m.Metrics.BuildFailures.Add(1)
+		}
 		if rerr := os.RemoveAll(m.dirOf(ctx, req.Name)); rerr != nil {
 			message = fmt.Sprintf("%s; remove template dir: %v", message, rerr)
 		}

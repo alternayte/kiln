@@ -535,3 +535,71 @@ func TestAuditRecordsACredentialAndNotItsValue(t *testing.T) {
 		t.Fatalf("audit rows: %d with a credential, %d without", with, without)
 	}
 }
+
+// A tenant key opens the host API and not the metrics, and the output names
+// route templates and no sandbox id.
+func TestMetrics(t *testing.T) {
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer host.Close()
+	server, key, _ := newTestGateway(t, host.URL)
+	front := httptest.NewServer(server.Handler())
+	defer front.Close()
+	call := func(path, token string) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, front.URL+path, nil)
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(body)
+	}
+	if status, _ := call("/metrics", ""); status != http.StatusUnauthorized {
+		t.Errorf("no token: %d", status)
+	}
+	if status, _ := call("/metrics", key); status != http.StatusUnauthorized {
+		t.Errorf("tenant key: %d", status)
+	}
+	if status, _ := call("/v1/sandboxes/abc123secretid", key); status != http.StatusOK {
+		t.Errorf("forward: %d", status)
+	}
+	// The count lands after the proxied response reaches the client.
+	want := `kiln_gateway_requests_total{route="GET /v1/sandboxes/{id}",status="200"} 1`
+	var body string
+	for deadline := time.Now().Add(5 * time.Second); !strings.Contains(body, want); time.Sleep(10 * time.Millisecond) {
+		var status int
+		if status, body = call("/metrics", "host-token"); status != http.StatusOK {
+			t.Fatalf("operator token: %d", status)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no route template in:\n%s", body)
+		}
+	}
+	if strings.Contains(body, "abc123secretid") {
+		t.Errorf("a raw path reached the output:\n%s", body)
+	}
+}
+
+// A call that finds no host adds one failure.
+func TestHostConnectionFailure(t *testing.T) {
+	dead := httptest.NewServer(http.NotFoundHandler())
+	addr := dead.URL
+	dead.Close()
+	host, err := NewHost(HostCredentials{URL: addr, Token: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodGet, addr+"/v1/health", nil)
+	if _, err := host.Transport.RoundTrip(req); err == nil {
+		t.Fatal("the dead host answered")
+	}
+	if got := host.failures.Load(); got != 1 {
+		t.Errorf("failures = %d", got)
+	}
+}

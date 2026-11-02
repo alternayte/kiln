@@ -240,6 +240,7 @@ func (m *Manager) EgressLog(ctx context.Context, id string) (store.EgressLog, er
 // cannot flood the stream.
 func (m *Manager) recordEgress(id string, records []network.Record, dropped int64) {
 	ctx := context.Background()
+	m.cfg.Metrics.EgressDropped.Add(uint64(max(dropped, 0)))
 	rows := make([]store.EgressRecord, 0, len(records))
 	for _, rec := range records {
 		rows = append(rows, store.EgressRecord{
@@ -268,6 +269,7 @@ const EventEgressDenied = "egress.denied"
 // egressGuardExited records that a guard died. Egress stays closed until the
 // network manager starts another.
 func (m *Manager) egressGuardExited(id string) {
+	m.cfg.Metrics.GuardRestarts.Add(1)
 	ctx := context.Background()
 	tenant, _, err := m.cfg.Store.RecordEgress(ctx, id, nil, 0)
 	if err != nil {

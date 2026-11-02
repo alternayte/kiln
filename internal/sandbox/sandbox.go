@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/alternayte/kiln/internal/guestproto"
+	"github.com/alternayte/kiln/internal/metrics"
 	"github.com/alternayte/kiln/internal/network"
 	"github.com/alternayte/kiln/internal/runtime"
 	"github.com/alternayte/kiln/internal/snapshot"
@@ -72,6 +73,8 @@ type Config struct {
 	// SealKey seals each credential binding and each tenant CA key before they
 	// reach the database.
 	SealKey []byte
+	// Metrics counts what this manager does. Nil gets its own.
+	Metrics *metrics.Host
 	// Now returns the current time. Tests set it.
 	Now func() time.Time
 }
@@ -108,6 +111,9 @@ type Manager struct {
 
 // New returns a sandbox manager.
 func New(cfg Config) *Manager {
+	if cfg.Metrics == nil {
+		cfg.Metrics = &metrics.Host{}
+	}
 	m := &Manager{
 		cfg:    cfg,
 		vms:    map[string]*runtime.VM{},
@@ -123,6 +129,16 @@ func New(cfg Config) *Manager {
 		cfg.Network.OnGuardExit = m.egressGuardExited
 	}
 	return m
+}
+
+// Metrics returns what this manager counts.
+func (m *Manager) Metrics() *metrics.Host { return m.cfg.Metrics }
+
+// observe adds the duration of a call that succeeded.
+func observe(h *metrics.Histogram, began time.Time, err *error) {
+	if *err == nil {
+		h.Observe(time.Since(began))
+	}
 }
 
 // CreateRequest is one POST /v1/sandboxes body.
@@ -318,6 +334,7 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (store.Sandbox,
 // answers a fresh vsock hello. The caller owns the row and every failure.
 func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env map[string]string, opts restoreOptions) (out store.Sandbox, err error) {
 	phase, began := "restore", time.Now()
+	defer observe(&m.cfg.Metrics.Restore, began, &err)
 	defer func() {
 		if err != nil && phase != "" {
 			m.phaseEvent(ctx, row.ID, phase, began, err)
@@ -438,7 +455,7 @@ func (m *Manager) restore(ctx context.Context, img image, row store.Sandbox, env
 // Snapshot writes the sandbox's memory into a listed snapshot. With stop set
 // the sandbox also sleeps: its own image is written under its directory and
 // the VM stops. The sandbox keeps its id and its files.
-func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Snapshot, error) {
+func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (out store.Snapshot, err error) {
 	unlock := m.lockOps(id)
 	defer unlock()
 	// A client that leaves mid-write must not leave the VM paused.
@@ -447,6 +464,7 @@ func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Sna
 	if err != nil {
 		return store.Snapshot{}, err
 	}
+	defer observe(&m.cfg.Metrics.Snapshot, time.Now(), &err)
 	if row.EgressObserve {
 		return store.Snapshot{}, errObserving
 	}
@@ -525,7 +543,7 @@ func (m *Manager) Snapshot(ctx context.Context, id string, stop bool) (store.Sna
 // image. Every copy gets a fresh overlay and its own page-fault source. A
 // failure at any copy destroys every copy made in the call. A sleeping source
 // wakes first.
-func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bool, metadata map[string]any, credentials []CredentialInput) ([]store.Sandbox, error) {
+func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bool, metadata map[string]any, credentials []CredentialInput) (out []store.Sandbox, err error) {
 	if count < 1 {
 		return nil, invalidf("count must be greater than zero")
 	}
@@ -535,6 +553,7 @@ func (m *Manager) Fork(ctx context.Context, id string, count int, allowSecret bo
 	if err != nil {
 		return nil, err
 	}
+	defer observe(&m.cfg.Metrics.Fork, time.Now(), &err)
 	vm, err := m.vmFor(row)
 	if err != nil {
 		return nil, err

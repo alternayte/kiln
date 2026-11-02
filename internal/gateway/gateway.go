@@ -53,6 +53,8 @@ type Server struct {
 	Issuer string
 	// OperatorRole may create tenants and read every tenant's usage.
 	OperatorRole string
+
+	requests requestCounts
 }
 
 // Handler returns the public routes.
@@ -80,6 +82,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /mcp", s.requireCaller(http.HandlerFunc(s.mcp)))
 	// The contract and the agent documentation need no credential: they
 	// describe the API and carry no data of any tenant.
+	mux.HandleFunc("GET /metrics", s.metricsPage)
 	mux.HandleFunc("GET /openapi.json", s.openAPI)
 	mux.HandleFunc("GET /llms.txt", s.llms)
 	mux.HandleFunc("GET /llms-full.txt", s.llmsFull)
@@ -92,7 +95,7 @@ func (s *Server) Handler() http.Handler {
 		panic("gateway: the web UI bundle is unreadable: " + err.Error())
 	}
 	mux.Handle("/", ui)
-	return mux
+	return s.measured(mux)
 }
 
 // tenantOf returns the tenant of one authenticated call. An API key names

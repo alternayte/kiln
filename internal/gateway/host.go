@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,6 +20,8 @@ type Host struct {
 	URL       *url.URL
 	Token     string
 	Transport http.RoundTripper
+
+	failures atomic.Uint64
 }
 
 // HostCredentials are the values kilnd gateway-env prints.
@@ -47,7 +50,7 @@ func NewHost(c HostCredentials) (*Host, error) {
 	if parsed.Scheme == "http" {
 		// A host on the same box answers on the loopback control listener,
 		// which needs no certificate.
-		host.Transport = http.DefaultTransport
+		host.Transport = countFailures{http.DefaultTransport, &host.failures}
 		return host, nil
 	}
 	if len(c.CACert) == 0 || len(c.ClientCert) == 0 || len(c.ClientKey) == 0 {
@@ -61,7 +64,7 @@ func NewHost(c HostCredentials) (*Host, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gateway: the client certificate: %w", err)
 	}
-	host.Transport = &http.Transport{
+	host.Transport = countFailures{&http.Transport{
 		TLSClientConfig: &tls.Config{
 			MinVersion:   tls.VersionTLS12,
 			RootCAs:      pool,
@@ -71,6 +74,6 @@ func NewHost(c HostCredentials) (*Host, error) {
 		// generous and idle connections do not linger.
 		MaxIdleConnsPerHost: 32,
 		IdleConnTimeout:     90 * time.Second,
-	}
+	}, &host.failures}
 	return host, nil
 }

@@ -269,6 +269,7 @@ func (m *Manager) checkEgressKeepsBindings(ctx context.Context, id string, allow
 
 // recordRequests stores the request log of one sandbox.
 func (m *Manager) recordRequests(id string, rows []network.RequestRecord, dropped int64) {
+	m.cfg.Metrics.RequestsDropped.Add(uint64(max(dropped, 0)))
 	out := make([]store.EgressRequest, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, store.EgressRequest{

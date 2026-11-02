@@ -357,12 +357,13 @@ func (m *Manager) Rewind(ctx context.Context, id, pointID string) (store.Sandbox
 // ForkPoint restores count new sandboxes from one point, and the origin does not
 // change. The copies read an unlisted image made of links to the point's files,
 // so they outlive the point, and a merge never writes to a file they read.
-func (m *Manager) ForkPoint(ctx context.Context, id, pointID string, count int, allowSecret bool, metadata map[string]any, credentials []CredentialInput) ([]store.Sandbox, error) {
+func (m *Manager) ForkPoint(ctx context.Context, id, pointID string, count int, allowSecret bool, metadata map[string]any, credentials []CredentialInput) (out []store.Sandbox, err error) {
 	if count < 1 {
 		return nil, invalidf("count must be greater than zero")
 	}
 	unlock := m.lockOps(id)
 	defer unlock()
+	defer observe(&m.cfg.Metrics.Fork, time.Now(), &err)
 	points, at, err := m.findPoint(ctx, id, pointID)
 	if err != nil {
 		return nil, err

@@ -689,5 +689,20 @@ Python, with no tracking and with it. Warm passes took 5.54 s and 5.63 s with no
 tracking, and 6.16 s and 5.90 s with it, about 8% on this one pattern. The first
 pass took about 50 s either way, because it faults in the memory.
 
-Not recorded: how long Factoree model calls last, from its `AgentSession` rows, so
-the model-wait parking condition has no answer yet.
+Factoree model calls, from the `AgentSession` rows in its local development database:
+33 sessions in 8 runs, one tenant, all opencode with `deepseek/deepseek-flash`. A
+session has about 8 turns. Its time per turn has a median of 20.3 s and a p90 of
+30.8 s, and that time includes tool runs. The longest call of a session, in the 29
+rows that record it, has a median of 38.2 s, a p90 of 195.5 s and a maximum of
+302.5 s. These rows are not production data.
+
+Model-wait parking gets no spec. A small diff plus a restore that reads a kept merge
+takes about 1.7 s, which is about 8% of a 20 s turn. A restore from a new diff must
+merge first, and the merge above took 64.7 s, which is longer than the median of the
+longest call.
+
+Done: `docs/specs/host-metrics.md`. The host and the gateway serve `GET /metrics` in
+Prometheus text format behind the operator token. `promtool check metrics` from
+Prometheus 2.53.4 passes on the output of both writers. `TestSecMetrics` in the sec
+gate holds the running count, the fork sample, the guard restart and the series count
+after 100 sandboxes.

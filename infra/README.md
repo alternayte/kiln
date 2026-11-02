@@ -224,6 +224,17 @@ sudo systemctl start kilnd
 `--sparse=always` matters: a rootfs is a mostly empty file of its full size.
 Remove `/var/lib/kiln.old` once previews work.
 
+## Metrics
+
+The host and the gateway serve `GET /metrics` in Prometheus text format. Each
+takes the operator token: `bearer_token` in `config.json` on the host, and
+`KILN_HOST_TOKEN` on the gateway. A tenant API key gets 401. No metric names a
+sandbox, tenant or template.
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" localhost:8080/metrics
+```
+
 ## The gateway listener
 
 A gateway on another machine reaches the host over mTLS. `kilnd init` has no

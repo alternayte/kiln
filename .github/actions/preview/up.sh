@@ -71,6 +71,9 @@ fi
 if [ "${FORK_COUNT:-0}" != "0" ]; then
   args+=(--fork-count "$FORK_COUNT")
 fi
+if [ "${VIEWER_FORK:-false}" = "true" ]; then
+  args+=(--viewer-fork --visibility team --viewer-cap "$VIEWER_CAP")
+fi
 
 # The client reads the token from the environment, so it stays off the command
 # line. With --json, a failure comes back on stdout.

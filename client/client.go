@@ -387,12 +387,20 @@ func (c *Client) DeleteSandbox(ctx context.Context, id string) error {
 type PublishRequest struct {
 	Port       int    `json:"port"`
 	Visibility string `json:"visibility"`
+	// ViewerFork gives each viewer login its own fork. It needs visibility team
+	// and ViewerCap.
+	ViewerFork      bool `json:"viewer_fork,omitempty"`
+	ViewerCap       int  `json:"viewer_cap,omitempty"`
+	AllowSecretFork bool `json:"allow_secret_fork,omitempty"`
 }
 
 // PublishCreated is the answer to a publish call.
 type PublishCreated struct {
 	URL        string `json:"url"`
 	Visibility string `json:"visibility"`
+	// ViewerCap and ViewerResetURL are set on a viewer fork origin.
+	ViewerCap      int    `json:"viewer_cap,omitempty"`
+	ViewerResetURL string `json:"viewer_reset_url,omitempty"`
 }
 
 // Publish serves one guest port on a hostname. Republishing the same port

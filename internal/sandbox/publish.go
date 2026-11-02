@@ -14,27 +14,55 @@ import (
 // returns the same hostname. Publishing does not wake a sleeping sandbox;
 // the ingress wakes it on the first request.
 func (m *Manager) Publish(ctx context.Context, id string, port int, visibility string) (store.Published, error) {
-	if port < 1 || port > 65535 {
-		return store.Published{}, invalidf("port must be between 1 and 65535")
-	}
-	if visibility != store.VisibilityPublic && visibility != store.VisibilityTeam {
-		return store.Published{}, invalidf("visibility must be %q or %q", store.VisibilityPublic, store.VisibilityTeam)
-	}
-	if m.cfg.Zone == "" {
-		return store.Published{}, invalidf("no preview zone is configured; run kilnd init --zone")
+	if err := m.checkPublish(port, visibility); err != nil {
+		return store.Published{}, err
 	}
 	unlock := m.lockOps(id)
 	defer unlock()
-	row, err := m.cfg.Store.GetSandbox(ctx, id)
+	row, err := m.publishable(ctx, id)
 	if err != nil {
 		return store.Published{}, err
 	}
+	// Every port of a viewer fork origin routes to a viewer's fork.
+	if _, err := m.cfg.Store.GetViewerOrigin(ctx, id); err == nil {
+		return store.Published{}, store.ErrConflict
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return store.Published{}, err
+	}
+	return m.publishLocked(ctx, row, port, visibility)
+}
+
+func (m *Manager) checkPublish(port int, visibility string) error {
+	if port < 1 || port > 65535 {
+		return invalidf("port must be between 1 and 65535")
+	}
+	if visibility != store.VisibilityPublic && visibility != store.VisibilityTeam {
+		return invalidf("visibility must be %q or %q", store.VisibilityPublic, store.VisibilityTeam)
+	}
+	if m.cfg.Zone == "" {
+		return invalidf("no preview zone is configured; run kilnd init --zone")
+	}
+	return nil
+}
+
+// publishable returns a sandbox that may take a hostname.
+func (m *Manager) publishable(ctx context.Context, id string) (store.Sandbox, error) {
+	row, err := m.cfg.Store.GetSandbox(ctx, id)
+	if err != nil {
+		return store.Sandbox{}, err
+	}
 	switch {
 	case row.DestroyedAt != nil || row.State == store.SandboxDestroyed:
-		return store.Published{}, store.ErrNotFound
+		return store.Sandbox{}, store.ErrNotFound
 	case row.State == store.SandboxFailed:
-		return store.Published{}, store.ErrConflict
+		return store.Sandbox{}, store.ErrConflict
 	}
+	return row, nil
+}
+
+// publishLocked gives one port its hostname. The caller holds the lifecycle lock.
+func (m *Manager) publishLocked(ctx context.Context, row store.Sandbox, port int, visibility string) (store.Published, error) {
+	id := row.ID
 	existing, err := m.cfg.Store.GetPublished(ctx, id, port)
 	switch {
 	case err == nil:
@@ -131,11 +159,31 @@ func (m *Manager) Published(ctx context.Context, id string) ([]store.Published, 
 }
 
 // Retire removes one published hostname. It 404s from then on and is never
-// handed out again.
+// handed out again. On a viewer fork origin it removes every hostname, every
+// fork and the snapshot, because a port left behind would serve the shared origin.
 func (m *Manager) Retire(ctx context.Context, id string, port int) error {
 	unlock := m.lockOps(id)
 	defer unlock()
-	return m.cfg.Store.RetirePublished(ctx, id, port)
+	if err := m.cfg.Store.RetirePublished(ctx, id, port); err != nil {
+		return err
+	}
+	if _, err := m.cfg.Store.GetViewerOrigin(ctx, id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	hosts, err := m.cfg.Store.ListPublished(ctx, id)
+	if err != nil {
+		return err
+	}
+	for _, host := range hosts {
+		if err := m.cfg.Store.RetirePublished(ctx, id, host.GuestPort); err != nil {
+			return err
+		}
+	}
+	m.endViewerForks(context.WithoutCancel(ctx), id)
+	return nil
 }
 
 // PublishedURL is the public URL of one published port.

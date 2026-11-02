@@ -31,7 +31,8 @@ var (
 type previewOptions struct {
 	name, image, start, registryUsername, envFile, visibility string
 	servicesFile, seedFile                                    string
-	noServiceEnv                                              bool
+	noServiceEnv, viewerFork, allowSecretFork                 bool
+	viewerCap                                                 int
 	port, vcpus, memoryMB, diskMB, ttlSeconds, idleSeconds    int
 	forkCount                                                 int
 	publish                                                   []int
@@ -53,7 +54,7 @@ func (c *cli) cmdPreview(args []string) error {
 	return usagef("kiln preview up --image X --port N", "unknown command %q", "preview "+args[0])
 }
 
-const previewUsage = "kiln preview up --image X --port N [--start CMD] [--name NAME] [--publish PORT] [--env-file FILE|-] [--egress-allow HOST] [--setup CMD] [--vcpus N] [--memory-mb N] [--disk-mb N] [--ttl-seconds N] [--idle-seconds N] [--visibility public|team] [--metadata K=V] [--group K=V] [--registry-username NAME] [--services-file FILE] [--no-service-env] [--seed-file FILE] [--seed CMD] [--fork-count N] [--timeout D]"
+const previewUsage = "kiln preview up --image X --port N [--start CMD] [--name NAME] [--publish PORT] [--env-file FILE|-] [--egress-allow HOST] [--setup CMD] [--vcpus N] [--memory-mb N] [--disk-mb N] [--ttl-seconds N] [--idle-seconds N] [--visibility public|team] [--metadata K=V] [--group K=V] [--registry-username NAME] [--services-file FILE] [--no-service-env] [--seed-file FILE] [--seed CMD] [--fork-count N] [--viewer-fork] [--viewer-cap N] [--allow-secret-fork] [--timeout D]"
 
 // parsePreview reads the flags of preview up and preview down.
 func parsePreview(args []string) (*previewOptions, error) {
@@ -72,6 +73,14 @@ func parsePreview(args []string) (*previewOptions, error) {
 		}
 		if name == "no-service-env" {
 			o.noServiceEnv = true
+			continue
+		}
+		if name == "viewer-fork" {
+			o.viewerFork = true
+			continue
+		}
+		if name == "allow-secret-fork" {
+			o.allowSecretFork = true
 			continue
 		}
 		if !hasValue {
@@ -123,6 +132,8 @@ func parsePreview(args []string) (*previewOptions, error) {
 			o.seedFile = value
 		case "fork-count":
 			err = number(&o.forkCount)
+		case "viewer-cap":
+			err = number(&o.viewerCap)
 		case "publish":
 			for _, word := range strings.Fields(value) {
 				port, perr := strconv.Atoi(word)
@@ -170,6 +181,17 @@ func parsePreview(args []string) (*previewOptions, error) {
 		o.group["preview"] = filepath.Base(dir)
 	}
 	return o, nil
+}
+
+// publishBody is one publish call of a preview.
+func (o *previewOptions) publishBody(port int) map[string]any {
+	body := map[string]any{"port": port, "visibility": o.visibility}
+	if o.viewerFork {
+		body["viewer_fork"] = true
+		body["viewer_cap"] = o.viewerCap
+		body["allow_secret_fork"] = o.allowSecretFork
+	}
+	return body
 }
 
 func (c *cli) previewUp(args []string) error {
@@ -265,7 +287,7 @@ func (c *cli) previewUp(args []string) error {
 			URL string `json:"url"`
 		}
 		path := "/v1/sandboxes/" + url.PathEscape(sandbox.ID) + "/publish"
-		if _, err := c.call(c.ctx, "POST", path, map[string]any{"port": port, "visibility": o.visibility}, &published); err != nil {
+		if _, err := c.call(c.ctx, "POST", path, o.publishBody(port), &published); err != nil {
 			c.discardSandbox(sandbox.ID, o.name)
 			return err
 		}

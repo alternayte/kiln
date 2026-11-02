@@ -189,3 +189,28 @@ template across commits gives every preview the same code.
   story as it happens.
 - A private image with no stored credential fails to pull. Store the
   credential for that registry and build again.
+
+## One fork for each viewer
+
+A team preview can give each viewer login its own fork, so viewers do not see each
+other's changes.
+
+```sh
+kiln preview up --image X --port 8000 --viewer-fork --visibility team --viewer-cap 10
+```
+
+The Action takes `viewer-fork` and `viewer-cap`. A preview that holds env values also
+needs `--allow-secret-fork` on `kiln preview up`, because each fork copies that memory.
+
+- The publish call takes one snapshot. Each fork restores from it, and a visit does not
+  pause the origin. The origin may sleep.
+- A viewer keeps one fork across devices. An idle fork ends, and the next visit starts a
+  clean one.
+- A viewer past `viewer_cap`, or past the tenant's `max_sandboxes`, gets a 503 page that
+  names the limit.
+- `/_kiln/fork` on the hostname is the viewer's reset page, and the publish answer names
+  it as `viewer_reset_url`. `GET /v1/sandboxes/{id}/viewer-forks` lists each viewer and fork.
+- A fork starts with no credential bindings, unless the publish call names
+  `viewer_credentials`.
+- Destroying the origin, or retiring any of its ports, retires every port and destroys
+  every fork and the snapshot. A plain publish of a viewer fork origin returns `conflict`.

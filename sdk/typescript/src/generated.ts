@@ -160,7 +160,7 @@ export class GeneratedClient {
   }
 
   /** Serve a guest port on a public hostname. */
-  publish(id: string, body: { port: number; visibility: string }): Promise<unknown> {
+  publish(id: string, body: { port: number; visibility: string; viewer_fork?: boolean; viewer_cap?: number; allow_secret_fork?: boolean; viewer_credentials?: Record<string, unknown>[] }): Promise<unknown> {
     return this.json("POST", `/v1/sandboxes/${encodeURIComponent(String(id))}/publish`, body);
   }
 
@@ -192,6 +192,11 @@ export class GeneratedClient {
   /** Stop the guest and restore a timeline point under the same sandbox id and hostnames. Every later point goes, and open connections end. The current egress policy and credential bindings stay. The guest gets new entropy. */
   rewindPoint(id: string, point: string): Promise<unknown> {
     return this.json("POST", `/v1/sandboxes/${encodeURIComponent(String(id))}/timeline/${encodeURIComponent(String(point))}/rewind`);
+  }
+
+  /** List each viewer of a viewer fork origin and the id of its live fork. */
+  viewerForks(id: string): Promise<unknown> {
+    return this.json("GET", `/v1/sandboxes/${encodeURIComponent(String(id))}/viewer-forks`);
   }
 
   /** List the snapshots of this tenant. */

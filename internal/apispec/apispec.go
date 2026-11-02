@@ -321,8 +321,18 @@ func Operations() []Operation {
 			Body: []Field{
 				{Name: "port", Type: "integer", Required: true, Doc: "Port inside the sandbox."},
 				{Name: "visibility", Type: "string", Required: true, Doc: "public or team."},
+				{Name: "viewer_fork", Type: "boolean", Doc: "Give each viewer login its own fork of one snapshot of this sandbox. It needs visibility team, and every published port routes to the fork. A later plain publish of this sandbox is a conflict. Retiring any port retires them all, with every fork and the snapshot."},
+				{Name: "viewer_cap", Type: "integer", Doc: "The most live viewer forks. Required with viewer_fork. A viewer past it gets a page that names the limit."},
+				{Name: "allow_secret_fork", Type: "boolean", Doc: "Allow viewer forks of a sandbox that holds secrets, because each fork copies that memory."},
+				{Name: "viewer_credentials", Type: "array", Items: "object", Doc: "Credential bindings of each viewer fork, in the form setCredentials takes. A fork starts with none."},
 			},
 			Returns: "Published",
+		},
+		{
+			ID: "viewerForks", Command: "sandboxes viewer-forks", Method: "GET", Path: "/v1/sandboxes/{id}/viewer-forks", Status: 200,
+			Summary: "List each viewer of a viewer fork origin and the id of its live fork.",
+			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id of the origin."}},
+			Returns: "ViewerForkList",
 		},
 		{
 			ID: "retire", Command: "sandboxes retire", Method: "DELETE", Path: "/v1/sandboxes/{id}/publish/{port}", Status: 204,

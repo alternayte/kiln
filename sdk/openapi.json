@@ -227,6 +227,12 @@
           "url": {
             "type": "string"
           },
+          "viewer_cap": {
+            "type": "integer"
+          },
+          "viewer_reset_url": {
+            "type": "string"
+          },
           "visibility": {
             "type": "string"
           }
@@ -575,6 +581,25 @@
           },
           "tenant": {
             "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ViewerForkList": {
+        "properties": {
+          "viewer_forks": {
+            "items": {
+              "properties": {
+                "fork_id": {
+                  "type": "string"
+                },
+                "viewer_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
           }
         },
         "type": "object"
@@ -2473,8 +2498,23 @@
             "application/json": {
               "schema": {
                 "properties": {
+                  "allow_secret_fork": {
+                    "type": "boolean"
+                  },
                   "port": {
                     "type": "integer"
+                  },
+                  "viewer_cap": {
+                    "type": "integer"
+                  },
+                  "viewer_credentials": {
+                    "items": {
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "viewer_fork": {
+                    "type": "boolean"
                   },
                   "visibility": {
                     "type": "string"
@@ -3068,6 +3108,85 @@
           }
         },
         "summary": "Stop the guest and restore a timeline point under the same sandbox id and hostnames. Every later point goes, and open connections end. The current egress policy and credential bindings stay. The guest gets new entropy."
+      }
+    },
+    "/v1/sandboxes/{id}/viewer-forks": {
+      "get": {
+        "operationId": "viewerForks",
+        "parameters": [
+          {
+            "description": "Sandbox id of the origin.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewerForkList"
+                }
+              }
+            },
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised."
+          }
+        },
+        "summary": "List each viewer of a viewer fork origin and the id of its live fork."
       }
     },
     "/v1/snapshots": {

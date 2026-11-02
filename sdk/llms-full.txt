@@ -431,6 +431,10 @@ Body:
 
 - `port` (integer, required): Port inside the sandbox.
 - `visibility` (string, required): public or team.
+- `viewer_fork` (boolean): Give each viewer login its own fork of one snapshot of this sandbox. It needs visibility team, and every published port routes to the fork. A later plain publish of this sandbox is a conflict. Retiring any port retires them all, with every fork and the snapshot.
+- `viewer_cap` (integer): The most live viewer forks. Required with viewer_fork. A viewer past it gets a page that names the limit.
+- `allow_secret_fork` (boolean): Allow viewer forks of a sandbox that holds secrets, because each fork copies that memory.
+- `viewer_credentials` (array of object): Credential bindings of each viewer fork, in the form setCredentials takes. A fork starts with none.
 
 Answers 201 with `Published`.
 
@@ -546,6 +550,20 @@ Path:
 - `point` (string): Point id.
 
 Answers 200 with `Sandbox`.
+
+### viewerForks
+
+`GET /v1/sandboxes/{id}/viewer-forks`
+
+`kiln sandboxes viewer-forks`
+
+List each viewer of a viewer fork origin and the id of its live fork.
+
+Path:
+
+- `id` (string): Sandbox id of the origin.
+
+Answers 200 with `ViewerForkList`.
 
 ### listSnapshots
 

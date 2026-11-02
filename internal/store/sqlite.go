@@ -966,6 +966,84 @@ func (s *sqliteStore) PublishSandbox(ctx context.Context, p Published) error {
 	return tx.Commit()
 }
 
+func (s *sqliteStore) CreateViewerOrigin(ctx context.Context, o ViewerOrigin) error {
+	bindings, err := json.Marshal(o.Bindings)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO viewer_origins (sandbox_id, snapshot_id, viewer_cap, bindings, created_at)
+		VALUES (?, ?, ?, ?, ?)`, o.SandboxID, o.SnapshotID, o.Cap, string(bindings), o.CreatedAt.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *sqliteStore) GetViewerOrigin(ctx context.Context, sandboxID string) (ViewerOrigin, error) {
+	var (
+		o        ViewerOrigin
+		bindings string
+		created  string
+	)
+	err := s.db.QueryRowContext(ctx, `SELECT sandbox_id, snapshot_id, viewer_cap, bindings, created_at
+		FROM viewer_origins WHERE sandbox_id = ?`, sandboxID).Scan(&o.SandboxID, &o.SnapshotID, &o.Cap, &bindings, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ViewerOrigin{}, ErrNotFound
+	}
+	if err != nil {
+		return ViewerOrigin{}, err
+	}
+	if err := json.Unmarshal([]byte(bindings), &o.Bindings); err != nil {
+		return ViewerOrigin{}, fmt.Errorf("store: viewer origin %s: bindings: %w", sandboxID, err)
+	}
+	o.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
+	return o, err
+}
+
+func (s *sqliteStore) ViewerOriginHolds(ctx context.Context, snapshotID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM viewer_origins WHERE snapshot_id = ?`, snapshotID).Scan(&n)
+	return n > 0, err
+}
+
+func (s *sqliteStore) DeleteViewerOrigin(ctx context.Context, sandboxID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM viewer_forks WHERE origin_id = ?`, sandboxID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM viewer_origins WHERE sandbox_id = ?`, sandboxID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *sqliteStore) SetViewerFork(ctx context.Context, originID, viewerID, forkID string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO viewer_forks (origin_id, viewer_id, fork_id) VALUES (?, ?, ?)
+		ON CONFLICT (origin_id, viewer_id) DO UPDATE SET fork_id = excluded.fork_id`, originID, viewerID, forkID)
+	return err
+}
+
+func (s *sqliteStore) ListViewerForks(ctx context.Context, originID string) ([]ViewerFork, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT f.viewer_id, f.fork_id FROM viewer_forks f
+		JOIN sandboxes b ON b.id = f.fork_id
+		WHERE f.origin_id = ? AND b.destroyed_at IS NULL AND b.state NOT IN (?, ?)
+		ORDER BY f.viewer_id`, originID, SandboxDestroyed, SandboxFailed)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ViewerFork
+	for rows.Next() {
+		var fork ViewerFork
+		if err := rows.Scan(&fork.ViewerID, &fork.ForkID); err != nil {
+			return nil, err
+		}
+		out = append(out, fork)
+	}
+	return out, rows.Err()
+}
+
 func (s *sqliteStore) GetPublished(ctx context.Context, sandboxID string, port int) (Published, error) {
 	clause, args := scope(ctx, "tenant_id")
 	row := s.db.QueryRowContext(ctx, `SELECT

@@ -256,6 +256,23 @@ type TimelinePoint struct {
 	CreatedAt   time.Time
 }
 
+// ViewerOrigin is a sandbox whose hostnames give each viewer login its own fork.
+type ViewerOrigin struct {
+	SandboxID string
+	// SnapshotID is the one snapshot every fork restores from.
+	SnapshotID string
+	Cap        int
+	// Bindings are the sealed credential bindings each fork starts with.
+	Bindings  []CredentialBinding
+	CreatedAt time.Time
+}
+
+// ViewerFork is the live fork of one viewer login.
+type ViewerFork struct {
+	ViewerID string
+	ForkID   string
+}
+
 // Published is one hostname a sandbox port is served on.
 type Published struct {
 	SandboxID string
@@ -376,6 +393,19 @@ type Store interface {
 	// TimelineDiffOK reads that record.
 	TimelineDiffOK(ctx context.Context, sandboxID string) (bool, error)
 
+	// CreateViewerOrigin stores the viewer fork settings of one sandbox.
+	CreateViewerOrigin(ctx context.Context, o ViewerOrigin) error
+	// GetViewerOrigin returns the settings of one sandbox, or ErrNotFound.
+	GetViewerOrigin(ctx context.Context, sandboxID string) (ViewerOrigin, error)
+	// ViewerOriginHolds reports whether an origin restores forks from a snapshot.
+	ViewerOriginHolds(ctx context.Context, snapshotID string) (bool, error)
+	// DeleteViewerOrigin removes the settings and every fork row.
+	DeleteViewerOrigin(ctx context.Context, sandboxID string) error
+	// SetViewerFork names the current fork of one viewer.
+	SetViewerFork(ctx context.Context, originID, viewerID, forkID string) error
+	// ListViewerForks returns the forks of an origin that are not destroyed or
+	// failed, ordered by viewer.
+	ListViewerForks(ctx context.Context, originID string) ([]ViewerFork, error)
 	// PublishSandbox inserts one preview. A subdomain another row already
 	// holds is ErrConflict, and the caller draws a new one.
 	PublishSandbox(ctx context.Context, p Published) error

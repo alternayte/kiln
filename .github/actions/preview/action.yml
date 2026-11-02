@@ -69,6 +69,16 @@ inputs:
       its own data. The output fork-ids names them.
     required: false
     default: "0"
+  viewer-fork:
+    description: >
+      Give each viewer login its own fork of one snapshot of the preview. The
+      preview becomes team visibility, and viewer-cap is required.
+    required: false
+    default: "false"
+  viewer-cap:
+    description: The most live viewer forks. A viewer past it gets a page that names the limit.
+    required: false
+    default: ""
   vcpus:
     description: Virtual CPUs of the preview.
     required: false
@@ -175,6 +185,8 @@ runs:
         SERVICES: ${{ inputs.services }}
         SEED: ${{ inputs.seed }}
         FORK_COUNT: ${{ inputs.fork-count }}
+        VIEWER_FORK: ${{ inputs.viewer-fork }}
+        VIEWER_CAP: ${{ inputs.viewer-cap }}
         VCPUS: ${{ inputs.vcpus }}
         MEMORY_MB: ${{ inputs.memory-mb }}
         DISK_MB: ${{ inputs.disk-mb }}

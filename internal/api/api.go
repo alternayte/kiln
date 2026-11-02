@@ -93,6 +93,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sandboxes/{id}/timeline/{point}/rewind", s.rewindPoint)
 	mux.HandleFunc("POST /v1/sandboxes/{id}/publish", s.publishSandbox)
 	mux.HandleFunc("DELETE /v1/sandboxes/{id}/publish/{port}", s.unpublishSandbox)
+	mux.HandleFunc("GET /v1/sandboxes/{id}/viewer-forks", s.listViewerForks)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/files/{path...}", s.getSandboxFile)
 	mux.HandleFunc("PUT /v1/sandboxes/{id}/files/{path...}", s.putSandboxFile)
 	mux.HandleFunc("GET /v1/registries", s.listRegistries)

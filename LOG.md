@@ -706,3 +706,9 @@ Prometheus text format behind the operator token. `promtool check metrics` from
 Prometheus 2.53.4 passes on the output of both writers. `TestSecMetrics` in the sec
 gate holds the running count, the fork sample, the guard restart and the series count
 after 100 sandboxes.
+
+Done: `docs/specs/preview-fork-on-visit.md`. A publish call with `viewer_fork` and
+`viewer_cap` gives each viewer login its own fork of one snapshot. The spec says a retire
+of the port ends the forks. It does not say what happens to the other ports of the origin,
+so a retire of any port retires them all, because a port left behind serves the shared
+origin. `TestSecViewerFork` in the sec gate holds the spec's checks.

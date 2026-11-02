@@ -168,7 +168,7 @@ func TestSecMetrics(t *testing.T) {
 		}
 		before := series(scrape(t))
 		for i := 0; i < 100; i++ {
-			row, err := sbx.Create(ctx, sandbox.CreateRequest{Template: metricsTemplate, Lifecycle: store.LifecycleEphemeral})
+			row, err := sbx.Create(ctx, sandbox.CreateRequest{Template: metricsTemplate, Lifecycle: store.LifecycleEphemeral, IdleSeconds: 60})
 			if err != nil {
 				t.Fatalf("create %d: %v", i, err)
 			}

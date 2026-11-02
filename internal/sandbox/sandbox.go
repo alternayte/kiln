@@ -807,6 +807,7 @@ func (m *Manager) destroyLocked(ctx context.Context, id string) error {
 		return err
 	}
 	m.event(ctx, id, row.State, store.SandboxStopping, "destroy", m.now())
+	m.endViewerForks(context.WithoutCancel(ctx), id)
 	// Publishing dies with the sandbox. The hostnames 404 from then on.
 	if err := m.cfg.Store.DeletePublishedForSandbox(ctx, id); err != nil {
 		return err
@@ -885,6 +886,10 @@ func (m *Manager) reapSnapshot(ctx context.Context, snapshotID string) {
 	}
 	snap, err := m.cfg.Store.GetSnapshot(ctx, snapshotID)
 	if err != nil || snap.Listed {
+		return
+	}
+	// A viewer's next visit restores from this snapshot, with no fork live.
+	if held, err := m.cfg.Store.ViewerOriginHolds(ctx, snapshotID); err != nil || held {
 		return
 	}
 	live, err := m.cfg.Store.CountRestoredChildren(ctx, snapshotID)

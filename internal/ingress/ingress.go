@@ -8,10 +8,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -100,6 +102,14 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r)
 		return
 	}
+	viewerFork := false
+	if _, err := s.cfg.Store.GetViewerOrigin(r.Context(), row.SandboxID); err == nil {
+		viewerFork = true
+	} else if !errors.Is(err, store.ErrNotFound) {
+		log.Printf("ingress: viewer origin %s: %v", row.SandboxID, err)
+		http.Error(w, "the preview lookup failed", http.StatusBadGateway)
+		return
+	}
 	waking := sb.State == store.SandboxSleeping || sb.State == store.SandboxWaking
 	// The viewer login is served on every published hostname, and nowhere
 	// else. Only the exact prefix counts, so a decorated path cannot claim to
@@ -134,9 +144,106 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			s.challenge(w, r)
 			return
 		}
+		if viewerFork {
+			s.serveViewerFork(w, r, row, p.User.ID)
+			return
+		}
 		toGuest.ServeHTTP(w, r)
 	})
 	s.cfg.Auth.Auth.RequireAuth(guarded).ServeHTTP(w, r)
+}
+
+// serveViewerFork routes one viewer to its own fork, and serves the page that
+// resets it. A visit never wakes the origin.
+func (s *Server) serveViewerFork(w http.ResponseWriter, r *http.Request, row store.Published, viewer string) {
+	ctx := store.WithTenant(r.Context(), row.TenantID)
+	switch path.Clean(r.URL.Path) {
+	case viewerForkPage:
+		s.viewerForkPage(w, r)
+		return
+	case viewerForkReset:
+		s.resetViewerFork(w, r, row, viewer)
+		return
+	}
+	id, live, err := s.cfg.Sandboxes.LiveViewerFork(ctx, row.SandboxID, viewer)
+	if err == nil && !live {
+		if !s.allowWake(row.Subdomain) {
+			w.Header().Set("Retry-After", strconv.Itoa(int(wakeRetryAfter.Seconds())))
+			http.Error(w, "the wake limit is reached; retry later", http.StatusServiceUnavailable)
+			return
+		}
+		defer s.releaseWake()
+		id, err = s.cfg.Sandboxes.ViewerFork(ctx, row.SandboxID, viewer)
+	}
+	if err != nil {
+		var limit *sandbox.LimitError
+		switch {
+		case errors.As(err, &limit):
+			s.limitPage(w, limit.Message)
+		case errors.Is(err, store.ErrNotFound):
+			s.notFound(w, r)
+		default:
+			log.Printf("ingress: %s: viewer fork: %v", row.Subdomain, err)
+			http.Error(w, "your copy of this preview did not start", http.StatusServiceUnavailable)
+		}
+		return
+	}
+	row.SandboxID = id
+	s.proxy(w, r, row, false)
+}
+
+// Paths on a viewer fork hostname that never reach a guest.
+const (
+	viewerForkPage  = "/_kiln/fork"
+	viewerForkReset = "/_kiln/fork/reset"
+)
+
+// viewerForkPage offers the reset. The page is this server's own and holds no
+// script, so it replaces the sandbox policy with one that lets its form post.
+func (s *Server) viewerForkPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "use GET", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self'")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = fmt.Fprintf(w, `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Your copy of this preview</title></head>
+<body><h1>Your copy of this preview</h1><p>A reset removes your changes. Your next visit starts from the original state.</p>
+<form method="post" action="%s"><button>Reset my copy</button></form></body></html>
+`, viewerForkReset)
+}
+
+// resetViewerFork destroys the fork of the viewer who asks. Only this server's
+// page may ask: a guest page has an opaque origin, and another site has its own.
+func (s *Server) resetViewerFork(w http.ResponseWriter, r *http.Request, row store.Published, viewer string) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "use POST", http.StatusMethodNotAllowed)
+		return
+	}
+	origin, err := url.Parse(r.Header.Get("Origin"))
+	if err != nil || origin.Host == "" || !strings.EqualFold(origin.Host, r.Host) {
+		http.Error(w, "the reset must come from this preview's page", http.StatusForbidden)
+		return
+	}
+	if err := s.cfg.Sandboxes.ResetViewerFork(store.WithTenant(r.Context(), row.TenantID), row.SandboxID, viewer); err != nil {
+		log.Printf("ingress: %s: reset a viewer fork: %v", row.Subdomain, err)
+		http.Error(w, "the reset failed", http.StatusBadGateway)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// limitPage names the cap that refused a viewer. A silent failure looks like an
+// application bug.
+func (s *Server) limitPage(w http.ResponseWriter, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Retry-After", strconv.Itoa(int(wakeRetryAfter.Seconds())))
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_, _ = fmt.Fprintf(w, `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Preview limit reached</title></head>
+<body><h1>Preview limit reached</h1><p>%s. A copy that nobody uses ends after its idle time, so retry later.</p></body></html>
+`, html.EscapeString(message))
 }
 
 // serveAuth mounts the viewer login. Only sign-in, sign-out and the session

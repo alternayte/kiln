@@ -89,6 +89,8 @@ export type ProcessCreated = {
 export type Published = {
     port?: number;
     url?: string;
+    viewer_cap?: number;
+    viewer_reset_url?: string;
     visibility?: string;
 };
 
@@ -217,6 +219,13 @@ export type Viewer = {
     email?: string;
     id?: string;
     tenant?: string;
+};
+
+export type ViewerForkList = {
+    viewer_forks?: Array<{
+        fork_id?: string;
+        viewer_id?: string;
+    }>;
 };
 
 export type ViewerList = Array<Viewer>;
@@ -1244,7 +1253,13 @@ export type ReadProcessResponse = ReadProcessResponses[keyof ReadProcessResponse
 
 export type PublishData = {
     body: {
+        allow_secret_fork?: boolean;
         port: number;
+        viewer_cap?: number;
+        viewer_credentials?: Array<{
+            [key: string]: unknown;
+        }>;
+        viewer_fork?: boolean;
         visibility: string;
     };
     path: {
@@ -1582,6 +1597,52 @@ export type RewindPointResponses = {
 };
 
 export type RewindPointResponse = RewindPointResponses[keyof RewindPointResponses];
+
+export type ViewerForksData = {
+    body?: never;
+    path: {
+        /**
+         * Sandbox id of the origin.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/v1/sandboxes/{id}/viewer-forks';
+};
+
+export type ViewerForksErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
+     */
+    429: Error;
+};
+
+export type ViewerForksError = ViewerForksErrors[keyof ViewerForksErrors];
+
+export type ViewerForksResponses = {
+    /**
+     * The call succeeded.
+     */
+    200: ViewerForkList;
+};
+
+export type ViewerForksResponse = ViewerForksResponses[keyof ViewerForksResponses];
 
 export type ListSnapshotsData = {
     body?: never;

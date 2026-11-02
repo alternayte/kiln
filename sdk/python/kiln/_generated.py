@@ -171,11 +171,15 @@ class GeneratedClient:
         }.items() if v is not None})
         return self._json("GET", f"/v1/sandboxes/{id}/processes/{pid}" + ("?" + query if query else ""))
 
-    def publish(self, id: str, port: int, visibility: str) -> Any:
+    def publish(self, id: str, port: int, visibility: str, viewer_fork: Optional[bool] = None, viewer_cap: Optional[int] = None, allow_secret_fork: Optional[bool] = None, viewer_credentials: Optional[list[dict[str, Any]]] = None) -> Any:
         """Serve a guest port on a public hostname."""
         body = {k: v for k, v in {
             "port": port,
             "visibility": visibility,
+            "viewer_fork": viewer_fork,
+            "viewer_cap": viewer_cap,
+            "allow_secret_fork": allow_secret_fork,
+            "viewer_credentials": viewer_credentials,
         }.items() if v is not None}
         return self._json("POST", f"/v1/sandboxes/{id}/publish", body)
 
@@ -208,6 +212,10 @@ class GeneratedClient:
     def rewind_point(self, id: str, point: str) -> Any:
         """Stop the guest and restore a timeline point under the same sandbox id and hostnames. Every later point goes, and open connections end. The current egress policy and credential bindings stay. The guest gets new entropy."""
         return self._json("POST", f"/v1/sandboxes/{id}/timeline/{point}/rewind")
+
+    def viewer_forks(self, id: str) -> Any:
+        """List each viewer of a viewer fork origin and the id of its live fork."""
+        return self._json("GET", f"/v1/sandboxes/{id}/viewer-forks")
 
     def list_snapshots(self) -> Any:
         """List the snapshots of this tenant."""

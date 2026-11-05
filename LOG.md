@@ -771,3 +771,14 @@ mounts `/dev`, as the udev rules of Debian and Fedora do. A TAP device still nee
 template snapshot, so a template built before v0.16.2 must be built again.
 `TestSecAgentControls/Containers` checks both modes, makes a TAP device in a namespace of the
 user, and checks that the user cannot make one in the namespace of the guest.
+
+Fixed: an exec whose caller dropped the connection kept running. kilninit killed the process
+group only after both output pumps ended, and a pump ended only when a frame write failed. A
+command that wrote nothing more ran until its timeout, and one that wrote more blocked on a
+pipe nobody read. A restart of kilnd drops every open exec stream, so it left those commands
+behind. kilninit now reads the connection, and when the host closes it, or a write fails, it
+kills the group and closes the pipes. `TestExecStopsWhenTheHostDrops` pins it. Found while
+checking issue 28: the issue reads utime and stime with `cut -d" " -f14,15 /proc/<pid>/stat`,
+and the comm `npm ci` holds a space, so it read cmajflt and utime. The stalled npm spent its
+time in user space, not in the guest kernel. Four runs on the box did not stall, so issue 28
+stays open.

@@ -94,6 +94,36 @@ func powerOff() {
 	}
 }
 
+// abandoner stops an exec whose caller is gone: it kills the process group and
+// closes the output pipes, so a pump blocked on a pipe that a process outside
+// the group holds open returns too. finish makes later calls do nothing, so a
+// connection closed after the result never signals a reaped group id.
+type abandoner struct {
+	mu    sync.Mutex
+	done  bool
+	kill  func()
+	pipes []io.Closer
+}
+
+func (a *abandoner) call() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.done {
+		return
+	}
+	a.done = true
+	a.kill()
+	for _, p := range a.pipes {
+		_ = p.Close()
+	}
+}
+
+func (a *abandoner) finish() {
+	a.mu.Lock()
+	a.done = true
+	a.mu.Unlock()
+}
+
 // session serializes frames from the two output pumps onto one connection.
 type session struct {
 	conn net.Conn
@@ -159,29 +189,27 @@ func runExec(conn net.Conn, req *guestproto.Request) {
 	s := &session{conn: conn}
 	kill := func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	timer := time.AfterFunc(time.Duration(req.TimeoutSeconds)*time.Second, kill)
+	// The host sends nothing after the request, so a read that returns means
+	// it closed the connection. A dropped caller left the command running
+	// with pipes nobody read, and it blocked on its next write for good.
+	abandon := &abandoner{kill: kill, pipes: []io.Closer{stdout, stderr}}
+	go func() {
+		_, _ = io.Copy(io.Discard, conn)
+		abandon.call()
+	}()
 
 	var wg sync.WaitGroup
-	var sendErr error
-	var sendMu sync.Mutex
 	pump := func(typ byte, r io.Reader) {
 		defer wg.Done()
 		if err := s.stream(typ, r); err != nil {
-			sendMu.Lock()
-			sendErr = err
-			sendMu.Unlock()
+			abandon.call()
 		}
 	}
 	wg.Add(2)
 	go pump(guestproto.FrameStdout, stdout)
 	go pump(guestproto.FrameStderr, stderr)
 	wg.Wait()
-
-	sendMu.Lock()
-	broken := sendErr != nil
-	sendMu.Unlock()
-	if broken {
-		kill()
-	}
+	abandon.finish()
 
 	waitErr := cmd.Wait()
 	killed := !timer.Stop()

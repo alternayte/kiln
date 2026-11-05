@@ -23,6 +23,7 @@ func checkContainerSupport(t *testing.T, ctx context.Context, sbx *sandbox.Manag
 	assertContainerGuest(t, ctx, sbx, sb.ID)
 	assertImageModes(t, ctx, sbx, sb.ID)
 	assertUserDevices(t, ctx, sbx, sb.ID)
+	assertHosts(t, ctx, sbx, sb.ID)
 
 	copies, err := sbx.Fork(ctx, sb.ID, 2, false, nil, nil)
 	if err != nil {
@@ -35,6 +36,7 @@ func checkContainerSupport(t *testing.T, ctx context.Context, sbx *sandbox.Manag
 	}()
 	for _, c := range copies {
 		assertContainerGuest(t, ctx, sbx, c.ID)
+		assertHosts(t, ctx, sbx, c.ID)
 		if out := guestOutput(t, ctx, sbx, c.ID, "cat", "/var/lib/kiln-data/origin"); strings.TrimSpace(out) != "origin" {
 			t.Errorf("fork %s lost the data written before the fork: %q", c.ID, out)
 		}
@@ -138,5 +140,18 @@ func assertUserDevices(t *testing.T, ctx context.Context, sbx *sandbox.Manager, 
 	}
 	if out := guestOutput(t, ctx, sbx, id, "python", "-c", tapScript); strings.TrimSpace(out) == "ok" {
 		t.Errorf("%s: the user made a TAP device in the guest namespace: %q", id, out)
+	}
+}
+
+// assertHosts checks that a guest whose image holds no /etc/hosts resolves
+// localhost and its own sandbox id through files (issue 29). rootlesskit
+// opens the file, and it fails when the file is missing.
+func assertHosts(t *testing.T, ctx context.Context, sbx *sandbox.Manager, id string) {
+	t.Helper()
+	if out := guestOutput(t, ctx, sbx, id, "getent", "hosts", "localhost"); !strings.HasPrefix(out, "::1") && !strings.HasPrefix(out, "127.0.0.1") {
+		t.Errorf("%s: localhost resolves to %q", id, out)
+	}
+	if out := guestOutput(t, ctx, sbx, id, "getent", "hosts", id); !strings.HasPrefix(out, "127.0.1.1") {
+		t.Errorf("%s: its hostname resolves to %q", id, out)
 	}
 }

@@ -782,3 +782,14 @@ checking issue 28: the issue reads utime and stime with `cut -d" " -f14,15 /proc
 and the comm `npm ci` holds a space, so it read cmajflt and utime. The stalled npm spent its
 time in user space, not in the guest kernel. Four runs on the box did not stall, so issue 28
 stays open.
+
+Fixed: issue 29, a guest whose image held no `/etc/hosts` booted with none. Docker and Podman
+bind-mount that file, so an image layer seldom has it. rootlesskit failed when it opened the
+file, and localhost did not resolve through files. The template build now writes the localhost
+lines when the image has no file, with a marker as the first line, and keeps a file the image
+holds. A template with services keeps its own file, which now holds the marker too. At each
+resume kilninit puts the hostname on `127.0.1.1` in a marked file, so a fork resolves its own
+sandbox id. A template built before v0.16.4 has no file, so it must be built again.
+`TestEnsureHostsKeepsTheImageFile` and `TestHostsWithNameReplacesTheHostname` pin both sides,
+and `TestSecAgentControls/Containers` resolves localhost and the sandbox id in a guest and in
+its forks.

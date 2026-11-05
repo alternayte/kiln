@@ -21,6 +21,11 @@ const Port uint32 = 52
 // exec.LookPath can resolve a command by name.
 const DefaultPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+// HostsMarker is the first line of an /etc/hosts that the template build
+// wrote. The guest names its hostname in that file at each resume, and it
+// leaves a file the image holds alone.
+const HostsMarker = "# Written by Kiln. The guest adds its hostname at each resume."
+
 // MaxFrame is the largest frame either side accepts, in bytes.
 const MaxFrame = 1 << 20
 

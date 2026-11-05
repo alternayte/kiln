@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"unsafe"
 
@@ -42,6 +43,9 @@ func applyResume(req *guestproto.Request) error {
 	if req.Hostname != "" {
 		if err := unix.Sethostname([]byte(req.Hostname)); err != nil {
 			return fmt.Errorf("hostname: %w", err)
+		}
+		if err := nameHostInHosts("/etc/hosts", req.Hostname); err != nil {
+			return fmt.Errorf("hosts: %w", err)
 		}
 	}
 	// A restore that carries no secrets keeps the ones the memory already
@@ -208,4 +212,46 @@ func addEntropy(b []byte) error {
 		return errno
 	}
 	return nil
+}
+
+// nameHostInHosts puts the hostname on 127.0.1.1 in an /etc/hosts that the
+// template build wrote, as Debian does, so the guest resolves its own name. A
+// file the image holds stays as it is.
+func nameHostInHosts(path, hostname string) error {
+	old, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	updated, ok := hostsWithName(string(old), hostname)
+	if !ok || updated == string(old) {
+		return nil
+	}
+	tmp := path + ".kiln"
+	if err := os.WriteFile(tmp, []byte(updated), 0o644); err != nil {
+		// A cold boot with no overlay drive runs on the read-only rootfs.
+		if errors.Is(err, unix.EROFS) {
+			return nil
+		}
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// hostsWithName replaces the 127.0.1.1 line of a marked hosts file. It reports
+// false for a file without the marker.
+func hostsWithName(content, hostname string) (string, bool) {
+	lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+	if len(lines) == 0 || lines[0] != guestproto.HostsMarker {
+		return "", false
+	}
+	kept := lines[:0]
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "127.0.1.1\t") {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(append(kept, "127.0.1.1\t"+hostname), "\n") + "\n", true
 }

@@ -6,6 +6,7 @@ import (
 	"archive/tar"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -139,12 +140,12 @@ func (b *Builder) Import(ctx context.Context, spec ImportSpec) (Imported, error)
 		if err := writeResolvConf(root); err != nil {
 			return Imported{}, err
 		}
-		if err := writeHosts(root, spec.Services); err != nil {
+		if err := writeHosts(root, spec.Services, false); err != nil {
 			return Imported{}, err
 		}
 	}
 	if len(spec.Services) > 0 {
-		if err := writeHosts(tree, spec.Services); err != nil {
+		if err := writeHosts(tree, spec.Services, true); err != nil {
 			return Imported{}, err
 		}
 	}
@@ -167,14 +168,37 @@ func writeImageConfig(root, guestPath string, config guestproto.ImageConfig) err
 }
 
 // writeHosts names every service on 127.0.0.1, because all of them share one
-// network. A recipe reaches a service by name.
-func writeHosts(root string, services []ServiceRequest) error {
+// network. A recipe reaches a service by name. The marker goes only in the
+// root the guest boots, because only that file gets the hostname.
+func writeHosts(root string, services []ServiceRequest, marked bool) error {
 	names := make([]string, 0, len(services))
 	for _, service := range services {
 		names = append(names, service.Name)
 	}
-	content := "127.0.0.1 localhost " + strings.Join(names, " ") + "\n::1 localhost\n"
-	return writeTreeFile(root, "etc/hosts", []byte(content), 0o644)
+	return writeTreeFile(root, "etc/hosts", hostsContent(names, marked), 0o644)
+}
+
+// ensureHosts writes the localhost lines when the image holds no /etc/hosts.
+// Docker and Podman bind-mount that file at run time, so an image
+// layer seldom has one. Without it localhost does not resolve through files,
+// and rootlesskit fails when it opens the file.
+func ensureHosts(root string) error {
+	if _, err := os.Lstat(filepath.Join(root, "etc", "hosts")); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return writeTreeFile(root, "etc/hosts", hostsContent(nil, true), 0o644)
+}
+
+func hostsContent(names []string, marked bool) []byte {
+	var b strings.Builder
+	if marked {
+		b.WriteString(guestproto.HostsMarker + "\n")
+	}
+	b.WriteString(strings.Join(append([]string{"127.0.0.1", "localhost"}, names...), "\t") + "\n")
+	b.WriteString("::1\tlocalhost ip6-localhost ip6-loopback\n")
+	return []byte(b.String())
 }
 
 // writeRootfs injects what the guest needs and writes the ext4 image.
@@ -183,6 +207,9 @@ func (b *Builder) writeRootfs(ctx context.Context, tree, rootfsPath string, size
 		return err
 	}
 	if err := writeResolvConf(tree); err != nil {
+		return err
+	}
+	if err := ensureHosts(tree); err != nil {
 		return err
 	}
 	if err := ensureMountpoints(tree); err != nil {

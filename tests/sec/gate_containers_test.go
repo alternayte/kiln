@@ -22,6 +22,7 @@ func checkContainerSupport(t *testing.T, ctx context.Context, sbx *sandbox.Manag
 	}
 	assertContainerGuest(t, ctx, sbx, sb.ID)
 	assertImageModes(t, ctx, sbx, sb.ID)
+	assertUserDevices(t, ctx, sbx, sb.ID)
 
 	copies, err := sbx.Fork(ctx, sb.ID, 2, false, nil, nil)
 	if err != nil {
@@ -113,5 +114,29 @@ func assertImageModes(t *testing.T, ctx context.Context, sbx *sandbox.Manager, i
 	}
 	if out := guestOutput(t, ctx, sbx, id, "chage", "-l", "nobody"); !strings.Contains(out, "Last password change") {
 		t.Errorf("%s: a setgid binary did not take effect: %q", id, out)
+	}
+}
+
+// tapScript makes a TAP device through /dev/net/tun, as slirp4netns does for
+// rootless Docker.
+const tapScript = `import fcntl, struct
+f = open("/dev/net/tun", "r+b", buffering=0)
+fcntl.ioctl(f, 0x400454ca, struct.pack("16sH", b"tap0", 0x1002))
+print("ok")`
+
+// assertUserDevices checks that the template user opens /dev/net/tun and
+// /dev/fuse (issue 27), makes a TAP device in a network namespace it created,
+// and still cannot make one in the namespace of the guest.
+func assertUserDevices(t *testing.T, ctx context.Context, sbx *sandbox.Manager, id string) {
+	t.Helper()
+	modes := `stat -c %a /dev/net/tun; [ ! -e /dev/fuse ] || [ "$(stat -c %a /dev/fuse)" = 666 ] && echo fuse`
+	if out := guestOutput(t, ctx, sbx, id, "sh", "-c", modes); strings.TrimSpace(out) != "666\nfuse" {
+		t.Errorf("%s: the user devices are %q", id, out)
+	}
+	if out := guestOutput(t, ctx, sbx, id, "unshare", "-Urn", "python", "-c", tapScript); strings.TrimSpace(out) != "ok" {
+		t.Errorf("%s: a TAP device in the user's own namespace gave %q", id, out)
+	}
+	if out := guestOutput(t, ctx, sbx, id, "python", "-c", tapScript); strings.TrimSpace(out) == "ok" {
+		t.Errorf("%s: the user made a TAP device in the guest namespace: %q", id, out)
 	}
 }

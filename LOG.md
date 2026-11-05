@@ -762,3 +762,12 @@ them into the rootfs. A template built before v0.16.1 keeps the old rootfs, so i
 built again. `TestApplyLayerKeepsSpecialModesAndTimes` pins the modes and mtimes, and
 `TestSecAgentControls/Containers` checks su, passwd, chage, /tmp and /var/tmp in a guest and
 runs chage through its setgid bit as the template user.
+
+Fixed: issue 27, `/dev/net/tun` in a guest was mode 0600, so slirp4netns could not make the
+TAP device of rootless Docker as the template user. devtmpfs makes its nodes 0600, and the
+image cannot change `/dev`. kilninit now sets `/dev/net/tun` and `/dev/fuse` to 0666 after it
+mounts `/dev`, as the udev rules of Debian and Fedora do. A TAP device still needs
+`CAP_NET_ADMIN` in a network namespace the user created. The mode lives in the memory of the
+template snapshot, so a template built before v0.16.2 must be built again.
+`TestSecAgentControls/Containers` checks both modes, makes a TAP device in a namespace of the
+user, and checks that the user cannot make one in the namespace of the guest.

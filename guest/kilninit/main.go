@@ -60,5 +60,26 @@ func mountBase() error {
 			return fmt.Errorf("%s: %w", m.target, err)
 		}
 	}
+	if err := openDevices(); err != nil {
+		return err
+	}
 	return mountCgroup()
+}
+
+// userDevices are the nodes a distribution's udev opens to every user.
+// Rootless Docker and Podman open them as the template user: slirp4netns makes
+// its TAP device through /dev/net/tun, and fuse-overlayfs opens /dev/fuse.
+// Opening one gives nothing alone: TUNSETIFF and a FUSE mount need
+// CAP_NET_ADMIN or CAP_SYS_ADMIN in a namespace the user created.
+var userDevices = []string{"/dev/net/tun", "/dev/fuse"}
+
+// openDevices gives each user device mode 0666, as the udev rules of Debian
+// and Fedora do. devtmpfs makes them 0600, and the image cannot change /dev.
+func openDevices() error {
+	for _, dev := range userDevices {
+		if err := unix.Chmod(dev, 0o666); err != nil && err != unix.ENOENT {
+			return fmt.Errorf("chmod %s: %w", dev, err)
+		}
+	}
+	return nil
 }

@@ -726,3 +726,11 @@ before v0.15.0 keeps the old guest agent in its snapshot, so it must be built ag
 `TestSecAgentControls/Containers` holds the mount, the cgroup, a memory limit the user sets,
 an overlayfs mount in a user namespace on the data directory, and the data in two forks
 and a restore.
+
+Fixed: a snapshot of a restored sandbox could lose its Firecracker process. The fill loads
+all of guest memory before the write, and the snapshot file's page cache was charged to the
+sandbox cgroup with 64 MiB of headroom. One fork of a 1024 MB sandbox hit the cgroup limit
+1157 to 1477 times, and in CI run 41941372942 the kernel killed Firecracker during
+`/snapshot/create`. A snapshot now lifts `memory.max` while the guest is paused, syncs the
+written files, and puts the limit back. `TestGateServices/ForksKeepTheirOwnData` asserts that
+the cgroup never reaches its limit during a fork and that the limit is back afterwards.

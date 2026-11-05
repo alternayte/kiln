@@ -21,6 +21,9 @@ import (
 type plainConn struct {
 	net.Conn
 	g *guardServer
+	// dest is the address the guest chose, read before the server can close
+	// the socket.
+	dest string
 
 	once   sync.Once
 	closed chan struct{}
@@ -140,7 +143,7 @@ func (g *guardServer) handlePlain(ctx context.Context, conn net.Conn) {
 		return
 	}
 	defer g.untrack(conn)
-	guest := &plainConn{Conn: conn, g: g, closed: make(chan struct{})}
+	guest := &plainConn{Conn: conn, g: g, dest: guestDestination(conn), closed: make(chan struct{})}
 	select {
 	case g.plainListener.conns <- guest:
 	case <-ctx.Done():
@@ -155,7 +158,7 @@ func (g *guardServer) handlePlain(ctx context.Context, conn net.Conn) {
 	guest.mu.Unlock()
 	if !served {
 		now := time.Now().Unix()
-		g.record(Record{Host: guestDestination(conn), Port: plainPort, Decision: DecisionDenied, Count: 1, First: now, Last: now})
+		g.record(Record{Host: guest.dest, Port: plainPort, Decision: DecisionDenied, Count: 1, First: now, Last: now})
 	}
 }
 
@@ -177,7 +180,7 @@ func (g *guardServer) servePlain(w http.ResponseWriter, r *http.Request) {
 	if host == "" {
 		name := ""
 		if conn != nil {
-			name = guestDestination(conn.Conn)
+			name = conn.dest
 		}
 		deny(name, "the request names no host")
 		return

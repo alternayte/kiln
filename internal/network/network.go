@@ -122,10 +122,17 @@ func (m *Manager) EnsureBase(ctx context.Context) error {
 	if err != nil {
 		return nftScript(ctx, "add table inet "+Table+"\n"+markScript())
 	}
+	var missing strings.Builder
 	if !strings.Contains(out, "chain markcopy") {
-		return nftScript(ctx, markScript())
+		missing.WriteString(markCopyScript())
 	}
-	return nil
+	if !strings.Contains(out, "chain markreply") {
+		missing.WriteString(markReplyScript())
+	}
+	if missing.Len() == 0 {
+		return nil
+	}
+	return nftScript(ctx, missing.String())
 }
 
 // markScript copies the conntrack mark onto the packet mark for traffic to a
@@ -134,8 +141,23 @@ func (m *Manager) EnsureBase(ctx context.Context) error {
 // destination is the guest address by the time the rule is evaluated. The
 // chain is named markcopy because mark is a reserved nftables word.
 func markScript() string {
+	return markCopyScript() + markReplyScript()
+}
+
+func markCopyScript() string {
 	return "add chain inet " + Table + " markcopy { type filter hook prerouting priority 0; policy accept; }\n" +
 		"add rule inet " + Table + " markcopy ip daddr " + runtime.GuestIP + " meta mark set ct mark\n"
+}
+
+// markReplyScript does the same for a packet this host makes in answer to a
+// guest: the reset or port unreachable of a refusal, and the reset of a port
+// nothing listens on. The kernel routes such a packet with no mark, so it
+// would leave by the main table and never reach the guest. A route chain
+// routes it again once the mark changes. A packet that already has a mark,
+// such as an ingress dial, keeps it.
+func markReplyScript() string {
+	return "add chain inet " + Table + " markreply { type route hook output priority 0; policy accept; }\n" +
+		"add rule inet " + Table + " markreply ip daddr " + runtime.GuestIP + " meta mark 0 ct mark != 0 meta mark set ct mark\n"
 }
 
 // Attach creates the TAP device, the resolver, the nftables chains and the
@@ -462,7 +484,8 @@ func inputRuleScript(chain, tap string, mark, udpPort, tcpPort int, guardPorts .
 
 // dnatRules sends guest DNS queries to the resolver sockets, and every port 443
 // and port 80 connection to the guard. The guest cannot choose another path:
-// anything else meets the refusal in the forward chain.
+// anything else meets the refusal in the forward chain. The metadata address
+// goes to no guard, so it is refused before a connection opens.
 func (a *Attachment) dnatRules() string {
 	tap := a.TAPName
 	var b strings.Builder
@@ -471,12 +494,12 @@ func (a *Attachment) dnatRules() string {
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s tcp dport 53 dnat ip to %s:%d\n",
 		Table, a.chain("_dnat"), tap, runtime.GuestGateway, runtime.GuestGateway, a.resolver.tcpPort())
 	if port := a.guardPort(); port > 0 {
-		fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter tcp dport 443 dnat ip to %s:%d\n",
-			Table, a.chain("_dnat"), tap, runtime.GuestGateway, port)
+		fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr != %s tcp dport 443 dnat ip to %s:%d\n",
+			Table, a.chain("_dnat"), tap, metadataAddr, runtime.GuestGateway, port)
 	}
 	if port := a.guardHTTPPort(); port > 0 {
-		fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter tcp dport 80 dnat ip to %s:%d\n",
-			Table, a.chain("_dnat"), tap, runtime.GuestGateway, port)
+		fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr != %s tcp dport 80 dnat ip to %s:%d\n",
+			Table, a.chain("_dnat"), tap, metadataAddr, runtime.GuestGateway, port)
 	}
 	return b.String()
 }

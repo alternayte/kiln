@@ -21,6 +21,7 @@ func checkContainerSupport(t *testing.T, ctx context.Context, sbx *sandbox.Manag
 		t.Fatalf("the user cannot write the data directory: %q", out)
 	}
 	assertContainerGuest(t, ctx, sbx, sb.ID)
+	assertImageModes(t, ctx, sbx, sb.ID)
 
 	copies, err := sbx.Fork(ctx, sb.ID, 2, false, nil, nil)
 	if err != nil {
@@ -97,5 +98,20 @@ unshare -Urm sh -c "mount -t overlay overlay -o lowerdir=$d/lower,upperdir=$d/up
 cat $d/upper/f`
 	if out := guestOutput(t, ctx, sbx, id, "sh", "-c", stack); strings.TrimSpace(out) != "upper\nupper" {
 		t.Errorf("%s: overlayfs on the data directory gave %q", id, out)
+	}
+}
+
+// assertImageModes checks that the rootfs keeps the special bits of the image
+// (issue 26): newuidmap and its kind need setuid for rootlesskit, and /tmp
+// needs the sticky bit. chage reads /etc/shadow through its setgid bit, so it
+// works for the template user only when the bit takes effect.
+func assertImageModes(t *testing.T, ctx context.Context, sbx *sandbox.Manager, id string) {
+	t.Helper()
+	want := "4755 root:root /usr/bin/su\n4755 root:root /usr/bin/passwd\n2755 root:shadow /usr/bin/chage\n1777 root:root /tmp\n1777 root:root /var/tmp"
+	if out := guestOutput(t, ctx, sbx, id, "stat", "-c", "%a %U:%G %n", "/usr/bin/su", "/usr/bin/passwd", "/usr/bin/chage", "/tmp", "/var/tmp"); strings.TrimSpace(out) != want {
+		t.Errorf("%s: the image modes are\n%s\nwant\n%s", id, out, want)
+	}
+	if out := guestOutput(t, ctx, sbx, id, "chage", "-l", "nobody"); !strings.Contains(out, "Last password change") {
+		t.Errorf("%s: a setgid binary did not take effect: %q", id, out)
 	}
 }

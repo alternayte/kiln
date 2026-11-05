@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 type entry struct {
@@ -223,5 +226,51 @@ func TestInjectKilninit(t *testing.T) {
 	}
 	if fi.Mode().Perm() != 0o755 {
 		t.Fatalf("mode %o, want 755", fi.Mode().Perm())
+	}
+}
+
+// TestApplyLayerKeepsSpecialModesAndTimes pins the bits a mask of 0o777 lost:
+// setuid on newuidmap, setgid on a shared directory and sticky on /tmp. Each
+// entry also keeps the mtime of the image, and a directory keeps it after an
+// entry lands in it.
+func TestApplyLayerKeepsSpecialModesAndTimes(t *testing.T) {
+	root := t.TempDir()
+	at := time.Date(2024, 3, 1, 12, 0, 0, 0, time.UTC)
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for _, hdr := range []*tar.Header{
+		{Name: "tmp/", Typeflag: tar.TypeDir, Mode: 0o1777, ModTime: at},
+		{Name: "srv/", Typeflag: tar.TypeDir, Mode: 0o2775, ModTime: at},
+		{Name: "usr/bin/newuidmap", Typeflag: tar.TypeReg, Mode: 0o4755, ModTime: at},
+		{Name: "tmp/later", Typeflag: tar.TypeReg, Mode: 0o644, ModTime: at},
+	} {
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyLayer(root, tar.NewReader(&buf)); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		name string
+		mode uint32
+	}{{"tmp", 0o1777}, {"srv", 0o2775}, {"usr/bin/newuidmap", 0o4755}} {
+		var st unix.Stat_t
+		if err := unix.Lstat(filepath.Join(root, want.name), &st); err != nil {
+			t.Fatal(err)
+		}
+		if got := uint32(st.Mode) & 0o7777; got != want.mode {
+			t.Errorf("%s: mode %o, want %o", want.name, got, want.mode)
+		}
+		fi, err := os.Lstat(filepath.Join(root, want.name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !fi.ModTime().Equal(at) {
+			t.Errorf("%s: mtime %v, want %v", want.name, fi.ModTime(), at)
+		}
 	}
 }

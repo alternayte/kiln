@@ -751,3 +751,14 @@ its port, as `egress.denied 1.1.1.1:80`, and each port of one address is a first
 its own. A sandbox whose guard started before this release keeps its old rules until its
 next wake. `TestSecEgressGuard` holds the fast refusals, the mirror file apt reads first,
 another Host on the mirror address, and the events.
+
+Fixed: issue 26, a template build dropped the setuid, setgid and sticky bits of the image,
+so rootlesskit could not run `newuidmap`. The unpack masked each mode with 0o777, and its
+chown ran after the chmod, which clears setuid and setgid on Linux. An entry now gets its uid
+and gid first, then its full mode through `fchmodat`, then the file capability from
+`SCHILY.xattr.security.capability`, then its mtime. A directory takes its mtime after the
+rest of its layer. A hardlink keeps the attributes of its inode. `mke2fs -d` copies each of
+them into the rootfs. A template built before v0.16.1 keeps the old rootfs, so it must be
+built again. `TestApplyLayerKeepsSpecialModesAndTimes` pins the modes and mtimes, and
+`TestSecAgentControls/Containers` checks su, passwd, chage, /tmp and /var/tmp in a guest and
+runs chage through its setgid bit as the template user.

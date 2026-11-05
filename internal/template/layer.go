@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -19,9 +20,21 @@ const maxSymlinkDepth = 40
 // applyLayer applies one uncompressed layer tar to root. Entry names are
 // relative to the root. Whiteouts remove lower-layer entries.
 func applyLayer(root string, tr *tar.Reader) error {
+	// A directory changes its mtime each time an entry lands in it, so the
+	// mtimes of the directories of this layer are set last.
+	type dirTime struct {
+		path string
+		at   time.Time
+	}
+	var dirs []dirTime
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
+			for i := len(dirs) - 1; i >= 0; i-- {
+				if err := setTimes(dirs[i].path, dirs[i].at); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 		if err != nil {
@@ -47,96 +60,145 @@ func applyLayer(root string, tr *tar.Reader) error {
 			}
 			continue
 		}
-		if err := applyEntry(root, name, hdr, tr); err != nil {
+		target, err := applyEntry(root, name, hdr, tr)
+		if err != nil {
 			return err
+		}
+		if hdr.Typeflag == tar.TypeDir && !hdr.ModTime.IsZero() {
+			dirs = append(dirs, dirTime{target, hdr.ModTime})
 		}
 	}
 }
 
-func applyEntry(root, name string, hdr *tar.Header, body io.Reader) error {
+// applyEntry creates one entry and returns its path. The uid and gid, mode,
+// capability and mtime come from the header, in that order: a chown clears
+// setuid, setgid and the file capability, so it goes first.
+func applyEntry(root, name string, hdr *tar.Header, body io.Reader) (string, error) {
+	target, err := createEntry(root, name, hdr, body)
+	if err != nil {
+		return "", err
+	}
+	// A hardlink shares the inode of its target, which already holds them.
+	if hdr.Typeflag == tar.TypeLink {
+		return target, nil
+	}
+	if os.Geteuid() == 0 {
+		if err := os.Lchown(target, hdr.Uid, hdr.Gid); err != nil {
+			return "", err
+		}
+	}
+	// Linux has no mode of a symlink.
+	if hdr.Typeflag != tar.TypeSymlink {
+		if err := unix.Fchmodat(unix.AT_FDCWD, target, uint32(hdr.Mode&0o7777), 0); err != nil {
+			return "", fmt.Errorf("layer entry %q: chmod: %w", name, err)
+		}
+	}
+	if cap, ok := hdr.PAXRecords[capabilityRecord]; ok && hdr.Typeflag == tar.TypeReg && os.Geteuid() == 0 {
+		if err := unix.Lsetxattr(target, capabilityXattr, []byte(cap), 0); err != nil {
+			return "", fmt.Errorf("layer entry %q: file capability: %w", name, err)
+		}
+	}
+	if hdr.Typeflag != tar.TypeDir && !hdr.ModTime.IsZero() {
+		if err := setTimes(target, hdr.ModTime); err != nil {
+			return "", err
+		}
+	}
+	return target, nil
+}
+
+// The file capability of an entry, as a tar header carries it and as the
+// kernel names it.
+const (
+	capabilityXattr  = "security.capability"
+	capabilityRecord = "SCHILY.xattr." + capabilityXattr
+)
+
+// setTimes sets the access and modification time of one path, not of the
+// target of a symlink.
+func setTimes(target string, at time.Time) error {
+	ts := unix.NsecToTimespec(at.UnixNano())
+	return unix.UtimesNanoAt(unix.AT_FDCWD, target, []unix.Timespec{ts, ts}, unix.AT_SYMLINK_NOFOLLOW)
+}
+
+// createEntry makes the entry itself, with a placeholder mode.
+func createEntry(root, name string, hdr *tar.Header, body io.Reader) (string, error) {
 	dir, base, err := parentDir(root, name)
 	if err != nil {
-		return err
+		return "", err
 	}
 	target := filepath.Join(dir, base)
 	switch hdr.Typeflag {
 	case tar.TypeDir:
 		if err := replace(target, true); err != nil {
-			return err
+			return "", err
 		}
 		if err := os.MkdirAll(target, 0o755); err != nil {
-			return err
-		}
-		if err := os.Chmod(target, modeOf(hdr)); err != nil {
-			return err
+			return "", err
 		}
 	case tar.TypeReg:
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
+			return "", err
 		}
 		if err := replace(target, false); err != nil {
-			return err
+			return "", err
 		}
 		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if _, err := io.Copy(f, body); err != nil {
 			f.Close()
-			return err
+			return "", err
 		}
 		if err := f.Close(); err != nil {
-			return err
-		}
-		if err := os.Chmod(target, modeOf(hdr)); err != nil {
-			return err
+			return "", err
 		}
 	case tar.TypeSymlink:
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
+			return "", err
 		}
 		if err := replace(target, false); err != nil {
-			return err
+			return "", err
 		}
 		if err := os.Symlink(hdr.Linkname, target); err != nil {
-			return err
+			return "", err
 		}
 	case tar.TypeLink:
 		linkTarget, err := resolveInRoot(root, path.Clean(hdr.Linkname), 0)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if _, err := os.Lstat(linkTarget); err != nil {
-			return fmt.Errorf("layer hardlink %q: target %q: %w", name, hdr.Linkname, err)
+			return "", fmt.Errorf("layer hardlink %q: target %q: %w", name, hdr.Linkname, err)
 		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
+			return "", err
 		}
 		if err := replace(target, false); err != nil {
-			return err
+			return "", err
 		}
 		if err := os.Link(linkTarget, target); err != nil {
-			return err
+			return "", err
 		}
 	case tar.TypeFifo:
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
+			return "", err
 		}
 		if err := replace(target, false); err != nil {
-			return err
+			return "", err
 		}
 		if err := unix.Mkfifo(target, uint32(modeOf(hdr))); err != nil {
-			return err
+			return "", err
 		}
 	case tar.TypeChar, tar.TypeBlock:
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("layer %s %q needs root to create", typeName(hdr.Typeflag), name)
+			return "", fmt.Errorf("layer %s %q needs root to create", typeName(hdr.Typeflag), name)
 		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
+			return "", err
 		}
 		if err := replace(target, false); err != nil {
-			return err
+			return "", err
 		}
 		mode := uint32(modeOf(hdr)) | unix.S_IFCHR
 		if hdr.Typeflag == tar.TypeBlock {
@@ -144,17 +206,12 @@ func applyEntry(root, name string, hdr *tar.Header, body io.Reader) error {
 		}
 		dev := int(unix.Mkdev(uint32(hdr.Devmajor), uint32(hdr.Devminor)))
 		if err := unix.Mknod(target, mode, dev); err != nil {
-			return err
+			return "", err
 		}
 	default:
-		return fmt.Errorf("layer entry %q has unsupported type %q", name, typeName(hdr.Typeflag))
+		return "", fmt.Errorf("layer entry %q has unsupported type %q", name, typeName(hdr.Typeflag))
 	}
-	if os.Geteuid() == 0 {
-		if err := os.Lchown(target, hdr.Uid, hdr.Gid); err != nil {
-			return err
-		}
-	}
-	return nil
+	return target, nil
 }
 
 // replace removes an existing entry so the layer wins. Directories are kept

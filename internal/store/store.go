@@ -341,8 +341,9 @@ type Store interface {
 	// SetSandboxEgress replaces the egress policy of one sandbox.
 	SetSandboxEgress(ctx context.Context, id string, allow []string, observe bool) error
 	// RecordEgress adds to the egress record of one sandbox. It returns the
-	// tenant, and each host this call refused for the first time. A sandbox
-	// with no row, such as a build VM, records nothing.
+	// tenant, and each destination this call refused for the first time: a
+	// name, or an address with its port as ip:port. A sandbox with no row, such
+	// as a build VM, records nothing.
 	RecordEgress(ctx context.Context, sandboxID string, rows []EgressRecord, dropped int64) (tenant string, firstDenied []string, err error)
 	// EgressLog returns the egress record of one sandbox. It returns
 	// ErrNotFound when the sandbox never recorded anything.

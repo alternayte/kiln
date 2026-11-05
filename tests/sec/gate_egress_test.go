@@ -28,6 +28,8 @@ const (
 	// allowedName sits on a shared CDN address with many other sites.
 	allowedName = "pypi.org"
 	otherName   = "www.python.org"
+	// mirrorName is a package mirror that apt reaches over plain HTTP.
+	mirrorName = "deb.debian.org"
 	// metadataName is a public name that resolves to the metadata address.
 	metadataName = "169.254.169.254.sslip.io"
 )
@@ -46,13 +48,48 @@ ctx.wrap_socket(s,server_hostname=sni or None).close()
 print('reached')
 `
 
-// udpProbe sends one packet to UDP port 443 and prints what comes back.
-const udpProbe = `import socket,sys
+// udpProbe sends one packet to UDP port 443 and prints what comes back. A
+// connected socket reports the port unreachable answer as a refusal.
+const udpProbe = `import socket,sys,time
 s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-s.settimeout(3)
-s.sendto(b'\xc0'+b'\0'*1199,(sys.argv[1],443))
-print('answered' if s.recv(64) else '')
+s.settimeout(10)
+s.connect((sys.argv[1],443))
+start=time.time()
+try:
+    s.send(b'\xc0'+b'\0'*1199)
+    print('answered' if s.recv(64) else '')
+except ConnectionRefusedError:
+    print('refused %.1f' % (time.time()-start))
 `
+
+// refusedProbe connects to an address and port, and prints how long the
+// refusal took.
+const refusedProbe = `import socket,sys,time
+start=time.time()
+try:
+    socket.create_connection((sys.argv[1],int(sys.argv[2])),timeout=20).close()
+    print('connected')
+except ConnectionRefusedError:
+    print('refused %.1f' % (time.time()-start))
+`
+
+// httpProbe sends one plain HTTP request with a chosen Host header to an
+// address on port 80, and prints the status and the time it took.
+const httpProbe = `import http.client,sys,time
+start=time.time()
+c=http.client.HTTPConnection(sys.argv[1],80,timeout=20)
+c.request('GET',sys.argv[3],headers={'Host':sys.argv[2]})
+r=c.getresponse()
+print(r.status, '%.1f' % (time.time()-start), r.read(200))
+`
+
+// fastRefusal reads the output of a probe and reports whether it names a
+// refusal that took under two seconds.
+func fastRefusal(out string) bool {
+	var took float64
+	_, err := fmt.Sscanf(strings.TrimSpace(out), "refused %f", &took)
+	return err == nil && took < 2
+}
 
 // TestSecEgressGuard runs each attack the guard exists to refuse, on real
 // microVMs.
@@ -107,7 +144,7 @@ func TestSecEgressGuard(t *testing.T) {
 
 	build(t, ctx, tmgr, template.BuildRequest{
 		Name: egressTemplate, Image: agentImage, VCPUs: 1, MemoryMB: 512, DiskMB: 2048,
-		EgressAllow: []string{allowedName, metadataName},
+		EgressAllow: []string{allowedName, metadataName, mirrorName},
 	}, store.TemplateReady)
 	sb := createSandbox(t, ctx, sbx, sandbox.CreateRequest{
 		Template: egressTemplate, Lifecycle: store.LifecyclePersistent, IdleSeconds: 900,
@@ -138,16 +175,34 @@ func TestSecEgressGuard(t *testing.T) {
 			t.Fatal("a connection with no name passed")
 		}
 	})
-	t.Run("DirectAddress", func(t *testing.T) {
-		code := "import socket; socket.create_connection(('1.1.1.1',80),timeout=5)"
-		if res, err := sbx.Exec(ctx, sb.ID, runtime.ExecRequest{Cmd: []string{"python", "-c", code}, TimeoutSeconds: 20}, nil); err != nil || res.ExitCode == 0 {
-			t.Fatalf("a direct address passed: %+v %v", res, err)
+	t.Run("DirectAddressIsRefusedAtOnce", func(t *testing.T) {
+		if out := guestOutput(t, ctx, sbx, sb.ID, "python", "-c", refusedProbe, "1.1.1.1", "22"); !fastRefusal(out) {
+			t.Fatalf("port 22 of a direct address: %q", out)
 		}
 	})
-	t.Run("UDP443", func(t *testing.T) {
-		if res, err := sbx.Exec(ctx, sb.ID, runtime.ExecRequest{Cmd: []string{"python", "-c", udpProbe, "1.1.1.1"}, TimeoutSeconds: 20}, nil); err != nil || res.ExitCode == 0 {
-			t.Fatalf("UDP 443 answered: %+v %v", res, err)
+	t.Run("UDP443IsRefusedAtOnce", func(t *testing.T) {
+		if out := guestOutput(t, ctx, sbx, sb.ID, "python", "-c", udpProbe, "1.1.1.1"); !fastRefusal(out) {
+			t.Fatalf("UDP 443: %q", out)
 		}
+	})
+	mirror := strings.TrimSpace(guestOutput(t, ctx, sbx, sb.ID, "python", "-c", "import socket; print(socket.gethostbyname('"+mirrorName+"'))"))
+	t.Run("Port80AllowedHost", func(t *testing.T) {
+		// This is the first file apt-get update reads from the mirror.
+		out := guestOutput(t, ctx, sbx, sb.ID, "python", "-c", httpProbe, mirror, mirrorName, "/debian/dists/bookworm/InRelease")
+		if !strings.HasPrefix(out, "200 ") {
+			t.Fatalf("the allowed mirror on port 80: %q", out)
+		}
+	})
+	t.Run("Port80OtherHostOnTheSameAddress", func(t *testing.T) {
+		out := guestOutput(t, ctx, sbx, sb.ID, "python", "-c", httpProbe, mirror, otherName, "/")
+		var status int
+		var took float64
+		if _, err := fmt.Sscanf(out, "%d %f", &status, &took); err != nil || status != 403 || took >= 2 || !strings.Contains(out, "not on the egress allow list") {
+			t.Fatalf("another host on the mirror address: %q", out)
+		}
+	})
+	t.Run("Port80WithNoRequest", func(t *testing.T) {
+		guestOutput(t, ctx, sbx, sb.ID, "python", "-c", "import socket; socket.create_connection(('1.1.1.1',80),timeout=5).close()")
 	})
 	t.Run("AllowedNameToAGuestChosenAddress", func(t *testing.T) {
 		// The certificate only verifies if the guard dialled the real site and
@@ -166,11 +221,33 @@ func TestSecEgressGuard(t *testing.T) {
 	t.Run("Record", func(t *testing.T) {
 		rows := waitRecord(t, ctx, sbx, sb.ID, func(rows []store.EgressRecord) bool {
 			return hasRow(rows, otherName, 443, "denied") && hasRow(rows, "1.1.1.1", 80, "denied") && hasRow(rows, "1.1.1.1", 443, "denied") &&
-				hasRow(rows, metadataName, 443, "denied")
+				hasRow(rows, metadataName, 443, "denied") && hasRow(rows, "1.1.1.1", 22, "denied") && hasRow(rows, otherName, 80, "denied") &&
+				hasRow(rows, mirrorName, 80, "allowed")
 		})
-		allowed := rowOf(rows, allowedName, 443, "allowed")
-		if allowed == nil || allowed.Count < 1 || allowed.BytesOut == 0 || allowed.BytesIn == 0 {
-			t.Errorf("the allowed row is %+v", allowed)
+		for _, want := range []struct {
+			host string
+			port int
+		}{{allowedName, 443}, {mirrorName, 80}} {
+			allowed := rowOf(rows, want.host, want.port, "allowed")
+			if allowed == nil || allowed.Count < 1 || allowed.BytesOut == 0 || allowed.BytesIn == 0 {
+				t.Errorf("the allowed row of %s:%d is %+v", want.host, want.port, allowed)
+			}
+		}
+		// An address names its port in the event, so a reader tells 80 from 22.
+		events, err := st.ListEventsSince(ctx, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reasons := map[string]bool{}
+		for _, e := range events {
+			if e.SandboxID == sb.ID {
+				reasons[e.Reason] = true
+			}
+		}
+		for _, want := range []string{"1.1.1.1:22", "1.1.1.1:80", "1.1.1.1:443"} {
+			if !reasons[sandbox.EventEgressDenied+" "+want] {
+				t.Errorf("no event names %s: %v", want, reasons)
+			}
 		}
 	})
 

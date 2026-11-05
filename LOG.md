@@ -737,3 +737,17 @@ one fork kills nothing in the cgroup, adds fewer than 100 limit hits, and leaves
 place. Ordinary page cache reclaim after the resume adds a few hits: the fix measured 0 and
 8, and the code without it 1598. The v0.15.1 tag has no release, because its gate asserted
 zero hits and failed on those 8.
+
+Done: issue 25, egress refusals and port 80. The forward and input chains end in a TCP
+reset for TCP and an ICMP port unreachable for every other protocol, so a refused client
+fails at once. Before, a drop held each connection in `SYN-SENT` until the kernel timeout.
+In Factoree that hung `dotnet restore` on the CRL and OCSP checks of NuGet. The guard has a
+second listener for port 80. It decides each request by its `Host` header, so one
+keep-alive connection to an allowed CDN address cannot reach a second site there. It passes
+an allowed request unchanged with no credential, records it as port 80, and answers any
+other request with a `403` that names the host. A port 80 connection with no readable
+request is recorded by the address the guest chose. The event of a refused address names
+its port, as `egress.denied 1.1.1.1:80`, and each port of one address is a first refusal of
+its own. A sandbox whose guard started before this release keeps its old rules until its
+next wake. `TestSecEgressGuard` holds the fast refusals, the mirror file apt reads first,
+another Host on the mirror address, and the events.

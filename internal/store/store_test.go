@@ -732,8 +732,17 @@ func TestEgressRecord(t *testing.T) {
 	if _, first, err = st.RecordEgress(ctx, "sb", []EgressRecord{denied}, 2); err != nil || len(first) != 0 {
 		t.Fatalf("second refusal: first %v err %v", first, err)
 	}
+	// An address names its port, and each port is a first refusal of its own.
+	byAddr := EgressRecord{Host: "1.2.3.4", Port: 80, Decision: DecisionDenied, Count: 1, FirstSeen: now, LastSeen: now}
+	if _, first, err = st.RecordEgress(ctx, "sb", []EgressRecord{byAddr}, 0); err != nil || len(first) != 1 || first[0] != "1.2.3.4:80" {
+		t.Fatalf("address refusal: first %v err %v", first, err)
+	}
+	byAddr.Port = 443
+	if _, first, err = st.RecordEgress(ctx, "sb", []EgressRecord{byAddr, byAddr}, 0); err != nil || len(first) != 1 || first[0] != "1.2.3.4:443" {
+		t.Fatalf("address on another port: first %v err %v", first, err)
+	}
 	log, err := st.EgressLog(ctx, "sb")
-	if err != nil || len(log.Records) != 2 || log.Dropped != 2 {
+	if err != nil || len(log.Records) != 4 || log.Dropped != 2 {
 		t.Fatalf("log %+v err %v", log, err)
 	}
 	// A build VM has no row, so it records nothing.
@@ -748,7 +757,7 @@ func TestEgressRecord(t *testing.T) {
 	if _, _, err := st.RecordEgress(ctx, "sb", many, 0); err != nil {
 		t.Fatal(err)
 	}
-	if log, _ = st.EgressLog(ctx, "sb"); len(log.Records) != maxEgressRows || log.Dropped != 5 {
+	if log, _ = st.EgressLog(ctx, "sb"); len(log.Records) != maxEgressRows || log.Dropped != 7 {
 		t.Fatalf("rows %d dropped %d", len(log.Records), log.Dropped)
 	}
 	// The record stays past the destroy, until the prune.

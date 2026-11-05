@@ -8,9 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
+	"net/netip"
 	"os"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1457,12 +1460,16 @@ func (s *sqliteStore) RecordEgress(ctx context.Context, sandboxID string, rows [
 	}
 	var first []string
 	for _, row := range rows {
+		// A name is one destination on every port. An address names no
+		// service, so its port tells port 80 from port 443.
+		_, addrErr := netip.ParseAddr(row.Host)
+		byPort := addrErr == nil
 		var known, deniedBefore int
 		if err := tx.QueryRowContext(ctx, `SELECT
 			count(CASE WHEN port = ? AND decision = ? AND binding = ? THEN 1 END),
-			count(CASE WHEN decision = ? THEN 1 END)
+			count(CASE WHEN decision = ? AND (NOT ? OR port = ?) THEN 1 END)
 		FROM egress_records WHERE sandbox_id = ? AND host = ?`,
-			row.Port, row.Decision, row.Binding, DecisionDenied, sandboxID, row.Host).Scan(&known, &deniedBefore); err != nil {
+			row.Port, row.Decision, row.Binding, DecisionDenied, byPort, row.Port, sandboxID, row.Host).Scan(&known, &deniedBefore); err != nil {
 			return "", nil, err
 		}
 		if known == 0 && held >= maxEgressRows {
@@ -1473,7 +1480,11 @@ func (s *sqliteStore) RecordEgress(ctx context.Context, sandboxID string, rows [
 			held++
 		}
 		if row.Decision == DecisionDenied && deniedBefore == 0 {
-			first = append(first, row.Host)
+			if byPort {
+				first = append(first, net.JoinHostPort(row.Host, strconv.Itoa(row.Port)))
+			} else {
+				first = append(first, row.Host)
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO egress_records (
 			sandbox_id, host, port, decision, binding, count, bytes_out, bytes_in, first_seen, last_seen

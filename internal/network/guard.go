@@ -77,12 +77,14 @@ type guardCommand struct {
 
 // guardReport is one line from a guard to the daemon.
 type guardReport struct {
-	PID     int      `json:"pid,omitempty"`
-	Port    int      `json:"port,omitempty"`
-	Seq     int64    `json:"seq,omitempty"`
-	Batch   int64    `json:"batch,omitempty"`
-	Records []Record `json:"records,omitempty"`
-	Dropped int64    `json:"dropped,omitempty"`
+	PID  int `json:"pid,omitempty"`
+	Port int `json:"port,omitempty"`
+	// HTTPPort is the port 80 listener. A guard from before it sends none.
+	HTTPPort int      `json:"http_port,omitempty"`
+	Seq      int64    `json:"seq,omitempty"`
+	Batch    int64    `json:"batch,omitempty"`
+	Records  []Record `json:"records,omitempty"`
+	Dropped  int64    `json:"dropped,omitempty"`
 	// Requests is the request log of bound hosts since the last report.
 	Requests        []RequestRecord `json:"requests,omitempty"`
 	RequestsDropped int64           `json:"requests_dropped,omitempty"`
@@ -92,9 +94,10 @@ type guardReport struct {
 
 // guardLink is the daemon's connection to one guard.
 type guardLink struct {
-	conn net.Conn
-	pid  int
-	port int
+	conn     net.Conn
+	pid      int
+	port     int
+	httpPort int
 
 	writeMu sync.Mutex
 	enc     *json.Encoder
@@ -220,7 +223,7 @@ func (a *Attachment) linkGuard(ctx context.Context, conn net.Conn) error {
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 	link := &guardLink{
-		conn: conn, pid: hello.PID, port: hello.Port,
+		conn: conn, pid: hello.PID, port: hello.Port, httpPort: hello.HTTPPort,
 		enc: json.NewEncoder(conn), waits: map[int64]chan struct{}{}, closed: make(chan struct{}),
 	}
 	a.guard = link

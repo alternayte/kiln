@@ -158,14 +158,18 @@ The sandbox goes first: a template with a live sandbox refuses to be deleted.
 ## Two things to get right
 
 **Egress names hosts, not addresses.** Each sandbox has an egress guard, a host
-process that reads the TLS name of every port 443 connection, resolves that name
-itself, and refuses a name outside `egress_allow`. `kiln egress <id>` prints what
-a sandbox reached and what the host refused. A guard reads only the unencrypted
-TLS name, so it does not see the `Host` header inside the connection. An allowed
-host that fronts other sites can still reach them. The guard refuses a name that
-resolves to a private, loopback, link-local or metadata address, and it serves
-port 443 only, so a database inside your own network needs a service in the
-template or a public TLS endpoint.
+process that reads the TLS name of every port 443 connection and the `Host`
+header of every port 80 request. It resolves that name itself, and refuses a
+name outside `egress_allow`. `kiln egress <id>` prints what a sandbox reached and
+what the host refused. On port 443 the guard reads only the unencrypted TLS
+name, so it does not see the `Host` header inside the connection. An allowed
+host that fronts other sites can still reach them. On port 80 the guard decides
+each request, passes it unchanged and adds no credential. The guard refuses a
+name that resolves to a private, loopback, link-local or metadata address. It
+serves ports 443 and 80 only, so a database inside your own network needs a
+service in the template or a public TLS endpoint. The host refuses every other
+port at once, with a TCP reset or an ICMP port unreachable, so a client fails
+fast and does not wait for its timeout.
 
 **Egress is deny by default.** A template with an empty `egress_allow`
 reaches nothing, and DNS fails inside it. A preview that talks to a database

@@ -259,7 +259,7 @@ func (g *guardServer) dialUpstream(ctx context.Context, _, addr string) (net.Con
 	if err != nil {
 		return nil, err
 	}
-	return g.dial(dial, addrs)
+	return g.dial(dial, addrs, originalPort)
 }
 
 // serveBound terminates TLS on one guest connection and holds it until the HTTP server

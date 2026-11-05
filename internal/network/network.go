@@ -25,7 +25,7 @@ import (
 // Table is the one nftables table Kiln owns.
 const Table = "kiln"
 
-// metadataAddr is dropped before any allow rule. It cannot be configured back
+// metadataAddr is refused before any allow rule. It cannot be configured back
 // on.
 const metadataAddr = "169.254.169.254"
 
@@ -388,28 +388,40 @@ func (a *Attachment) forwardRules() string {
 	tap := a.TAPName
 	var b strings.Builder
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ct mark set %d\n", Table, a.chain("_fwd"), tap, a.mark)
-	// Port 443 went to the guard before this chain, so every new connection
-	// here is refused. The limit keeps a hostile guest out of the kernel log.
+	// Ports 443 and 80 went to the guard before this chain, so every new
+	// connection here is refused. The limit keeps a hostile guest out of the
+	// kernel log.
 	if !a.addressSet {
 		fmt.Fprintf(&b, "add rule inet %s %s iifname %q ct state new limit rate 10/second burst 20 packets log prefix %q\n",
 			Table, a.chain("_fwd"), tap, refusalPrefix+a.short+" ")
 	}
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s drop\n", Table, a.chain("_fwd"), tap, metadataAddr)
+	b.WriteString(refuseRules(a.chain("_fwd"), tap, "ip daddr "+metadataAddr))
 	// An established connection was allowed when it started. Keep it after its
 	// address leaves the set, so a long transfer is not cut by a DNS TTL.
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ct state established,related accept\n", Table, a.chain("_fwd"), tap)
 	if a.addressSet {
 		fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr @%s tcp dport 443 accept\n", Table, a.chain("_fwd"), tap, a.setName())
 	}
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter drop\n", Table, a.chain("_fwd"), tap)
+	b.WriteString(refuseRules(a.chain("_fwd"), tap, ""))
 	return b.String()
+}
+
+// refuseRules refuses the packets of one TAP that match, with an answer, so a
+// refused client fails at once and names the error instead of waiting for its
+// timeout: a reset for TCP, and port unreachable for anything else.
+func refuseRules(chain, tap, match string) string {
+	if match != "" {
+		match += " "
+	}
+	return fmt.Sprintf("add rule inet %[1]s %[2]s iifname %[3]q %[4]smeta l4proto tcp counter reject with tcp reset\n"+
+		"add rule inet %[1]s %[2]s iifname %[3]q %[4]scounter reject with icmpx type port-unreachable\n", Table, chain, tap, match)
 }
 
 // inputRules is the chain for traffic the guest sends to its gateway. Only
 // the resolver and the guard answer there, and only replies to host-originated
 // connections pass, so a published port can answer the proxy.
 func (a *Attachment) inputRules() string {
-	return inputRuleScript(a.chain("_in"), a.TAPName, a.mark, a.resolver.udpPort(), a.resolver.tcpPort(), a.guardPort())
+	return inputRuleScript(a.chain("_in"), a.TAPName, a.mark, a.resolver.udpPort(), a.resolver.tcpPort(), a.guardPort(), a.guardHTTPPort())
 }
 
 // guardPort is the port of the guard, or zero for a sandbox with none.
@@ -420,26 +432,37 @@ func (a *Attachment) guardPort() int {
 	return a.guard.port
 }
 
+// guardHTTPPort is the port 80 listener of the guard, or zero for a sandbox
+// with none or a guard from before it.
+func (a *Attachment) guardHTTPPort() int {
+	if a.guard == nil {
+		return 0
+	}
+	return a.guard.httpPort
+}
+
 // inputRuleScript builds the input chain of one attachment.
-func inputRuleScript(chain, tap string, mark, udpPort, tcpPort, guardPort int) string {
+func inputRuleScript(chain, tap string, mark, udpPort, tcpPort int, guardPorts ...int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ct mark set %d\n", Table, chain, tap, mark)
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s drop\n", Table, chain, tap, metadataAddr)
+	b.WriteString(refuseRules(chain, tap, "ip daddr "+metadataAddr))
 	// A host-originated connection to a guest port answers on this TAP. Its
-	// reply is an established flow, so it must pass before the drop.
+	// reply is an established flow, so it must pass before the refusal.
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ct state established,related accept\n", Table, chain, tap)
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s udp dport %d accept\n", Table, chain, tap, runtime.GuestGateway, udpPort)
 	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s tcp dport %d accept\n", Table, chain, tap, runtime.GuestGateway, tcpPort)
-	if guardPort > 0 {
-		fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s tcp dport %d accept\n", Table, chain, tap, runtime.GuestGateway, guardPort)
+	for _, port := range guardPorts {
+		if port > 0 {
+			fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter ip daddr %s tcp dport %d accept\n", Table, chain, tap, runtime.GuestGateway, port)
+		}
 	}
-	fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter drop\n", Table, chain, tap)
+	b.WriteString(refuseRules(chain, tap, ""))
 	return b.String()
 }
 
 // dnatRules sends guest DNS queries to the resolver sockets, and every port 443
-// connection to the guard. The guest cannot choose another path: anything else
-// meets the drop in the forward chain.
+// and port 80 connection to the guard. The guest cannot choose another path:
+// anything else meets the refusal in the forward chain.
 func (a *Attachment) dnatRules() string {
 	tap := a.TAPName
 	var b strings.Builder
@@ -449,6 +472,10 @@ func (a *Attachment) dnatRules() string {
 		Table, a.chain("_dnat"), tap, runtime.GuestGateway, runtime.GuestGateway, a.resolver.tcpPort())
 	if port := a.guardPort(); port > 0 {
 		fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter tcp dport 443 dnat ip to %s:%d\n",
+			Table, a.chain("_dnat"), tap, runtime.GuestGateway, port)
+	}
+	if port := a.guardHTTPPort(); port > 0 {
+		fmt.Fprintf(&b, "add rule inet %s %s iifname %q counter tcp dport 80 dnat ip to %s:%d\n",
 			Table, a.chain("_dnat"), tap, runtime.GuestGateway, port)
 	}
 	return b.String()

@@ -49,6 +49,8 @@ type GuardConfig struct {
 type guardServer struct {
 	cancel context.CancelFunc
 	port   int
+	// httpPort is the listener for plain HTTP on port 80.
+	httpPort int
 
 	policyMu sync.RWMutex
 	allow    map[string]bool
@@ -78,11 +80,14 @@ type guardServer struct {
 
 	// resolve and dial reach a destination. A test replaces them.
 	resolve func(context.Context, string) ([]netip.Addr, error)
-	dial    func(context.Context, []netip.Addr) (net.Conn, error)
+	dial    func(context.Context, []netip.Addr, int) (net.Conn, error)
 	// upstreamTLS verifies a bound host. Nil uses this host's system roots.
 	upstreamTLS   *tls.Config
 	proxyListener *connListener
 	transport     *http.Transport
+	// plainListener and plainTransport carry port 80.
+	plainListener  *connListener
+	plainTransport *http.Transport
 }
 
 // newGuardServer holds no policy, so it refuses everything at first.
@@ -110,6 +115,7 @@ func ServeGuard(ctx context.Context, cfg GuardConfig) error {
 	defer cancel()
 	g := newGuardServer(cancel)
 	g.startProxy(ctx)
+	g.startPlain(ctx)
 	lc := net.ListenConfig{Control: bindControl(cfg.Tap, cfg.Mark)}
 	ln, err := lc.Listen(ctx, "tcp4", net.JoinHostPort(runtime.GuestGateway, "0"))
 	if err != nil {
@@ -117,6 +123,12 @@ func ServeGuard(ctx context.Context, cfg GuardConfig) error {
 	}
 	defer ln.Close()
 	g.port = ln.Addr().(*net.TCPAddr).Port
+	plain, err := lc.Listen(ctx, "tcp4", net.JoinHostPort(runtime.GuestGateway, "0"))
+	if err != nil {
+		return fmt.Errorf("egress guard: listen: %w", err)
+	}
+	defer plain.Close()
+	g.httpPort = plain.Addr().(*net.TCPAddr).Port
 	_ = os.Remove(cfg.Sock)
 	control, err := net.Listen("unix", cfg.Sock)
 	if err != nil {
@@ -129,10 +141,19 @@ func ServeGuard(ctx context.Context, cfg GuardConfig) error {
 	go func() {
 		<-ctx.Done()
 		ln.Close()
+		plain.Close()
 		control.Close()
 	}()
 	go g.serveControl(ctx, control)
 	go g.flushLoop(ctx)
+	failed := make(chan error, 2)
+	go func() { failed <- accept(ctx, ln, g.handle) }()
+	go func() { failed <- accept(ctx, plain, g.handlePlain) }()
+	return <-failed
+}
+
+// accept hands each connection of one listener to its handler.
+func accept(ctx context.Context, ln net.Listener, handle func(context.Context, net.Conn)) error {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -141,7 +162,7 @@ func ServeGuard(ctx context.Context, cfg GuardConfig) error {
 			}
 			return fmt.Errorf("egress guard: accept: %w", err)
 		}
-		go g.handle(ctx, conn)
+		go handle(ctx, conn)
 	}
 }
 
@@ -176,7 +197,7 @@ func (g *guardServer) setClient(conn net.Conn) {
 		delete(g.inflight, batch)
 	}
 	g.recordsMu.Unlock()
-	if err := g.enc.Encode(guardReport{PID: os.Getpid(), Port: g.port}); err != nil {
+	if err := g.enc.Encode(guardReport{PID: os.Getpid(), Port: g.port, HTTPPort: g.httpPort}); err != nil {
 		log.Printf("egress guard: hello: %v", err)
 	}
 }
@@ -244,8 +265,10 @@ func (g *guardServer) setPolicy(cmd guardCommand) {
 			}
 		}
 		g.connsMu.Unlock()
-		if g.transport != nil {
-			g.transport.CloseIdleConnections()
+		for _, transport := range []*http.Transport{g.transport, g.plainTransport} {
+			if transport != nil {
+				transport.CloseIdleConnections()
+			}
 		}
 	}
 }
@@ -261,6 +284,18 @@ func (g *guardServer) decide(name string) (decision string, generation int64) {
 		return DecisionAllowed, g.generation
 	}
 	return DecisionDenied, g.generation
+}
+
+// admit adds a new guest connection to what a cut closes, unless the guest
+// holds too many.
+func (g *guardServer) admit(conn net.Conn) bool {
+	g.connsMu.Lock()
+	defer g.connsMu.Unlock()
+	if len(g.conns) >= 2*maxGuardConns {
+		return false
+	}
+	g.conns[conn] = ""
+	return true
 }
 
 // track adds a connection to what a cut closes, unless the policy moved past
@@ -291,13 +326,7 @@ func (g *guardServer) untrack(conns ...net.Conn) {
 // to that name or refuses it. It never decrypts anything.
 func (g *guardServer) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
-	g.connsMu.Lock()
-	full := len(g.conns) >= 2*maxGuardConns
-	if !full {
-		g.conns[conn] = ""
-	}
-	g.connsMu.Unlock()
-	if full {
+	if !g.admit(conn) {
 		return
 	}
 	defer g.untrack(conn)
@@ -339,7 +368,7 @@ func (g *guardServer) handle(ctx context.Context, conn net.Conn) {
 		g.serveBound(ctx, conn, name, decision, hello)
 		return
 	}
-	upstream, err := g.dial(lookup, addrs)
+	upstream, err := g.dial(lookup, addrs, originalPort)
 	if err != nil {
 		log.Printf("egress guard: %s: %v", name, err)
 		return
@@ -373,8 +402,12 @@ func (g *guardServer) handle(ctx context.Context, conn net.Conn) {
 	<-done
 }
 
-// originalPort is the one port a guard serves. nftables sends it nothing else.
-const originalPort = 443
+// originalPort is the port of TLS connections, and plainPort the port of plain
+// HTTP. nftables sends a guard nothing else.
+const (
+	originalPort = 443
+	plainPort    = 80
+)
 
 // accessDenied is a TLS fatal alert, so a client reports a refusal and not a
 // broken network.
@@ -590,11 +623,11 @@ func resolvePublic(ctx context.Context, name string) ([]netip.Addr, error) {
 
 // dialAny connects to the first address that answers. Each address gets a share
 // of the time, so an address family this host cannot route does not use it all.
-func dialAny(ctx context.Context, addrs []netip.Addr) (net.Conn, error) {
+func dialAny(ctx context.Context, addrs []netip.Addr, port int) (net.Conn, error) {
 	var last error
 	d := net.Dialer{Timeout: dialTimeout / time.Duration(len(addrs))}
 	for _, addr := range addrs {
-		conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(addr.Unmap().String(), strconv.Itoa(originalPort)))
+		conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(addr.Unmap().String(), strconv.Itoa(port)))
 		if err == nil {
 			return conn, nil
 		}

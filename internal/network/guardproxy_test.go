@@ -76,7 +76,7 @@ func newProxyHarness(t *testing.T, bindings ...Binding) *proxyHarness {
 	g.resolve = func(context.Context, string) ([]netip.Addr, error) {
 		return []netip.Addr{netip.MustParseAddr("192.0.2.1")}, nil
 	}
-	g.dial = func(ctx context.Context, _ []netip.Addr) (net.Conn, error) {
+	g.dial = func(ctx context.Context, _ []netip.Addr, _ int) (net.Conn, error) {
 		var d net.Dialer
 		return d.DialContext(ctx, "tcp", upstream.Listener.Addr().String())
 	}

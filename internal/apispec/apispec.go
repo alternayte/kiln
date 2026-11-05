@@ -203,7 +203,7 @@ func Operations() []Operation {
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
 			Body: []Field{
 				{Name: "egress_allow", Type: "array", Items: "string",
-					Doc: "Hostnames the sandbox may reach on port 443. The host reads the TLS name of each connection. *.example.com matches every subdomain and not example.com. An empty list allows no egress. This also ends observe."},
+					Doc: "Hostnames the sandbox may reach on port 443 and port 80. The host reads the TLS name of each port 443 connection and the Host header of each port 80 request. Every other port is refused at once. *.example.com matches every subdomain and not example.com. An empty list allows no egress. This also ends observe."},
 				{Name: "observe", Type: "boolean",
 					Doc: "True lets any public TLS name through and records it, so one run of trusted code finds its list. A sandbox with env values answers conflict, and a fork or a snapshot of an observing sandbox answers conflict."},
 			},

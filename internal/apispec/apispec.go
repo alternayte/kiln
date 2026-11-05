@@ -123,7 +123,7 @@ func Operations() []Operation {
 				{Name: "seed", Type: "array", Items: "string",
 					Doc: "Commands that run in the application root after every service is ready and before the template snapshot, such as migrations."},
 				{Name: "user", Type: "string",
-					Doc: "User from the image, by name or numeric id. Exec, detached processes, files, the terminal and the start command run as this user, and setup runs as root. Empty runs everything as root. The build fails when the image has no such user."},
+					Doc: "User from the image, by name or numeric id. Exec, detached processes, files, the terminal and the start command run as this user, and setup runs as root. Empty runs everything as root. The build fails when the image has no such user. In a sandbox the user owns the cgroup /sys/fs/cgroup/user, with the cpu, memory, pids and io controllers, and its processes start in /sys/fs/cgroup/user/init. It also owns /var/lib/kiln-data, a directory on the sandbox disk outside the overlay root, so rootless Docker can use it as its data-root with the overlay2 driver. That directory is in every snapshot and fork, and it shares disk_mb with the rest of the sandbox."},
 				{Name: "credential", Type: "object",
 					Doc: "Registry login for this build only: username and token. It pulls from the registry of the image, the host keeps it in memory for the build, and it is never returned. Without it the build uses the stored credentials of this tenant."},
 			},

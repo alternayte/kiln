@@ -30,6 +30,8 @@ type runAs struct {
 	gid    uint32
 	groups []uint32
 	home   string
+	// cgroupFD is the delegated cgroup leaf that every child starts in.
+	cgroupFD int
 }
 
 // templateUser is set by the resume hook on every restore.
@@ -115,15 +117,28 @@ func applyUser(spec string) error {
 		}
 	}
 	resumeMu.Lock()
+	defer resumeMu.Unlock()
+	if u != nil {
+		fd, err := delegateCgroup(u)
+		if err != nil {
+			return fmt.Errorf("cgroup: %w", err)
+		}
+		u.cgroupFD = fd
+		if err := ownDataDir(u); err != nil {
+			return err
+		}
+	}
 	templateUser = u
-	resumeMu.Unlock()
 	return nil
 }
 
-// sysProcAttr adds the template user to the attributes of one child.
+// withUser adds the template user to the attributes of one child. The child
+// starts in the user's delegated cgroup, so it can manage cgroups below it.
 func withUser(attr *syscall.SysProcAttr) *syscall.SysProcAttr {
 	if u := currentUser(); u != nil {
 		attr.Credential = &syscall.Credential{Uid: u.uid, Gid: u.gid, Groups: u.groups}
+		attr.UseCgroupFD = true
+		attr.CgroupFD = u.cgroupFD
 	}
 	return attr
 }

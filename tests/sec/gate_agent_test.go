@@ -161,6 +161,7 @@ func TestSecAgentControls(t *testing.T) {
 		}
 	})
 	t.Run("User", func(t *testing.T) { checkUser(t, ctx, sbx, source) })
+	t.Run("Containers", func(t *testing.T) { checkContainerSupport(t, ctx, sbx, source) })
 	t.Run("Egress", func(t *testing.T) { checkEgressChange(t, ctx, st, sbx, source) })
 	t.Run("Processes", func(t *testing.T) { checkProcesses(t, ctx, st, sbx) })
 	t.Run("Restart", func(t *testing.T) {

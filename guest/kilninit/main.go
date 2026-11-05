@@ -1,7 +1,7 @@
 //go:build linux
 
-// Command kilninit is PID 1 inside a Kiln microVM. It mounts /proc, /sys and
-// /dev, then serves exec, hello and shutdown requests on a vsock port.
+// Command kilninit is PID 1 inside a Kiln microVM. It mounts /proc, /sys,
+// /dev and cgroup2, then serves exec, hello and shutdown requests on a vsock port.
 package main
 
 import (
@@ -60,5 +60,5 @@ func mountBase() error {
 			return fmt.Errorf("%s: %w", m.target, err)
 		}
 	}
-	return nil
+	return mountCgroup()
 }

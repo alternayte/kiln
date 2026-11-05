@@ -712,3 +712,17 @@ Done: `docs/specs/preview-fork-on-visit.md`. A publish call with `viewer_fork` a
 of the port ends the forks. It does not say what happens to the other ports of the origin,
 so a retire of any port retires them all, because a port left behind serves the shared
 origin. `TestSecViewerFork` in the sec gate holds the spec's checks.
+
+Done: issues 22 and 23, rootless containers in a sandbox. kilninit mounts cgroup2 at
+`/sys/fs/cgroup` at boot and checks it again after the overlay pivot. It enables the cpu,
+memory, pids and io controllers, and gives the template user the subtree
+`/sys/fs/cgroup/user`. Exec, detached processes, the terminal and the start command start in
+`/sys/fs/cgroup/user/init` through `CLONE_INTO_CGROUP`. The pivot bind-mounts a directory
+of the overlay drive at `/var/lib/kiln-data`, and the restore gives it to the template user.
+Rootless Docker without systemd uses the cgroup driver `none` (moby `cgroupDriver`), so it
+ignores `--memory` and `--cpus` even with the delegated subtree. A limit needs
+`systemd --user` in the image, or a runtime that writes cgroupfs itself. A template built
+before v0.15.0 keeps the old guest agent in its snapshot, so it must be built again.
+`TestSecAgentControls/Containers` holds the mount, the cgroup, a memory limit the user sets,
+an overlayfs mount in a user namespace on the data directory, and the data in two forks
+and a restore.

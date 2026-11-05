@@ -1,0 +1,101 @@
+//go:build kvm
+
+package secgate
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/alternayte/kiln/internal/sandbox"
+	"github.com/alternayte/kiln/internal/store"
+)
+
+// checkContainerSupport holds what rootless containers need from the guest
+// (issues 22 and 23): a cgroup2 mount, a cgroup subtree the template user
+// owns, and a data directory on the overlay drive that overlayfs stacks on.
+// Each holds in the sandbox, in a fork and in a restore of a snapshot, and two
+// copies never see each other's data.
+func checkContainerSupport(t *testing.T, ctx context.Context, sbx *sandbox.Manager, sb store.Sandbox) {
+	if out := guestOutput(t, ctx, sbx, sb.ID, "sh", "-c", "echo origin > /var/lib/kiln-data/origin"); out != "" {
+		t.Fatalf("the user cannot write the data directory: %q", out)
+	}
+	assertContainerGuest(t, ctx, sbx, sb.ID)
+
+	copies, err := sbx.Fork(ctx, sb.ID, 2, false, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		for _, c := range copies {
+			_ = sbx.Destroy(context.WithoutCancel(ctx), c.ID)
+		}
+	}()
+	for _, c := range copies {
+		assertContainerGuest(t, ctx, sbx, c.ID)
+		if out := guestOutput(t, ctx, sbx, c.ID, "cat", "/var/lib/kiln-data/origin"); strings.TrimSpace(out) != "origin" {
+			t.Errorf("fork %s lost the data written before the fork: %q", c.ID, out)
+		}
+	}
+	guestOutput(t, ctx, sbx, copies[0].ID, "sh", "-c", "echo first > /var/lib/kiln-data/first")
+	for _, id := range []string{sb.ID, copies[1].ID} {
+		if out := guestOutput(t, ctx, sbx, id, "ls", "/var/lib/kiln-data"); strings.Contains(out, "first") {
+			t.Errorf("%s sees the data of another fork: %q", id, out)
+		}
+	}
+
+	snap, err := sbx.Snapshot(ctx, copies[0].ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sbx.DeleteSnapshot(context.WithoutCancel(ctx), snap.ID) }()
+	restored, err := sbx.RestoreSnapshot(ctx, snap.ID, 1, false, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copies = append(copies, restored...)
+	assertContainerGuest(t, ctx, sbx, restored[0].ID)
+	if out := guestOutput(t, ctx, sbx, restored[0].ID, "cat", "/var/lib/kiln-data/first"); strings.TrimSpace(out) != "first" {
+		t.Errorf("the restore lost the data of its snapshot: %q", out)
+	}
+}
+
+// assertContainerGuest checks one running guest.
+func assertContainerGuest(t *testing.T, ctx context.Context, sbx *sandbox.Manager, id string) {
+	t.Helper()
+	if out := guestOutput(t, ctx, sbx, id, "stat", "-f", "-c", "%T", "/sys/fs/cgroup"); strings.TrimSpace(out) != "cgroup2fs" {
+		t.Errorf("%s: /sys/fs/cgroup is %q", id, out)
+	}
+	if out := guestOutput(t, ctx, sbx, id, "cat", "/proc/self/cgroup"); strings.TrimSpace(out) != "0::/user/init" {
+		t.Errorf("%s: exec runs in the cgroup %q", id, out)
+	}
+	// The user makes a cgroup of its own, limits its memory, and moves into
+	// it. A write past the limit then kills the process.
+	limit := `set -e
+mkdir -p /sys/fs/cgroup/user/limited
+echo 67108864 > /sys/fs/cgroup/user/limited/memory.max
+echo 0 > /sys/fs/cgroup/user/limited/memory.swap.max 2>/dev/null || true
+echo $$ > /sys/fs/cgroup/user/limited/cgroup.procs
+cat /sys/fs/cgroup/user/limited/memory.max
+python -c "b = b'x' * (256 << 20)" && echo survived`
+	if out := guestOutput(t, ctx, sbx, id, "sh", "-c", limit); !strings.HasPrefix(out, "67108864\n") || strings.Contains(out, "survived") {
+		t.Errorf("%s: a memory limit in the delegated cgroup gave %q", id, out)
+	}
+	if out := guestOutput(t, ctx, sbx, id, "stat", "-f", "-c", "%T", "/var/lib/kiln-data"); strings.TrimSpace(out) != "ext2/ext3" {
+		t.Errorf("%s: /var/lib/kiln-data is %q", id, out)
+	}
+	if out := guestOutput(t, ctx, sbx, id, "stat", "-c", "%u", "/var/lib/kiln-data"); strings.TrimSpace(out) != agentUID {
+		t.Errorf("%s: /var/lib/kiln-data belongs to %q", id, out)
+	}
+	// Rootless overlay2 stacks overlayfs on the data directory from inside a
+	// user namespace.
+	stack := `set -e
+d=/var/lib/kiln-data/stack-$$
+mkdir -p $d/lower $d/upper $d/work $d/merged
+echo lower > $d/lower/f
+unshare -Urm sh -c "mount -t overlay overlay -o lowerdir=$d/lower,upperdir=$d/upper,workdir=$d/work $d/merged && echo upper > $d/merged/f && cat $d/merged/f"
+cat $d/upper/f`
+	if out := guestOutput(t, ctx, sbx, id, "sh", "-c", stack); strings.TrimSpace(out) != "upper\nupper" {
+		t.Errorf("%s: overlayfs on the data directory gave %q", id, out)
+	}
+}

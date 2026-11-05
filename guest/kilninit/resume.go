@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -70,6 +71,10 @@ const (
 	// at boot, so the read-only rootfs is never written before the pivot.
 	scratchDir = "/tmp/kiln-upper"
 	newRootDir = "/tmp/kiln-root"
+	// dataDir is a directory on the overlay drive itself, outside the overlay
+	// root, so a tool can stack its own overlayfs on it. Rootless Docker's
+	// overlay2 needs that, and the overlay root cannot be its upper layer.
+	dataDir = "/var/lib/kiln-data"
 )
 
 // pivotOverlay mounts the sandbox overlay and pivots the root into it. The
@@ -90,6 +95,10 @@ func pivotOverlay() error {
 		return nil
 	}
 	if err := mountAndPivot(); err != nil {
+		return err
+	}
+	// The move of /sys carries the cgroup2 mount with it. This makes sure.
+	if err := mountCgroup(); err != nil {
 		return err
 	}
 	pivoted = true
@@ -134,6 +143,15 @@ func mountAndPivot() error {
 	if err := unix.Mount("tmpfs", newRootDir+"/tmp", "tmpfs", 0, ""); err != nil {
 		return fmt.Errorf("mount new tmpfs: %w", err)
 	}
+	data := scratchDir + "/data"
+	for _, dir := range []string{data, newRootDir + dataDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	if err := unix.Mount(data, newRootDir+dataDir, "", unix.MS_BIND, ""); err != nil {
+		return fmt.Errorf("bind %s: %w", dataDir, err)
+	}
 	for _, m := range []struct{ source, target string }{
 		{"/proc", newRootDir + "/proc"},
 		{"/sys", newRootDir + "/sys"},
@@ -157,6 +175,18 @@ func mountAndPivot() error {
 	}
 	_ = unix.Unmount("/.kiln-oldroot", unix.MNT_DETACH)
 	_ = os.Remove("/.kiln-oldroot")
+	return nil
+}
+
+// ownDataDir gives dataDir to the template user. A sandbox with no overlay
+// drive has no dataDir. The caller holds resumeMu.
+func ownDataDir(u *runAs) error {
+	if _, err := os.Lstat(dataDir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err := os.Lchown(dataDir, int(u.uid), int(u.gid)); err != nil {
+		return fmt.Errorf("%s: %w", dataDir, err)
+	}
 	return nil
 }
 

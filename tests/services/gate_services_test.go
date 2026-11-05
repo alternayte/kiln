@@ -133,11 +133,12 @@ func TestGateServices(t *testing.T) {
 
 	t.Run("ForksKeepTheirOwnData", func(t *testing.T) {
 		guest(t, ctx, cli, origin, psql+`"insert into rows values ('pre-fork')"`)
+		before := memoryEvents(t, origin)
 		copies, err := cli.Fork(ctx, origin, 3, false)
 		if err != nil {
 			t.Fatal(err)
 		}
-		assertSnapshotUnderLimit(t, origin, 1024)
+		assertSnapshotUnderLimit(t, origin, 1024, before)
 		// Dropping the page cache makes the guest read its drive. A fork on a
 		// blank drive passes without this, because the cache holds the file.
 		for _, fork := range copies {
@@ -321,28 +322,46 @@ func clearAll(t *testing.T, cli *client.Client) {
 // assertSnapshotUnderLimit checks the cgroup of a sandbox after a fork. The
 // fill loads all of guest memory before the snapshot, and the snapshot file's
 // page cache was charged to the same cgroup. The cgroup then sat at its limit
-// for the whole write (1157 hits in one fork), and in one CI run the kernel
-// killed Firecracker. A snapshot now lifts the limit while the guest is paused
-// and puts it back after the write.
-func assertSnapshotUnderLimit(t *testing.T, id string, memoryMB int) {
+// for the whole write, and in CI run 41941372942 the kernel killed
+// Firecracker. A snapshot now lifts the limit while the guest is paused and
+// puts it back after the write.
+//
+// The max counter also counts ordinary page cache reclaim after the resume,
+// so it is not zero by rule. One fork added 1157 and 1477 before the fix, and
+// 0 and 8 after it.
+func assertSnapshotUnderLimit(t *testing.T, id string, memoryMB int, before map[string]int) {
 	t.Helper()
-	dir := runtime.CgroupDir(id)
-	events, err := os.ReadFile(filepath.Join(dir, "memory.events"))
-	if err != nil {
-		t.Fatal(err)
+	after := memoryEvents(t, id)
+	if after["oom_kill"] != before["oom_kill"] {
+		t.Errorf("the kernel killed in the sandbox cgroup during the fork: oom_kill %d, then %d", before["oom_kill"], after["oom_kill"])
 	}
-	fields := strings.Fields(string(events))
-	for i := 0; i+1 < len(fields); i += 2 {
-		if (fields[i] == "max" || fields[i] == "oom_kill") && fields[i+1] != "0" {
-			t.Errorf("the snapshot ran the sandbox cgroup into its limit: %s", strings.Join(fields, " "))
-			break
-		}
+	if hits := after["max"] - before["max"]; hits >= 100 {
+		t.Errorf("the fork ran the sandbox cgroup into its limit %d times", hits)
 	}
-	limit, err := os.ReadFile(filepath.Join(dir, "memory.max"))
+	limit, err := os.ReadFile(filepath.Join(runtime.CgroupDir(id), "memory.max"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := strings.TrimSpace(string(limit)), strconv.FormatInt(runtime.SandboxMemoryLimit(memoryMB), 10); got != want {
 		t.Errorf("memory.max after the snapshot = %s, want %s", got, want)
 	}
+}
+
+// memoryEvents reads the memory.events counters of a sandbox cgroup.
+func memoryEvents(t *testing.T, id string) map[string]int {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(runtime.CgroupDir(id), "memory.events"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]int{}
+	fields := strings.Fields(string(b))
+	for i := 0; i+1 < len(fields); i += 2 {
+		n, err := strconv.Atoi(fields[i+1])
+		if err != nil {
+			t.Fatalf("memory.events %q: %v", b, err)
+		}
+		out[fields[i]] = n
+	}
+	return out
 }

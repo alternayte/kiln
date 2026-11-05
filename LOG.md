@@ -733,4 +733,7 @@ sandbox cgroup with 64 MiB of headroom. One fork of a 1024 MB sandbox hit the cg
 1157 to 1477 times, and in CI run 41941372942 the kernel killed Firecracker during
 `/snapshot/create`. A snapshot now lifts `memory.max` while the guest is paused, syncs the
 written files, and puts the limit back. `TestGateServices/ForksKeepTheirOwnData` asserts that
-the cgroup never reaches its limit during a fork and that the limit is back afterwards.
+one fork kills nothing in the cgroup, adds fewer than 100 limit hits, and leaves the limit in
+place. Ordinary page cache reclaim after the resume adds a few hits: the fix measured 0 and
+8, and the code without it 1598. The v0.15.1 tag has no release, because its gate asserted
+zero hits and failed on those 8.

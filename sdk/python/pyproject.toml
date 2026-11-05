@@ -1,6 +1,6 @@
 [project]
 name = "kiln-sdk"
-version = "0.16.1"
+version = "0.16.2"
 description = "Isolated Linux microVMs: create, exec, fork, sleep and publish sandboxes."
 readme = "README.md"
 license = "MIT"

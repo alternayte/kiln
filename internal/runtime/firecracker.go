@@ -287,7 +287,11 @@ func (f *Firecracker) snapshotPaused(ctx context.Context, vm *VM, dir, kind stri
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), snapshotTimeout(vm.MemoryMiB))
 	defer cancel()
 	out := SnapshotFiles{}
-	err := vm.api.put(ctx, "/snapshot/create", map[string]any{
+	restore, err := liftMemoryLimit(vm)
+	if err != nil {
+		return out, err
+	}
+	err = vm.api.put(ctx, "/snapshot/create", map[string]any{
 		"snapshot_path": "/snapshots/state",
 		"mem_file_path": "/snapshots/mem",
 		"snapshot_type": kind,
@@ -301,7 +305,58 @@ func (f *Firecracker) snapshotPaused(ctx context.Context, vm *VM, dir, kind stri
 	if err == nil {
 		out.MemPath, err = moveOut(filepath.Join(vm.chrootDir(), "snapshots", "mem"), filepath.Join(dir, "mem"))
 	}
+	// The files are wherever the write or the move left them.
+	snapDir := filepath.Join(vm.chrootDir(), "snapshots")
+	if restoreErr := restore(filepath.Join(snapDir, "state"), filepath.Join(snapDir, "mem"),
+		filepath.Join(dir, "state"), filepath.Join(dir, "mem")); err == nil {
+		err = restoreErr
+	}
 	return out, err
+}
+
+// liftMemoryLimit removes the memory limit of a paused VM's cgroup while
+// Firecracker writes a snapshot, and returns the call that puts it back. The
+// page cache of the snapshot file is charged to this cgroup. A restored VM
+// whose memory the fill has loaded leaves it only the headroom, so the cgroup
+// sat at its limit for the whole write and the kernel killed Firecracker when
+// writeback fell behind. A paused guest cannot allocate, so the limit has
+// nothing to bound until the resume. The restore syncs the written files
+// first: clean page cache reclaims at once, and dirty page cache over the
+// limit would make the kernel kill again.
+func liftMemoryLimit(vm *VM) (func(files ...string) error, error) {
+	path := filepath.Join(CgroupDir(vm.ID), "memory.max")
+	limit, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		// No cgroup is no limit, so the write has nothing to lift.
+		return func(...string) error { return nil }, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("runtime: read memory limit: %w", err)
+	}
+	if err := os.WriteFile(path, []byte("max\n"), 0o644); err != nil {
+		return nil, fmt.Errorf("runtime: lift memory limit: %w", err)
+	}
+	return func(files ...string) error {
+		var first error
+		for _, file := range files {
+			if err := syncFile(file); err != nil && !errors.Is(err, os.ErrNotExist) && first == nil {
+				first = err
+			}
+		}
+		if err := os.WriteFile(path, limit, 0o644); err != nil && first == nil {
+			first = fmt.Errorf("runtime: restore memory limit: %w", err)
+		}
+		return first
+	}, nil
+}
+
+func syncFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
 }
 
 // SnapshotWithDisk pauses a VM, writes its memory and state into dir with a

@@ -8,12 +8,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/alternayte/kiln/client"
+	"github.com/alternayte/kiln/internal/runtime"
 )
 
 const (
@@ -135,6 +137,7 @@ func TestGateServices(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		assertSnapshotUnderLimit(t, origin, 1024)
 		// Dropping the page cache makes the guest read its drive. A fork on a
 		// blank drive passes without this, because the cache holds the file.
 		for _, fork := range copies {
@@ -312,5 +315,34 @@ func clearAll(t *testing.T, cli *client.Client) {
 		if strings.HasPrefix(row.Name, stackTemplate) {
 			_ = cli.DeleteTemplate(ctx, row.Name)
 		}
+	}
+}
+
+// assertSnapshotUnderLimit checks the cgroup of a sandbox after a fork. The
+// fill loads all of guest memory before the snapshot, and the snapshot file's
+// page cache was charged to the same cgroup. The cgroup then sat at its limit
+// for the whole write (1157 hits in one fork), and in one CI run the kernel
+// killed Firecracker. A snapshot now lifts the limit while the guest is paused
+// and puts it back after the write.
+func assertSnapshotUnderLimit(t *testing.T, id string, memoryMB int) {
+	t.Helper()
+	dir := runtime.CgroupDir(id)
+	events, err := os.ReadFile(filepath.Join(dir, "memory.events"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(string(events))
+	for i := 0; i+1 < len(fields); i += 2 {
+		if (fields[i] == "max" || fields[i] == "oom_kill") && fields[i+1] != "0" {
+			t.Errorf("the snapshot ran the sandbox cgroup into its limit: %s", strings.Join(fields, " "))
+			break
+		}
+	}
+	limit, err := os.ReadFile(filepath.Join(dir, "memory.max"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(limit)), strconv.FormatInt(runtime.SandboxMemoryLimit(memoryMB), 10); got != want {
+		t.Errorf("memory.max after the snapshot = %s, want %s", got, want)
 	}
 }

@@ -793,3 +793,13 @@ sandbox id. A template built before v0.16.4 has no file, so it must be built aga
 `TestEnsureHostsKeepsTheImageFile` and `TestHostsWithNameReplacesTheHostname` pin both sides,
 and `TestSecAgentControls/Containers` resolves localhost and the sandbox id in a guest and in
 its forks.
+
+Fixed: issue 28, a guest stalled when it wrote fresh memory soon after a restore. The page
+server copied one 4 KiB page per fault, and each fault went through a KVM async page fault, a
+kworker, the server and a wake back into the guest, about 300 µs in all. On the box a guest
+of the Factoree template wrote 1800 MiB to `/tmp` in 116 s, and the same write took 6.6 s once
+the pages were in place. The guest clock runs on during the wait, so a .NET regex timeout, a
+Playwright timeout and a busy `npm ci` saw seconds of lost time. A fault now copies the
+aligned 2 MiB block around it and steps over pages already in place. An idle restored sandbox
+of that template maps 74 MiB, not 10 MiB. The server runs on the host, so a template needs no
+new build. `TestFaultCopiesTheBlockAroundIt` pins it.

@@ -38,6 +38,11 @@ const (
 	// fillBlock is how much one step of a fill copies between two looks at the
 	// fault queue.
 	fillBlock = 2 << 20
+	// faultBlock is how much one fault copies: the aligned block around the
+	// faulting page. A fault costs a round trip through KVM async page faults, a
+	// kworker and this server, so one page per fault made a guest that writes
+	// fresh memory after a restore stall for seconds (#28).
+	faultBlock = 2 << 20
 )
 
 type uffdioCopyArgs struct {
@@ -56,8 +61,8 @@ type uffdioZeropageArgs struct {
 }
 
 // Serve listens on sockPath, takes the UFFD descriptor and the guest memory
-// layout from Firecracker, and serves pages from memPath on demand. Pages are
-// read from the file one at a time, and preloaded only when a SIGUSR1 asks for
+// layout from Firecracker, and serves pages from memPath on demand. A fault
+// copies the aligned faultBlock around it, and pages are preloaded only when a SIGUSR1 asks for
 // a fill before a snapshot.
 func Serve(ctx context.Context, memPath, sockPath string, ready func()) error {
 	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
@@ -158,16 +163,11 @@ func servePages(ctx context.Context, memPath string, mappings []mapping, uffd in
 	}
 	defer mem.Close()
 
-	var maxPage uint64
+	blockSize := uint64(faultBlock)
 	for _, m := range mappings {
-		if m.PageSize > maxPage {
-			maxPage = m.PageSize
-		}
+		blockSize = max(blockSize, m.PageSize)
 	}
-	if maxPage == 0 {
-		maxPage = 4096
-	}
-	page := make([]byte, maxPage)
+	block := make([]byte, blockSize)
 	events := make([]byte, uffdMsgSize*16)
 	fillAsked := make(chan os.Signal, 1)
 	signal.Notify(fillAsked, syscall.SIGUSR1)
@@ -233,13 +233,13 @@ func servePages(ctx context.Context, memPath string, mappings []mapping, uffd in
 			case uffdEventPagefault:
 				addr := binary.LittleEndian.Uint64(events[off+16 : off+24])
 				faults++
-				if err := servePage(mem, page, mappings, uffd, addr); err != nil {
+				if err := serveFault(mem, block, mappings, uffd, addr); err != nil {
 					return err
 				}
 			case uffdEventRemove:
 				start := binary.LittleEndian.Uint64(events[off+8 : off+16])
 				end := binary.LittleEndian.Uint64(events[off+16 : off+24])
-				if err := zeroRange(page, mappings, uffd, start, end); err != nil {
+				if err := zeroRange(mappings, uffd, start, end); err != nil {
 					return err
 				}
 			}
@@ -316,45 +316,40 @@ func copyRange(uffd int, dst uint64, buf []byte, pageSize uint64) error {
 	return nil
 }
 
-// servePage copies one page from the memory file into the faulting address.
-func servePage(mem *os.File, page []byte, mappings []mapping, uffd int, fault uint64) error {
+// serveFault copies the aligned block around the faulting address from the
+// memory file, inside the faulting region. Pages already in place are stepped
+// over, so a block never overwrites a page the guest wrote or a removed page
+// that was zeroed.
+func serveFault(mem *os.File, buf []byte, mappings []mapping, uffd int, fault uint64) error {
 	m, ok := regionAt(mappings, fault)
 	if !ok {
 		return fmt.Errorf("snapshot: fault at %#x is outside the guest memory layout", fault)
 	}
-	size := m.PageSize
-	if size == 0 {
-		size = 4096
+	pageSize := m.PageSize
+	if pageSize == 0 {
+		pageSize = 4096
 	}
-	if uint64(len(page)) < size {
-		return fmt.Errorf("snapshot: page buffer is smaller than %d", size)
+	size := max(uint64(faultBlock), pageSize) &^ (pageSize - 1)
+	start := (fault - m.BaseHostVirtAddr) / size * size
+	if rest := m.Size - start; rest < size {
+		size = rest
 	}
-	buf := page[:size]
-	for i := range buf {
-		buf[i] = 0
+	if uint64(len(buf)) < size {
+		return fmt.Errorf("snapshot: fault buffer is smaller than %d", size)
 	}
-	dst := fault &^ (size - 1)
-	off := m.Offset + (dst - m.BaseHostVirtAddr)
-	if _, err := mem.ReadAt(buf, int64(off)); err != nil && err != io.EOF {
+	b := buf[:size]
+	clear(b)
+	if _, err := mem.ReadAt(b, int64(m.Offset+start)); err != nil && err != io.EOF {
 		return fmt.Errorf("snapshot: read memory file: %w", err)
 	}
-	args := uffdioCopyArgs{
-		Dst: dst,
-		Src: uint64(uintptr(unsafe.Pointer(&buf[0]))),
-		Len: size,
-	}
-	if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(uffd), uffdioCopyNumber, uintptr(unsafe.Pointer(&args))); errno != 0 {
-		if errno == unix.EEXIST {
-			// Another handler already resolved the page.
-			return nil
-		}
-		return fmt.Errorf("snapshot: uffdio_copy %#x: %w", dst, errno)
+	if err := copyRange(uffd, m.BaseHostVirtAddr+start, b, pageSize); err != nil {
+		return fmt.Errorf("snapshot: %w", err)
 	}
 	return nil
 }
 
 // zeroRange resolves removed (ballooned) pages with zeroes.
-func zeroRange(page []byte, mappings []mapping, uffd int, start, end uint64) error {
+func zeroRange(mappings []mapping, uffd int, start, end uint64) error {
 	for addr := start; addr < end; {
 		m, ok := regionAt(mappings, addr)
 		if !ok {

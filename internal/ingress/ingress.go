@@ -70,7 +70,8 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
-	// Every preview response is unindexable and runs with an opaque origin.
+	// Every preview response is unindexable. A page of this server runs with
+	// an opaque origin; the ingress lifts that for the guest's own responses.
 	w.Header().Set("X-Robots-Tag", "noindex")
 	w.Header().Set("Content-Security-Policy", "sandbox")
 	sub, ok := subdomainOf(r.Host, s.cfg.Zone)
@@ -214,8 +215,9 @@ func (s *Server) viewerForkPage(w http.ResponseWriter, r *http.Request) {
 `, viewerForkReset)
 }
 
-// resetViewerFork destroys the fork of the viewer who asks. Only this server's
-// page may ask: a guest page has an opaque origin, and another site has its own.
+// resetViewerFork destroys the fork of the viewer who asks. Only a page of this
+// hostname may ask, so another site cannot reset a viewer's copy. The guest's
+// own pages share the hostname, and a reset only ends the copy they run in.
 func (s *Server) resetViewerFork(w http.ResponseWriter, r *http.Request, row store.Published, viewer string) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
@@ -316,24 +318,30 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, row store.Publish
 			// The guest sees the preview hostname, not the guest address, so
 			// a dev server can build correct URLs.
 			pr.Out.Host = pr.In.Host
-			// No host credential, cookie or control token enters the guest.
-			pr.Out.Header.Del("Cookie")
+			// No host credential, viewer session or control token enters
+			// the guest. The guest's own cookies pass, so an application
+			// that signs in with a cookie works.
+			dropKilnCookies(pr.Out.Header)
 			pr.Out.Header.Del("Authorization")
 			pr.Out.Header.Del("Proxy-Authorization")
 		},
 		Transport: transport,
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header.Set("X-Robots-Tag", "noindex")
-			resp.Header.Set("Content-Security-Policy", "sandbox")
 			stripCookieDomains(resp.Header)
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			w.Header().Set("Content-Security-Policy", "sandbox")
 			log.Printf("ingress: %s: %v", row.Subdomain, err)
 			http.Error(w, "the sandbox closed the connection", http.StatusBadGateway)
 		},
 		FlushInterval: 100 * time.Millisecond,
 	}
+	// A guest response keeps its own Content-Security-Policy. A sandbox
+	// policy blocks every script, so no client-rendered application would run
+	// behind a preview (#31).
+	w.Header().Del("Content-Security-Policy")
 	proxy.ServeHTTP(w, r)
 }
 
@@ -416,7 +424,8 @@ func subdomainOf(host, zone string) (string, bool) {
 }
 
 // stripCookieDomains makes every guest cookie host-only, so one preview
-// cannot set a cookie for the whole zone.
+// cannot set a cookie for the whole zone, and drops a guest cookie that takes
+// the name of the viewer session, so a preview cannot shadow it.
 func stripCookieDomains(h http.Header) {
 	cookies := h.Values("Set-Cookie")
 	if len(cookies) == 0 {
@@ -424,8 +433,38 @@ func stripCookieDomains(h http.Header) {
 	}
 	h.Del("Set-Cookie")
 	for _, cookie := range cookies {
+		name, _, _ := strings.Cut(cookie, "=")
+		if isKilnCookie(name) {
+			continue
+		}
 		h.Add("Set-Cookie", dropDomainAttribute(cookie))
 	}
+}
+
+// dropKilnCookies removes the viewer session from a request to the guest and
+// keeps every other cookie. Only the viewer session covers the whole zone,
+// because a guest cookie is host-only.
+func dropKilnCookies(h http.Header) {
+	lines := h.Values("Cookie")
+	h.Del("Cookie")
+	var kept []string
+	for _, line := range lines {
+		for _, pair := range strings.Split(line, ";") {
+			pair = strings.TrimSpace(pair)
+			name, _, _ := strings.Cut(pair, "=")
+			if pair == "" || isKilnCookie(name) {
+				continue
+			}
+			kept = append(kept, pair)
+		}
+	}
+	if len(kept) > 0 {
+		h.Set("Cookie", strings.Join(kept, "; "))
+	}
+}
+
+func isKilnCookie(name string) bool {
+	return strings.TrimSpace(name) == ViewerCookie
 }
 
 // dropDomainAttribute removes the Domain attribute from one Set-Cookie value.

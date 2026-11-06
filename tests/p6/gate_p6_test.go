@@ -168,7 +168,7 @@ func TestGateP6(t *testing.T) {
 		if body != "p6-"+sb.ID {
 			t.Fatalf("public preview body %q, want p6-%s", body, sb.ID)
 		}
-		assertPreviewHeaders(t, header)
+		assertGuestHeaders(t, header)
 	})
 
 	t.Run("ControlPathNotRouted", func(t *testing.T) {
@@ -218,7 +218,7 @@ func TestGateP6(t *testing.T) {
 		if body != "p6-"+sb.ID {
 			t.Fatalf("team preview body %q, want p6-%s", body, sb.ID)
 		}
-		assertPreviewHeaders(t, header)
+		assertGuestHeaders(t, header)
 		if after := guestLineCount(t, cli, sb.ID); after <= before {
 			t.Fatalf("the authenticated request did not reach the guest")
 		}
@@ -432,7 +432,8 @@ func waitPublic(t *testing.T, url string, timeout time.Duration) {
 	}
 }
 
-// assertPreviewHeaders proves the two headers every preview response carries.
+// assertPreviewHeaders proves the two headers every page of the ingress itself
+// carries: a challenge, a 404 or an error.
 func assertPreviewHeaders(t *testing.T, header http.Header) {
 	t.Helper()
 	if got := header.Get("X-Robots-Tag"); got != "noindex" {
@@ -440,6 +441,18 @@ func assertPreviewHeaders(t *testing.T, header http.Header) {
 	}
 	if got := header.Get("Content-Security-Policy"); got != "sandbox" {
 		t.Fatalf("Content-Security-Policy = %q, want sandbox", got)
+	}
+}
+
+// assertGuestHeaders proves what a response from the guest carries: noindex
+// once, and no sandbox policy, so the guest's scripts run (#31).
+func assertGuestHeaders(t *testing.T, header http.Header) {
+	t.Helper()
+	if got := header.Values("X-Robots-Tag"); len(got) != 1 || got[0] != "noindex" {
+		t.Fatalf("X-Robots-Tag = %q, want one noindex", got)
+	}
+	if got := header.Values("Content-Security-Policy"); len(got) != 0 {
+		t.Fatalf("Content-Security-Policy = %q on a guest response, want none", got)
 	}
 }
 

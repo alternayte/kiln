@@ -13,8 +13,8 @@ Serves published sandbox ports over HTTPS on a random hostname, with a wildcard 
 - `team` requires a viewer session. Auth-all runs in this process against the same SQLite file and mounts at `/_kiln/auth/` on every published hostname. The session cookie is scoped to `.<zone>`, so one login covers every preview. The operator creates the first admin at init; there is no self-signup and no email flow. The proxy checks the session before it forwards, so an unauthenticated request never reaches the guest.
 - A request to the published hostname of a sleeping sandbox is held while the sandbox wakes, then forwarded. The client sees one slow request. A failed wake returns 503.
 - Wakes are limited per subdomain to 10 per rolling minute and host-wide to 4 restores in flight. Over either limit the proxy returns 503 with `Retry-After: 30` and queues nothing.
-- The proxy strips hop-by-hop headers in both directions and forwards no host credential, cookie or control token into the guest.
-- Every preview response carries `Content-Security-Policy: sandbox` and `X-Robots-Tag: noindex`.
+- The ingress strips hop-by-hop headers in both directions and forwards no host credential, viewer session cookie or control token into the guest. The guest's own cookies pass, and a guest cookie comes back host-only — an application that signs in with a cookie must work behind a preview.
+- Every preview response carries `X-Robots-Tag: noindex`. A page of the ingress itself (a challenge, a 404, an error) carries `Content-Security-Policy: sandbox`. A response from the guest keeps its own policy and gets no sandbox policy — a sandbox policy blocks every script, so no client-rendered application runs behind a preview (#31).
 - `GET /` is a read-only HTML status page with sandboxes, templates and resource use. No controls, no forms, no JavaScript build step.
 - `scripts/demo.sh` runs the full sequence and prints the create wall time against the last recorded value. It asserts no timing bound.
 - The `published` table lands here.
@@ -24,5 +24,5 @@ Serves published sandbox ports over HTTPS on a random hostname, with a wildcard 
 - No per-preview viewer lists. Every viewer account may open every team preview.
 
 ## How I know it works
-- `just gate P6` on the VPS: a public preview is reachable with no credential; a team preview challenges, and the guest never sees the unauthenticated request; a retired hostname 404s; `/v1/sandboxes` on port 443 returns 404; the control listener is not public; the guest cannot reach the control API; every response carries `noindex`; a request over the wake cap returns 503.
+- `just gate P6` on the VPS: a public preview is reachable with no credential; a team preview challenges, and the guest never sees the unauthenticated request; a retired hostname 404s; `/v1/sandboxes` on port 443 returns 404; the control listener is not public; the guest cannot reach the control API; every response carries `noindex`; a guest response carries no sandbox policy and an ingress page does; a request over the wake cap returns 503.
 - `just demo` passes unmodified on the VPS.

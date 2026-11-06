@@ -28,6 +28,10 @@ const ViewerRole = "viewer"
 // and no route grants it.
 const viewerAdminRole = "viewer-admin"
 
+// ViewerCookie is the name of the viewer session cookie. It covers every
+// hostname of the zone, so the ingress keeps it from every guest.
+const ViewerCookie = authall.DefaultCookieName
+
 // Viewers is the viewer store of this host. A viewer belongs to one tenant,
 // and the ingress refuses a session of another tenant. The tenant id of the
 // host store is the slug here, because the plugin makes its own ids.
@@ -74,7 +78,7 @@ func NewAuth(ctx context.Context, database, zone string) (*Viewers, *sql.DB, err
 	if zone != "" {
 		opts = append(opts,
 			authall.WithBaseURL("https://"+zone),
-			authall.WithCookie(authall.CookieOptions{Domain: "." + zone}),
+			authall.WithCookie(authall.CookieOptions{Name: ViewerCookie, Domain: "." + zone}),
 		)
 	}
 	auth, err := authall.New(opts...)

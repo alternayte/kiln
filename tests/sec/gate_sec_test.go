@@ -380,7 +380,7 @@ func checkHostnamesAndSession(t *testing.T, ctx context.Context, st store.Store,
 	if status != http.StatusOK || body != "sec-"+sb.ID {
 		t.Fatalf("the team preview with a session answered %d %q", status, body)
 	}
-	assertPreviewHeaders(t, header)
+	assertGuestHeaders(t, header)
 	if after := guestRequestCount(t, ctx, sbx, sb.ID); after <= before {
 		t.Fatal("the authenticated request did not reach the guest")
 	}
@@ -388,7 +388,7 @@ func checkHostnamesAndSession(t *testing.T, ctx context.Context, st store.Store,
 	if status, header, body = fetch(t, ts, publicHost(public.Subdomain), "/", ""); status != http.StatusOK || body != "sec-"+sb.ID {
 		t.Fatalf("the public preview answered %d %q", status, body)
 	}
-	assertPreviewHeaders(t, header)
+	assertGuestHeaders(t, header)
 	// A retired hostname 404s, even for a viewer, and leaves a tombstone.
 	if err := sbx.Retire(ctx, sb.ID, 7001); err != nil {
 		t.Fatal(err)
@@ -530,8 +530,9 @@ func checkControlPlane(t *testing.T, ctx context.Context, sbx *sandbox.Manager, 
 	}
 }
 
-// C9: every preview response is unindexable and sandboxed, the guest never
-// sees a host credential, and a guest cookie comes back host-only.
+// C9: every preview response is unindexable, a page of the ingress is
+// sandboxed, the guest never sees a host credential or the viewer session, the
+// guest's own cookies reach it, and a guest cookie comes back host-only.
 func checkPreviewHeaders(t *testing.T, ctx context.Context, st store.Store, sbx *sandbox.Manager) {
 	t.Helper()
 	sb := createSandbox(t, ctx, sbx, sandbox.CreateRequest{
@@ -550,18 +551,21 @@ func checkPreviewHeaders(t *testing.T, ctx context.Context, st store.Store, sbx 
 	host := publicHost(published.Subdomain)
 
 	status, header, body := fetchWithHeaders(t, ts, host, "/", "", map[string]string{
-		"Cookie":        "host=credential",
+		"Cookie":        ingress.ViewerCookie + "=credential; app=guest-own",
 		"Authorization": "Bearer control-token",
 	})
 	if status != http.StatusOK || body != "sec-"+sb.ID {
 		t.Fatalf("the preview answered %d %q", status, body)
 	}
-	assertPreviewHeaders(t, header)
+	assertGuestHeaders(t, header)
 	seen := strings.ToLower(guestRequestLog(t, ctx, sbx, sb.ID))
-	for _, banned := range []string{"credential", "control-token"} {
+	for _, banned := range []string{"credential", "control-token", strings.ToLower(ingress.ViewerCookie)} {
 		if strings.Contains(seen, banned) {
 			t.Fatalf("the guest saw %q in its request log", banned)
 		}
+	}
+	if !strings.Contains(seen, "app=guest-own") {
+		t.Fatalf("the guest's own cookie did not reach it: %s", seen)
 	}
 	// A guest cookie is host-only: the proxy drops its Domain attribute.
 	if status, header, _ := fetch(t, ts, host, "/cookie", ""); status != http.StatusOK {
@@ -837,6 +841,18 @@ func assertPreviewHeaders(t *testing.T, header http.Header) {
 	}
 	if got := header.Get("Content-Security-Policy"); got != "sandbox" {
 		t.Fatalf("Content-Security-Policy = %q, want sandbox", got)
+	}
+}
+
+// assertGuestHeaders proves what a response from the guest carries: noindex
+// once, and no sandbox policy, so the guest's scripts run (#31).
+func assertGuestHeaders(t *testing.T, header http.Header) {
+	t.Helper()
+	if got := header.Values("X-Robots-Tag"); len(got) != 1 || got[0] != "noindex" {
+		t.Fatalf("X-Robots-Tag = %q, want one noindex", got)
+	}
+	if got := header.Values("Content-Security-Policy"); len(got) != 0 {
+		t.Fatalf("Content-Security-Policy = %q on a guest response, want none", got)
 	}
 }
 

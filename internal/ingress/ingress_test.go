@@ -272,3 +272,28 @@ func TestTeamPreviewRefusesAViewerOfAnotherTenant(t *testing.T) {
 		t.Fatal("a tenant with no viewer accepted one")
 	}
 }
+
+// The guest gets its own cookies back and never the viewer session, and a
+// guest cannot set a cookie for the zone or one named like the viewer session.
+func TestGuestCookies(t *testing.T) {
+	req := http.Header{}
+	req.Add("Cookie", ViewerCookie+"=viewer-secret; app=1")
+	req.Add("Cookie", "theme=dark")
+	dropKilnCookies(req)
+	if got := req.Values("Cookie"); len(got) != 1 || got[0] != "app=1; theme=dark" {
+		t.Fatalf("cookies to the guest = %q, want app=1; theme=dark", got)
+	}
+	only := http.Header{"Cookie": {ViewerCookie + "=viewer-secret"}}
+	dropKilnCookies(only)
+	if _, ok := only["Cookie"]; ok {
+		t.Fatalf("a request with only the viewer session still carries %q", only.Values("Cookie"))
+	}
+
+	resp := http.Header{}
+	resp.Add("Set-Cookie", "session=abc; Domain=.example.com; Path=/; HttpOnly")
+	resp.Add("Set-Cookie", ViewerCookie+"=forged; Path=/")
+	stripCookieDomains(resp)
+	if got := resp.Values("Set-Cookie"); len(got) != 1 || got[0] != "session=abc; Path=/; HttpOnly" {
+		t.Fatalf("guest Set-Cookie = %q, want one host-only session cookie", got)
+	}
+}

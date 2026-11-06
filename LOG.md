@@ -803,3 +803,15 @@ Playwright timeout and a busy `npm ci` saw seconds of lost time. A fault now cop
 aligned 2 MiB block around it and steps over pages already in place. An idle restored sandbox
 of that template maps 74 MiB, not 10 MiB. The server runs on the host, so a template needs no
 new build. `TestFaultCopiesTheBlockAroundIt` pins it.
+
+Fixed: issue 31, no client-rendered application ran behind a preview. Every preview response
+carried `Content-Security-Policy: sandbox`, twice, and a sandbox policy without `allow-scripts`
+blocks every script. A policy that allows scripts keeps the origin opaque, so storage, cookies
+and same-host requests still fail. A guest response now keeps its own policy, and a page of
+the ingress keeps the sandbox policy. The ingress also deleted every cookie on the way to the
+guest, so an application that signs in with a cookie failed too. It now removes only the viewer
+session cookie, which is the one cookie that covers the whole zone, and drops a guest cookie
+that takes its name. The session read returns no token and the cookie is HttpOnly, so a guest
+script cannot read the viewer session. The preview keeps `noindex`, its 128-bit hostname and
+host-only guest cookies. `TestGuestCookies` pins the cookie rules, and the sec and P6 gates
+check both header sets and that the guest gets its own cookie and not the viewer session.

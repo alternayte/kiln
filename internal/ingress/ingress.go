@@ -332,6 +332,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, row store.Publish
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			w.Header().Set("X-Robots-Tag", "noindex")
 			w.Header().Set("Content-Security-Policy", "sandbox")
 			log.Printf("ingress: %s: %v", row.Subdomain, err)
 			http.Error(w, "the sandbox closed the connection", http.StatusBadGateway)
@@ -340,8 +341,10 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, row store.Publish
 	}
 	// A guest response keeps its own Content-Security-Policy. A sandbox
 	// policy blocks every script, so no client-rendered application would run
-	// behind a preview (#31).
+	// behind a preview (#31). ModifyResponse sets noindex on the guest
+	// response, and the reverse handler adds that to these headers, so drop both here.
 	w.Header().Del("Content-Security-Policy")
+	w.Header().Del("X-Robots-Tag")
 	proxy.ServeHTTP(w, r)
 }
 

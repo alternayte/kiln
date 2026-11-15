@@ -271,6 +271,9 @@ func (m *Manager) sleepLocked(ctx context.Context, id string) error {
 	if err := m.cfg.Store.SetTimelineDiffOK(ctx, id, false); err != nil {
 		return err
 	}
+	// The guest sees each stream end before the memory is saved, so a
+	// woken guest holds no half-open connection.
+	m.closeStreams(id)
 	m.fillPages(id)
 	if err := m.cfg.Runtime.Pause(ctx, vm); err != nil {
 		return err
@@ -502,6 +505,7 @@ func (m *Manager) Forget(id string) {
 	delete(m.attrs, id)
 	m.mu.Unlock()
 	m.stopTimer(id)
+	m.closeStreams(id)
 	// The caller removes the host resources next. A live attachment would see
 	// its guard die and start another one.
 	if att != nil {

@@ -307,6 +307,7 @@ func (m *Manager) Rewind(ctx context.Context, id, pointID string) (store.Sandbox
 		return store.Sandbox{}, err
 	}
 	m.event(ctx, id, row.State, store.SandboxWaking, "rewind "+pointID, m.now())
+	m.closeStreams(id)
 	if row.State == store.SandboxRunning {
 		// The VM stops as a sleep ends it: a plain stop removes the sandbox
 		// directory, and that holds the timeline.

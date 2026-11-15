@@ -134,6 +134,14 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "invalid", err.Error())
 		return
 	}
+	op, ok := operationOf(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "the API has no route "+r.Method+" "+r.URL.Path)
+		return
+	}
+	if !s.authorize(w, r, tenant, op) {
+		return
+	}
 	start := time.Now()
 	credential := carriesCredential(r)
 	egressMode := egressModeOf(r)

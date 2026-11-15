@@ -150,11 +150,7 @@ func newAuth(baseURL string) (*authall.Auth, *organizations.Plugin, *apikeys.Plu
 		return nil, nil, nil, nil, nil, nil, err
 	}
 	tenants := organizations.New(
-		organizations.Roles(
-			organizations.Role("operator", "*"),
-			organizations.Role("editor", "sandbox:*", "template:*", "snapshot:*", "organization:read"),
-			organizations.Role("reader", "sandbox:read", "template:read", "snapshot:read", "organization:read"),
-		),
+		gateway.TenantRoles(),
 		organizations.DefaultRole("editor"),
 		organizations.OwnerRole("operator"),
 	)

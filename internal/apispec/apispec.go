@@ -40,6 +40,10 @@ type Operation struct {
 	Returns string
 	// Status is the status a success carries.
 	Status int
+	// Permission is the role statement a tenant caller needs, such as
+	// sandbox:read. The gateway refuses a call whose role does not hold it.
+	// An operator route names none, and the gateway forwards none.
+	Permission string
 	// Operator marks a route only the operator token reaches. The gateway
 	// never exposes one to a tenant, and no tool is made for it.
 	Operator bool
@@ -58,14 +62,18 @@ type Operation struct {
 	Raw bool
 }
 
-// CheckCommands reports the first operation with no kiln command, and the
-// first command two operations share. The SDK check calls it, so a new route
+// CheckCommands reports the first operation with no kiln command, the first
+// command two operations share, and the first tenant operation with no
+// permission. The SDK check calls it, so a new route
 // cannot reach the API without the CLI.
 func CheckCommands() error {
 	seen := map[string]string{}
 	for _, op := range Operations() {
 		if op.Command == "" {
 			return fmt.Errorf("operation %s names no kiln command", op.ID)
+		}
+		if op.Operator == (op.Permission != "") {
+			return fmt.Errorf("operation %s must name a permission exactly when it is not an operator route", op.ID)
 		}
 		if other, ok := seen[op.Command]; ok {
 			return fmt.Errorf("operations %s and %s share the kiln command %q", other, op.ID, op.Command)
@@ -80,12 +88,12 @@ func CheckCommands() error {
 func Operations() []Operation {
 	ops := []Operation{
 		{
-			ID: "health", Command: "health", Method: "GET", Path: "/v1/health", Status: 200,
+			ID: "health", Command: "health", Method: "GET", Path: "/v1/health", Status: 200, Permission: "organization:read",
 			Summary: "Report whether the host can run sandboxes.",
 			Returns: "Health",
 		},
 		{
-			ID: "events", Command: "events", Method: "GET", Path: "/v1/events", Status: 200, Streams: true, Raw: true,
+			ID: "events", Command: "events", Method: "GET", Path: "/v1/events", Status: 200, Permission: "sandbox:read", Streams: true, Raw: true,
 			Summary: "Read the event stream of this tenant as server-sent events. The stream starts at the latest event and never ends; ?after=0 replays every event, ?after=<id> continues from one, and ?sandbox_id= keeps one sandbox.",
 			Query: []Field{
 				{Name: "after", Type: "integer", Doc: "Event id to continue after. Zero replays every event."},
@@ -94,12 +102,12 @@ func Operations() []Operation {
 			Returns: "EventList",
 		},
 		{
-			ID: "listTemplates", Command: "templates list", Method: "GET", Path: "/v1/templates", Status: 200,
+			ID: "listTemplates", Command: "templates list", Method: "GET", Path: "/v1/templates", Status: 200, Permission: "template:read",
 			Summary: "List the templates of this tenant.",
 			Returns: "TemplateList",
 		},
 		{
-			ID: "createTemplate", Command: "templates create", Method: "POST", Path: "/v1/templates", Status: 202,
+			ID: "createTemplate", Command: "templates create", Method: "POST", Path: "/v1/templates", Status: 202, Permission: "template:write",
 			Summary: "Build a template from an OCI image. The build runs after the answer.",
 			Body: []Field{
 				{Name: "name", Type: "string", Required: true, Doc: "Name of the template inside this tenant."},
@@ -130,23 +138,23 @@ func Operations() []Operation {
 			Returns: "TemplateState",
 		},
 		{
-			ID: "getTemplate", Command: "templates get", Method: "GET", Path: "/v1/templates/{name}", Status: 200,
+			ID: "getTemplate", Command: "templates get", Method: "GET", Path: "/v1/templates/{name}", Status: 200, Permission: "template:read",
 			Summary: "Read one template.",
 			Params:  []Field{{Name: "name", Type: "string", Required: true, Doc: "Name of the template."}},
 			Returns: "Template",
 		},
 		{
-			ID: "deleteTemplate", Command: "templates delete", Method: "DELETE", Path: "/v1/templates/{name}", Status: 204,
+			ID: "deleteTemplate", Command: "templates delete", Method: "DELETE", Path: "/v1/templates/{name}", Status: 204, Permission: "template:write",
 			Summary: "Delete a template that has no live sandbox and no snapshot.",
 			Params:  []Field{{Name: "name", Type: "string", Required: true, Doc: "Name of the template."}},
 		},
 		{
-			ID: "listSandboxes", Command: "sandboxes list", Method: "GET", Path: "/v1/sandboxes", Status: 200,
+			ID: "listSandboxes", Command: "sandboxes list", Method: "GET", Path: "/v1/sandboxes", Status: 200, Permission: "sandbox:read",
 			Summary: "List the sandboxes of this tenant.",
 			Returns: "SandboxList",
 		},
 		{
-			ID: "createSandbox", Command: "sandboxes create", Method: "POST", Path: "/v1/sandboxes", Status: 201,
+			ID: "createSandbox", Command: "sandboxes create", Method: "POST", Path: "/v1/sandboxes", Status: 201, Permission: "sandbox:write",
 			Summary: "Create a sandbox by restoring a template snapshot.",
 			Body: []Field{
 				{Name: "template", Type: "string", Required: true, Doc: "Template the sandbox restores from."},
@@ -160,18 +168,18 @@ func Operations() []Operation {
 			Returns: "Sandbox",
 		},
 		{
-			ID: "getSandbox", Command: "sandboxes get", Method: "GET", Path: "/v1/sandboxes/{id}", Status: 200,
+			ID: "getSandbox", Command: "sandboxes get", Method: "GET", Path: "/v1/sandboxes/{id}", Status: 200, Permission: "sandbox:read",
 			Summary: "Read one sandbox with its published ports.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
 			Returns: "Sandbox",
 		},
 		{
-			ID: "deleteSandbox", Command: "sandboxes delete", Method: "DELETE", Path: "/v1/sandboxes/{id}", Status: 204,
+			ID: "deleteSandbox", Command: "sandboxes delete", Method: "DELETE", Path: "/v1/sandboxes/{id}", Status: 204, Permission: "sandbox:write",
 			Summary: "Destroy a sandbox and retire its hostnames.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
 		},
 		{
-			ID: "exec", Command: "exec", Method: "POST", Path: "/v1/sandboxes/{id}/exec", Status: 200, Streams: true,
+			ID: "exec", Command: "exec", Method: "POST", Path: "/v1/sandboxes/{id}/exec", Status: 200, Permission: "sandbox:exec", Streams: true,
 			Summary: "Run a command inside a sandbox. Accept text/event-stream to read the output as it runs.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
 			Body: []Field{
@@ -183,13 +191,13 @@ func Operations() []Operation {
 			Returns: "ExecResult",
 		},
 		{
-			ID: "logs", Command: "logs", Method: "GET", Path: "/v1/sandboxes/{id}/logs", Status: 200,
+			ID: "logs", Command: "logs", Method: "GET", Path: "/v1/sandboxes/{id}/logs", Status: 200, Permission: "sandbox:read",
 			Summary: "Read what the guest kept of the start command output, how the start command ended, and the template build result. A sleeping sandbox wakes first.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
 			Returns: "SandboxLogs",
 		},
 		{
-			ID: "terminal", Command: "terminal", Method: "GET", Path: "/v1/sandboxes/{id}/terminal", Status: 101, Terminal: true,
+			ID: "terminal", Command: "terminal", Method: "GET", Path: "/v1/sandboxes/{id}/terminal", Status: 101, Permission: "sandbox:exec", Terminal: true,
 			Summary: "Open an interactive shell in a sandbox over a WebSocket. A binary message carries terminal bytes both ways, and a text message carries {\"cols\":n,\"rows\":n}.",
 			Params: []Field{
 				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
@@ -198,7 +206,15 @@ func Operations() []Operation {
 			},
 		},
 		{
-			ID: "setEgress", Command: "sandboxes set-egress", Method: "PUT", Path: "/v1/sandboxes/{id}/egress", Status: 200,
+			ID: "stream", Command: "stream", Method: "GET", Path: "/v1/sandboxes/{id}/ports/{port}/stream", Status: 101, Permission: "sandbox:exec", Terminal: true,
+			Summary: "Open a raw TCP connection to a guest port over a WebSocket. A binary message carries bytes both ways, and a text message closes the stream. Run TLS inside it to reach a guest that serves its own certificate. The port needs no publish. A sleeping sandbox wakes first, and a port with no listener answers 409 before the upgrade. Traffic counts as activity; a sleep, a destroy or a rewind closes the stream with status 1001, and a new stream wakes the sandbox.",
+			Params: []Field{
+				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
+				{Name: "port", Type: "integer", Required: true, Doc: "Guest port, from 1 to 65535."},
+			},
+		},
+		{
+			ID: "setEgress", Command: "sandboxes set-egress", Method: "PUT", Path: "/v1/sandboxes/{id}/egress", Status: 200, Permission: "sandbox:write",
 			Summary: "Replace the egress policy of one sandbox. Send egress_allow or observe. The answer comes after the host swaps the policy and cuts every connection the guest opened. A connection to a published port stays. A sleeping sandbox takes the change without a wake, and a later snapshot or fork carries it.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
 			Body: []Field{
@@ -210,13 +226,13 @@ func Operations() []Operation {
 			Returns: "Sandbox",
 		},
 		{
-			ID: "egressLog", Command: "egress", Method: "GET", Path: "/v1/sandboxes/{id}/egress/log", Status: 200,
+			ID: "egressLog", Command: "egress", Method: "GET", Path: "/v1/sandboxes/{id}/egress/log", Status: 200, Permission: "sandbox:read",
 			Summary: "Read the egress record: one row per destination, with its decision, counts and bytes. A row names a host, or an address when the connection named no host. A fork or a restore starts with no rows. The rows stay for 7 days after a destroy.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
 			Returns: "EgressLog",
 		},
 		{
-			ID: "setCredentials", Command: "sandboxes set-credentials", Method: "PUT", Path: "/v1/sandboxes/{id}/credentials", Status: 200,
+			ID: "setCredentials", Command: "sandboxes set-credentials", Method: "PUT", Path: "/v1/sandboxes/{id}/credentials", Status: 200, Permission: "sandbox:write",
 			Summary: "Replace the credential bindings of one sandbox. A request from the sandbox to a bound host leaves with the header that Kiln sets, and the value never enters the guest. A value is never returned. A rotation is a new call. A sleeping sandbox takes the change without a wake. A template built before credential bindings answers conflict and must be rebuilt.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
 			Body: []Field{
@@ -226,13 +242,13 @@ func Operations() []Operation {
 			Returns: "Sandbox",
 		},
 		{
-			ID: "egressRequests", Command: "egress-requests", Method: "GET", Path: "/v1/sandboxes/{id}/egress/requests", Status: 200,
+			ID: "egressRequests", Command: "egress-requests", Method: "GET", Path: "/v1/sandboxes/{id}/egress/requests", Status: 200, Permission: "sandbox:read",
 			Summary: "Read the request log of the bound hosts of one sandbox: method, host, path with no query string, status, binding and time. It holds no header value and no body. It holds at most 10000 rows, and dropped counts the rest. The rows stay for 7 days after a destroy.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
 			Returns: "EgressRequests",
 		},
 		{
-			ID: "startProcess", Command: "processes start", Method: "POST", Path: "/v1/sandboxes/{id}/processes", Status: 201,
+			ID: "startProcess", Command: "processes start", Method: "POST", Path: "/v1/sandboxes/{id}/processes", Status: 201, Permission: "sandbox:exec",
 			Summary: "Start a detached process and answer once it runs. It has no deadline, it outlives this request, and the sandbox does not sleep while it runs.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
 			Body: []Field{
@@ -243,7 +259,7 @@ func Operations() []Operation {
 			Returns: "ProcessCreated",
 		},
 		{
-			ID: "readProcess", Command: "processes read", Method: "GET", Path: "/v1/sandboxes/{id}/processes/{pid}", Status: 200,
+			ID: "readProcess", Command: "processes read", Method: "GET", Path: "/v1/sandboxes/{id}/processes/{pid}", Status: 200, Permission: "sandbox:read",
 			Summary: "Read the state of a detached process and its output after each offset. One answer holds at most 1 MiB of each stream, the guest keeps the last 8 MiB, and the answer names the next offsets and the bytes lost.",
 			Params: []Field{
 				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
@@ -256,7 +272,7 @@ func Operations() []Operation {
 			Returns: "Process",
 		},
 		{
-			ID: "signalProcess", Command: "processes signal", Method: "DELETE", Path: "/v1/sandboxes/{id}/processes/{pid}", Status: 204,
+			ID: "signalProcess", Command: "processes signal", Method: "DELETE", Path: "/v1/sandboxes/{id}/processes/{pid}", Status: 204, Permission: "sandbox:exec",
 			Summary: "Send a signal to the process group of a detached process. A process that has ended takes no signal, and the call still succeeds.",
 			Params: []Field{
 				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
@@ -265,14 +281,14 @@ func Operations() []Operation {
 			Query: []Field{{Name: "signal", Type: "string", Doc: "TERM, KILL, INT, HUP, QUIT, USR1 or USR2. Default TERM."}},
 		},
 		{
-			ID: "snapshot", Command: "sandboxes snapshot", Method: "POST", Path: "/v1/sandboxes/{id}/snapshot", Status: 201,
+			ID: "snapshot", Command: "sandboxes snapshot", Method: "POST", Path: "/v1/sandboxes/{id}/snapshot", Status: 201, Permission: "sandbox:write",
 			Summary: "Snapshot a sandbox. With stop the sandbox sleeps and keeps its hostnames.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
 			Body:    []Field{{Name: "stop", Type: "boolean", Doc: "Stop the sandbox after the snapshot."}},
 			Returns: "SnapshotCreated",
 		},
 		{
-			ID: "fork", Command: "sandboxes fork", Method: "POST", Path: "/v1/sandboxes/{id}/fork", Status: 201,
+			ID: "fork", Command: "sandboxes fork", Method: "POST", Path: "/v1/sandboxes/{id}/fork", Status: 201, Permission: "sandbox:write",
 			Summary: "Snapshot a running sandbox and restore several copies of it.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
 			Body: []Field{
@@ -285,20 +301,20 @@ func Operations() []Operation {
 			Returns: "SandboxList",
 		},
 		{
-			ID: "markPoint", Command: "timeline mark", Method: "POST", Path: "/v1/sandboxes/{id}/timeline", Status: 201,
+			ID: "markPoint", Command: "timeline mark", Method: "POST", Path: "/v1/sandboxes/{id}/timeline", Status: 201, Permission: "sandbox:write",
 			Summary: "Mark a timeline point: memory, processes and disk, held as a diff against the point before it. The guest pauses for the write. The template needs timeline: true, or this answers conflict, as a sandbox that observes egress does. A sandbox holds at most 32 points, and their bytes stay under twice the guest memory plus the disk size. At either limit Kiln merges the two oldest points.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
 			Body:    []Field{{Name: "label", Type: "string", Doc: "Name for this point, at most 200 bytes."}},
 			Returns: "TimelinePoint",
 		},
 		{
-			ID: "listPoints", Command: "timeline list", Method: "GET", Path: "/v1/sandboxes/{id}/timeline", Status: 200,
+			ID: "listPoints", Command: "timeline list", Method: "GET", Path: "/v1/sandboxes/{id}/timeline", Status: 200, Permission: "sandbox:read",
 			Summary: "List the timeline points of one sandbox, oldest first, with id, label, time and bytes. merged counts the older points the limit folded into a point.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
 			Returns: "TimelinePointList",
 		},
 		{
-			ID: "deletePoint", Command: "timeline delete", Method: "DELETE", Path: "/v1/sandboxes/{id}/timeline/{point}", Status: 204,
+			ID: "deletePoint", Command: "timeline delete", Method: "DELETE", Path: "/v1/sandboxes/{id}/timeline/{point}", Status: 204, Permission: "sandbox:write",
 			Summary: "Remove one timeline point. Kiln merges its pages into the next point, so the later points still restore.",
 			Params: []Field{
 				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
@@ -306,7 +322,7 @@ func Operations() []Operation {
 			},
 		},
 		{
-			ID: "rewindPoint", Command: "timeline rewind", Method: "POST", Path: "/v1/sandboxes/{id}/timeline/{point}/rewind", Status: 200,
+			ID: "rewindPoint", Command: "timeline rewind", Method: "POST", Path: "/v1/sandboxes/{id}/timeline/{point}/rewind", Status: 200, Permission: "sandbox:write",
 			Summary: "Stop the guest and restore a timeline point under the same sandbox id and hostnames. Every later point goes, and open connections end. The current egress policy and credential bindings stay. The guest gets new entropy.",
 			Params: []Field{
 				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
@@ -315,7 +331,7 @@ func Operations() []Operation {
 			Returns: "Sandbox",
 		},
 		{
-			ID: "publish", Command: "sandboxes publish", Method: "POST", Path: "/v1/sandboxes/{id}/publish", Status: 201,
+			ID: "publish", Command: "sandboxes publish", Method: "POST", Path: "/v1/sandboxes/{id}/publish", Status: 201, Permission: "sandbox:write",
 			Summary: "Serve a guest port on a public hostname.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
 			Body: []Field{
@@ -329,13 +345,13 @@ func Operations() []Operation {
 			Returns: "Published",
 		},
 		{
-			ID: "viewerForks", Command: "sandboxes viewer-forks", Method: "GET", Path: "/v1/sandboxes/{id}/viewer-forks", Status: 200,
+			ID: "viewerForks", Command: "sandboxes viewer-forks", Method: "GET", Path: "/v1/sandboxes/{id}/viewer-forks", Status: 200, Permission: "sandbox:read",
 			Summary: "List each viewer of a viewer fork origin and the id of its live fork.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id of the origin."}},
 			Returns: "ViewerForkList",
 		},
 		{
-			ID: "retire", Command: "sandboxes retire", Method: "DELETE", Path: "/v1/sandboxes/{id}/publish/{port}", Status: 204,
+			ID: "retire", Command: "sandboxes retire", Method: "DELETE", Path: "/v1/sandboxes/{id}/publish/{port}", Status: 204, Permission: "sandbox:write",
 			Summary: "Retire a published hostname. It answers 404 from then on.",
 			Params: []Field{
 				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
@@ -343,7 +359,7 @@ func Operations() []Operation {
 			},
 		},
 		{
-			ID: "readFile", Command: "files read", Method: "GET", Path: "/v1/sandboxes/{id}/files/{path...}", Status: 200, Streams: true, Raw: true,
+			ID: "readFile", Command: "files read", Method: "GET", Path: "/v1/sandboxes/{id}/files/{path...}", Status: 200, Permission: "sandbox:read", Streams: true, Raw: true,
 			Summary: "Read one file out of a sandbox. The answer is the file's bytes.",
 			Params: []Field{
 				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
@@ -352,7 +368,7 @@ func Operations() []Operation {
 			Returns: "FileBody",
 		},
 		{
-			ID: "writeFile", Command: "files write", Method: "PUT", Path: "/v1/sandboxes/{id}/files/{path...}", Status: 204, Streams: true, Raw: true,
+			ID: "writeFile", Command: "files write", Method: "PUT", Path: "/v1/sandboxes/{id}/files/{path...}", Status: 204, Permission: "sandbox:write", Streams: true, Raw: true,
 			Summary: "Write one file into a sandbox. The request body is the file's bytes, and parent directories are created.",
 			Params: []Field{
 				{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."},
@@ -360,23 +376,23 @@ func Operations() []Operation {
 			},
 		},
 		{
-			ID: "listSnapshots", Command: "snapshots list", Method: "GET", Path: "/v1/snapshots", Status: 200,
+			ID: "listSnapshots", Command: "snapshots list", Method: "GET", Path: "/v1/snapshots", Status: 200, Permission: "snapshot:read",
 			Summary: "List the snapshots of this tenant.",
 			Returns: "SnapshotList",
 		},
 		{
-			ID: "getSnapshot", Command: "snapshots get", Method: "GET", Path: "/v1/snapshots/{id}", Status: 200,
+			ID: "getSnapshot", Command: "snapshots get", Method: "GET", Path: "/v1/snapshots/{id}", Status: 200, Permission: "snapshot:read",
 			Summary: "Read one snapshot.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Snapshot id."}},
 			Returns: "Snapshot",
 		},
 		{
-			ID: "deleteSnapshot", Command: "snapshots delete", Method: "DELETE", Path: "/v1/snapshots/{id}", Status: 204,
+			ID: "deleteSnapshot", Command: "snapshots delete", Method: "DELETE", Path: "/v1/snapshots/{id}", Status: 204, Permission: "snapshot:write",
 			Summary: "Delete a snapshot that has no live sandbox.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Snapshot id."}},
 		},
 		{
-			ID: "restore", Command: "snapshots restore", Method: "POST", Path: "/v1/snapshots/{id}/restore", Status: 201,
+			ID: "restore", Command: "snapshots restore", Method: "POST", Path: "/v1/snapshots/{id}/restore", Status: 201, Permission: "snapshot:write",
 			Summary: "Restore a snapshot into one or more new sandboxes.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Snapshot id."}},
 			Body: []Field{
@@ -388,12 +404,12 @@ func Operations() []Operation {
 			Returns: "SandboxList",
 		},
 		{
-			ID: "listRegistries", Command: "registries list", Method: "GET", Path: "/v1/registries", Status: 200,
+			ID: "listRegistries", Command: "registries list", Method: "GET", Path: "/v1/registries", Status: 200, Permission: "template:read",
 			Summary: "List the registry credentials of this tenant. The tokens are never returned.",
 			Returns: "RegistryList",
 		},
 		{
-			ID: "putRegistry", Command: "registries put", Method: "POST", Path: "/v1/registries", Status: 201,
+			ID: "putRegistry", Command: "registries put", Method: "POST", Path: "/v1/registries", Status: 201, Permission: "template:write",
 			Summary: "Store the credential a template build uses to pull a private image for this tenant.",
 			Body: []Field{
 				{Name: "host", Type: "string", Required: true, Doc: "Registry hostname, such as ghcr.io."},
@@ -403,22 +419,22 @@ func Operations() []Operation {
 			Returns: "Registry",
 		},
 		{
-			ID: "deleteRegistry", Command: "registries delete", Method: "DELETE", Path: "/v1/registries/{host}", Status: 204,
+			ID: "deleteRegistry", Command: "registries delete", Method: "DELETE", Path: "/v1/registries/{host}", Status: 204, Permission: "template:write",
 			Summary: "Remove one registry credential.",
 			Params:  []Field{{Name: "host", Type: "string", Required: true, Doc: "Registry hostname."}},
 		},
 		{
-			ID: "listViewers", Command: "viewers list", Method: "GET", Path: "/v1/viewers", Status: 200,
+			ID: "listViewers", Command: "viewers list", Method: "GET", Path: "/v1/viewers", Status: 200, Permission: "sandbox:read",
 			Summary: "List the viewers of this tenant.",
 			Returns: "ViewerList",
 		},
 		{
-			ID: "deleteViewer", Command: "viewers delete", Method: "DELETE", Path: "/v1/viewers/{id}", Status: 204,
+			ID: "deleteViewer", Command: "viewers delete", Method: "DELETE", Path: "/v1/viewers/{id}", Status: 204, Permission: "sandbox:write",
 			Summary: "Revoke one viewer. The viewer is disabled and its sessions end.",
 			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Viewer id."}},
 		},
 		{
-			ID: "createViewer", Command: "viewers create", Method: "POST", Path: "/v1/viewers", Status: 201,
+			ID: "createViewer", Command: "viewers create", Method: "POST", Path: "/v1/viewers", Status: 201, Permission: "sandbox:write",
 			Summary: "Add a viewer of this tenant. A viewer opens team previews and nothing else.",
 			Body: []Field{
 				{Name: "email", Type: "string", Required: true, Doc: "Address the viewer signs in with."},

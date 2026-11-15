@@ -815,3 +815,25 @@ that takes its name. The session read returns no token and the cookie is HttpOnl
 script cannot read the viewer session. The preview keeps `noindex`, its 128-bit hostname and
 host-only guest cookies. `TestGuestCookies` pins the cookie rules, and the sec and P6 gates
 check both header sets and that the guest gets its own cookie and not the viewer session.
+
+## 2026-11-15 — v0.17.0, a stream to a guest port, and roles enforced at the gateway
+
+Built: issue 32, `GET /v1/sandboxes/{id}/ports/{port}/stream`, from
+`docs/specs/guest-port-stream.md`. The route upgrades to a WebSocket and carries the raw bytes
+of one TCP connection to any guest port. The client runs its own TLS inside the stream, so a
+client off the host pins the guest certificate, and the host sees no plaintext. The stream
+does not hold the sandbox lock. Traffic touches the idle timer at most once every 10 seconds.
+Sleep, destroy and rewind close each open stream with 1001 before the VM stops. A port with
+no listener answers 409 before the upgrade. `kiln stream <id> <port>` joins stdin and stdout
+to the stream for socat or a ProxyCommand. `TestSecGuestPortStream` checks the guest
+certificate, the 409, the 1003 on a text message, that traffic keeps a sandbox awake and
+silence sleeps it, a wake on a new stream, and that destroy does not wait on a stream.
+
+Fixed: the gateway checked no role on `/v1`, so a reader could create sandboxes, exec and
+open a terminal. Each apispec operation now names a permission. The gateway matches the call
+to its operation with the host's own patterns, and refuses with 403 when the role does not
+hold that permission. MCP tools get the same check. An operator route is refused at the
+gateway, and an unknown route is a 404 there. A key with its own role is checked against its
+own statements only, because auth-all's `Can` adds the whole role of the member who made the key back (auth-all#26). The roles
+live in `gateway.TenantRoles`, so the gateway tests use the production roles.
+`TestReaderKeyIsRefusedWritesAndExec` pins it.

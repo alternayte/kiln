@@ -356,6 +356,23 @@ Path:
 
 Answers 200 with `SandboxLogs`.
 
+### stream
+
+`GET /v1/sandboxes/{id}/ports/{port}/stream`
+
+`kiln stream`
+
+Open a raw TCP connection to a guest port over a WebSocket. A binary message carries bytes both ways, and a text message closes the stream. Run TLS inside it to reach a guest that serves its own certificate. The port needs no publish. A sleeping sandbox wakes first, and a port with no listener answers 409 before the upgrade. Traffic counts as activity; a sleep, a destroy or a rewind closes the stream with status 1001, and a new stream wakes the sandbox.
+
+This call is a WebSocket upgrade, not a request and an answer. The OpenAPI document and the generated clients leave it out.
+
+Path:
+
+- `id` (string): Sandbox id.
+- `port` (integer): Guest port, from 1 to 65535.
+
+Answers 101 with no body.
+
 ### startProcess
 
 `POST /v1/sandboxes/{id}/processes`

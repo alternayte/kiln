@@ -107,6 +107,10 @@ type Manager struct {
 
 	// egressMu orders policy changes, so the row and the live link agree.
 	egressMu sync.Mutex
+
+	// streamMu guards streams, the open guest port streams of each sandbox.
+	streamMu sync.Mutex
+	streams  map[string]map[*Stream]struct{}
 }
 
 // New returns a sandbox manager.
@@ -122,6 +126,8 @@ func New(cfg Config) *Manager {
 		ops:    map[string]*opLock{},
 		timers: map[string]*time.Timer{},
 		active: map[string]bool{},
+
+		streams: map[string]map[*Stream]struct{}{},
 	}
 	if cfg.Network != nil {
 		cfg.Network.OnRecords = m.recordEgress
@@ -845,6 +851,7 @@ func (m *Manager) cleanup(ctx context.Context, id string) {
 // release stops one sandbox's host resources. With paused set the VM is
 // killed without resuming it, which is how a sleep ends.
 func (m *Manager) release(ctx context.Context, id string, paused bool) {
+	m.closeStreams(id)
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
 	defer cancel()
 	m.mu.Lock()

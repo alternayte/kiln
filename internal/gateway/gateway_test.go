@@ -16,6 +16,7 @@ import (
 	"github.com/alternayte/auth-all/plugins/apikeys"
 	"github.com/alternayte/auth-all/plugins/organizations"
 	"github.com/alternayte/auth-all/plugins/roles"
+	authstore "github.com/alternayte/auth-all/store"
 	"github.com/alternayte/auth-all/store/sqlite"
 )
 
@@ -115,10 +116,7 @@ func newTestGateway(t *testing.T, hostURL string) (*Server, string, string) {
 	}
 	t.Cleanup(func() { db.Close() })
 	tenants := organizations.New(
-		organizations.Roles(
-			organizations.Role("operator", "*"),
-			organizations.Role("editor", "sandbox:*", "organization:read"),
-		),
+		TenantRoles(),
 		organizations.DefaultRole("editor"),
 		organizations.OwnerRole("operator"),
 	)
@@ -601,5 +599,70 @@ func TestHostConnectionFailure(t *testing.T) {
 	}
 	if got := host.failures.Load(); got != 1 {
 		t.Errorf("failures = %d", got)
+	}
+}
+
+// A reader's key sees the tenant and runs nothing: the gateway refuses every
+// call that writes or reaches a process before the host sees it.
+func TestReaderKeyIsRefusedWritesAndExec(t *testing.T) {
+	seen := make(chan string, 16)
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.Method + " " + r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[]`))
+	}))
+	defer host.Close()
+	srv, _, tenantID := newTestGateway(t, host.URL)
+	ctx := context.Background()
+	page, err := srv.Tenants.ListMembers(ctx, tenantID, authstore.MemberFilter{OrgID: tenantID})
+	if err != nil || len(page.Members) != 1 {
+		t.Fatalf("members %v: %v", page.Members, err)
+	}
+	member, err := srv.Auth.Store().Users().GetByID(ctx, page.Members[0].UserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, reader, err := srv.Keys.Create(ctx, member, apikeys.CreateInput{UserID: member.ID, Name: "reader", OrgID: tenantID, Role: "reader"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := httptest.NewServer(srv.Handler())
+	defer public.Close()
+
+	call := func(method, path string) int {
+		req, _ := http.NewRequest(method, public.URL+path, strings.NewReader(`{}`))
+		req.Header.Set("Authorization", "Bearer "+reader)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := call(http.MethodGet, "/v1/sandboxes"); got != http.StatusOK {
+		t.Fatalf("GET /v1/sandboxes: %d, want 200", got)
+	}
+	<-seen
+	for _, c := range []struct{ method, path string }{
+		{http.MethodPost, "/v1/sandboxes"},
+		{http.MethodPost, "/v1/sandboxes/sbx-1/exec"},
+		{http.MethodGet, "/v1/sandboxes/sbx-1/terminal"},
+		{http.MethodGet, "/v1/sandboxes/sbx-1/ports/7421/stream"},
+		{http.MethodPost, "/v1/sandboxes/sbx-1/processes"},
+		{http.MethodPut, "/v1/sandboxes/sbx-1/files/etc/x"},
+		{http.MethodDelete, "/v1/templates/web"},
+		{http.MethodGet, "/v1/tenants"},
+	} {
+		if got := call(c.method, c.path); got != http.StatusForbidden {
+			t.Errorf("%s %s: %d, want 403", c.method, c.path, got)
+		}
+	}
+	if got := call(http.MethodGet, "/v1/nothing"); got != http.StatusNotFound {
+		t.Errorf("GET /v1/nothing: %d, want 404", got)
+	}
+	select {
+	case got := <-seen:
+		t.Fatalf("a refused call reached the host: %s", got)
+	default:
 	}
 }

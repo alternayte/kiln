@@ -315,6 +315,8 @@ func (c *cli) runOperation(op apispec.Operation, args []string) (int, error) {
 		return c.runExec(op, p)
 	case "terminal":
 		return apispec.ExitOK, c.runTerminal(op, p)
+	case "stream":
+		return apispec.ExitOK, c.runStream(op, p)
 	case "events":
 		return apispec.ExitOK, c.runEvents(op, p)
 	case "readFile":

@@ -172,6 +172,18 @@ func (s *Server) callTool(r *http.Request, w http.ResponseWriter, req rpcRequest
 		s.rpcError(w, req, -32602, fmt.Sprintf("the tool %q does not exist", params.Name))
 		return
 	}
+	allowed, err := s.permits(r, tenant, op.Permission)
+	if err != nil || !allowed {
+		message := "the caller's role does not hold " + op.Permission
+		if err != nil {
+			message = "the role lookup failed"
+		}
+		s.rpcResult(w, req, map[string]any{
+			"isError": true,
+			"content": []any{map[string]any{"type": "text", "text": message}},
+		})
+		return
+	}
 	path := op.Path
 	for _, p := range op.Params {
 		value, ok := params.Arguments[p.Name]
@@ -199,7 +211,6 @@ func (s *Server) callTool(r *http.Request, w http.ResponseWriter, req rpcRequest
 		path += "?" + query.Encode()
 	}
 	var out []byte
-	var err error
 	switch op.ID {
 	case toolWriteFile:
 		content, _ := params.Arguments["content"].(string)

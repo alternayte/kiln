@@ -137,6 +137,9 @@ func apiFailure(status int, body []byte, path string) *failure {
 	if status == http.StatusUnauthorized {
 		f.next = "check KILN_API_KEY"
 	}
+	if status == http.StatusForbidden {
+		f.next = "use an API key whose role holds the permission the message names"
+	}
 	return f
 }
 

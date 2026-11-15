@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -204,31 +206,11 @@ func (c *cli) runTerminal(op apispec.Operation, p *parsed) error {
 		p.query.Set("cols", fmt.Sprint(cols))
 		p.query.Set("rows", fmt.Sprint(rows))
 	}
-	path, err := buildPath(op, p)
+	conn, err := c.dialSocket(op, p)
 	if err != nil {
 		return err
-	}
-	base, token, err := connection()
-	if err != nil {
-		return err
-	}
-	target, err := url.Parse(base + path)
-	if err != nil {
-		return usagef("", "%v", err)
-	}
-	target.Scheme = strings.Replace(target.Scheme, "http", "ws", 1)
-	conn, resp, err := websocket.Dial(c.ctx, target.String(), &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": {"Bearer " + token}},
-	})
-	if err != nil {
-		if resp != nil && resp.Body != nil {
-			b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-			return apiFailure(resp.StatusCode, b, path)
-		}
-		return &failure{exit: apispec.ExitFailure, code: "network", message: err.Error(), next: "check KILN_URL, then run kiln health"}
 	}
 	defer conn.CloseNow()
-	conn.SetReadLimit(16 << 20)
 
 	state, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
@@ -262,6 +244,76 @@ func (c *cli) runTerminal(op apispec.Operation, p *parsed) error {
 	for {
 		_, data, err := conn.Read(c.ctx)
 		if err != nil {
+			return nil
+		}
+		if _, err := os.Stdout.Write(data); err != nil {
+			return nil
+		}
+	}
+}
+
+// dialSocket opens the WebSocket of one upgrade operation. A refusal before
+// the upgrade reads as any other API failure.
+func (c *cli) dialSocket(op apispec.Operation, p *parsed) (*websocket.Conn, error) {
+	path, err := buildPath(op, p)
+	if err != nil {
+		return nil, err
+	}
+	base, token, err := connection()
+	if err != nil {
+		return nil, err
+	}
+	target, err := url.Parse(base + path)
+	if err != nil {
+		return nil, usagef("", "%v", err)
+	}
+	target.Scheme = strings.Replace(target.Scheme, "http", "ws", 1)
+	conn, resp, err := websocket.Dial(c.ctx, target.String(), &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer " + token}},
+	})
+	if err != nil {
+		if resp != nil && resp.Body != nil {
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			return nil, apiFailure(resp.StatusCode, b, path)
+		}
+		return nil, &failure{exit: apispec.ExitFailure, code: "network", message: err.Error(), next: "check KILN_URL, then run kiln health"}
+	}
+	conn.SetReadLimit(16 << 20)
+	return conn, nil
+}
+
+// runStream joins stdin and stdout to a raw TCP connection to a guest port,
+// so socat or a ProxyCommand can carry any client over it.
+func (c *cli) runStream(op apispec.Operation, p *parsed) error {
+	conn, err := c.dialSocket(op, p)
+	if err != nil {
+		return err
+	}
+	defer conn.CloseNow()
+	ctx, cancel := context.WithCancel(c.ctx)
+	defer cancel()
+	go func() {
+		defer cancel()
+		buf := make([]byte, 32<<10)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if n > 0 && conn.Write(ctx, websocket.MessageBinary, buf[:n]) != nil {
+				return
+			}
+			if err != nil {
+				// A stream has no half-close, so the end of stdin ends it.
+				_ = conn.Close(websocket.StatusNormalClosure, "stdin ended")
+				return
+			}
+		}
+	}()
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			var ce websocket.CloseError
+			if errors.As(err, &ce) && ce.Code != websocket.StatusNormalClosure {
+				return &failure{exit: apispec.ExitFailure, code: "closed", message: ce.Reason}
+			}
 			return nil
 		}
 		if _, err := os.Stdout.Write(data); err != nil {

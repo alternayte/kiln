@@ -837,3 +837,7 @@ gateway, and an unknown route is a 404 there. A key with its own role is checked
 own statements only, because auth-all's `Can` adds the whole role of the member who made the key back (auth-all#26). The roles
 live in `gateway.TenantRoles`, so the gateway tests use the production roles.
 `TestReaderKeyIsRefusedWritesAndExec` pins it.
+
+The v0.17.0 tag has no release, because `TestSecGuestPortStream` read the state as soon as the
+stream ended. The host closes the stream before it saves the memory, so the row reads sleeping
+only once the snapshot is written. The gate now waits for that. v0.17.1 carries the same code.

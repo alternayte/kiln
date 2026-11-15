@@ -231,8 +231,14 @@ func TestSecGuestPortStream(t *testing.T) {
 		if code := closedWith(t, ws, 4*streamIdle*time.Second); code != websocket.StatusGoingAway {
 			t.Fatalf("a silent stream ended with %d, want 1001", code)
 		}
-		if got := state(t); got != store.SandboxSleeping {
-			t.Fatalf("after a silent stream the sandbox is %q, want sleeping", got)
+		// The host closes the stream before it saves the memory, so the row
+		// reads sleeping only once the snapshot is written.
+		deadline := time.Now().Add(2 * time.Minute)
+		for state(t) != store.SandboxSleeping {
+			if time.Now().After(deadline) {
+				t.Fatalf("after a silent stream the sandbox is %q, want sleeping", state(t))
+			}
+			time.Sleep(time.Second)
 		}
 		ws2, conn2 := open(t)
 		defer ws2.CloseNow()

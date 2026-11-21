@@ -803,7 +803,7 @@ func (m *Manager) destroyLocked(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if row.State == store.SandboxDestroyed || row.DestroyedAt != nil {
+	if gone(row) {
 		m.stopTimer(id)
 		return nil
 	}
@@ -917,10 +917,20 @@ func (m *Manager) running(ctx context.Context, id string) (*runtime.VM, error) {
 	if err != nil {
 		return nil, err
 	}
+	if gone(row) {
+		return nil, store.ErrNotFound
+	}
 	if row.State != store.SandboxRunning {
 		return nil, store.ErrConflict
 	}
 	return m.vmFor(row)
+}
+
+// gone says a sandbox was destroyed. A call on it answers not found, the same
+// as for an id that never existed, so a caller can tell it from a missing file
+// or a sandbox in the wrong state.
+func gone(row store.Sandbox) bool {
+	return row.DestroyedAt != nil || row.State == store.SandboxDestroyed
 }
 
 // vmFor returns the in-memory VM handle of one sandbox row.
@@ -1118,6 +1128,22 @@ func (m *Manager) Logs(ctx context.Context, id string) (Logs, error) {
 	out.Start = &start
 	m.touch(ctx, row)
 	return out, nil
+}
+
+// KernelLog returns the last lines of the serial output of the current VM of
+// one sandbox, oldest first: what the guest kernel and kilninit printed since
+// that VM started. A sleeping sandbox does not wake, and its lines are those of
+// the VM that slept. A fork, a wake and a rewind start a new VM, so they start
+// with no lines.
+func (m *Manager) KernelLog(ctx context.Context, id string, lines int) ([]string, error) {
+	row, err := m.cfg.Store.GetSandbox(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if gone(row) {
+		return nil, store.ErrNotFound
+	}
+	return runtime.KernelLogLines(runtime.SandboxDir(m.cfg.Root, id), lines)
 }
 
 // Terminal opens an interactive terminal in a running sandbox. A

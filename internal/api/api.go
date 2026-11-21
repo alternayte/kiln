@@ -77,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/sandboxes/{id}", s.deleteSandbox)
 	mux.HandleFunc("POST /v1/sandboxes/{id}/exec", s.execSandbox)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/logs", s.sandboxLogs)
+	mux.HandleFunc("GET /v1/sandboxes/{id}/console", s.kernelLog)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/terminal", s.terminalSandbox)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/ports/{port}/stream", s.streamSandbox)
 	mux.HandleFunc("PUT /v1/sandboxes/{id}/egress", s.setSandboxEgress)

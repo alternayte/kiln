@@ -5,14 +5,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/alternayte/kiln/internal/runtime"
 	"github.com/alternayte/kiln/internal/sandbox"
 	"github.com/alternayte/kiln/internal/store"
 	"github.com/alternayte/kiln/internal/template"
@@ -495,5 +498,85 @@ func TestCreateOperatorCallStaysInItsTenant(t *testing.T) {
 		`{"template":"shell","lifecycle":"ephemeral","idle_seconds":60}`)
 	if resp.StatusCode != http.StatusNotFound || errorCode(t, body) != CodeNotFound {
 		t.Fatalf("status %d, body %s; want not_found", resp.StatusCode, body)
+	}
+}
+
+// TestKernelLog pins the kernel log read: the last lines oldest first, the
+// bounds on lines, and not found for a destroyed sandbox on this route and on
+// exec (issue 8).
+func TestKernelLog(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "kiln.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	root := t.TempDir()
+	sbx := sandbox.New(sandbox.Config{Root: root, Store: st, Zone: "example.com"})
+	ts := httptest.NewServer((&Server{Store: st, Sandboxes: sbx, Token: serverToken, Base: context.Background()}).Handler())
+	t.Cleanup(ts.Close)
+
+	ctx := context.Background()
+	at := time.Unix(1700000000, 0).UTC()
+	if err := st.CreateTemplate(ctx, store.Template{
+		Name: "py312", ImageRef: "i", VCPUs: 1, MemoryMB: 1, DiskMB: 1,
+		EgressAllow: []string{}, State: store.TemplateReady, CreatedAt: at,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateSandbox(ctx, store.Sandbox{
+		ID: "sb1", TemplateName: "py312", Lifecycle: store.LifecyclePersistent, State: store.SandboxSleeping,
+		IdleSeconds: 60, LastActiveAt: at, Metadata: "{}", CreatedAt: at,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dir := runtime.SandboxDir(root, "sb1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var serial strings.Builder
+	for i := 1; i <= 250; i++ {
+		fmt.Fprintf(&serial, "line %d\r\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "console.log"), []byte(serial.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	read := func(query string) []string {
+		t.Helper()
+		resp, out := call(t, http.MethodGet, ts.URL+"/v1/sandboxes/sb1/console"+query, serverToken, "")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("read %q: status %d: %s", query, resp.StatusCode, out)
+		}
+		var body struct {
+			Lines []string `json:"lines"`
+		}
+		if err := json.Unmarshal(out, &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Lines
+	}
+	if got := read(""); len(got) != 200 || got[0] != "line 51" || got[199] != "line 250" {
+		t.Fatalf("default read: %d lines, %q to %q", len(got), got[0], got[len(got)-1])
+	}
+	if got := read("?lines=3"); strings.Join(got, ",") != "line 248,line 249,line 250" {
+		t.Fatalf("lines=3: %q", got)
+	}
+	for _, bad := range []string{"0", "2001", "x"} {
+		if resp, out := call(t, http.MethodGet, ts.URL+"/v1/sandboxes/sb1/console?lines="+bad, serverToken, ""); resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("lines=%s: status %d: %s", bad, resp.StatusCode, out)
+		}
+	}
+	if resp, _ := call(t, http.MethodGet, ts.URL+"/v1/sandboxes/absent/console", serverToken, ""); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown sandbox: status %d, want 404", resp.StatusCode)
+	}
+
+	if err := st.DestroySandbox(ctx, "sb1", at); err != nil {
+		t.Fatal(err)
+	}
+	if resp, _ := call(t, http.MethodGet, ts.URL+"/v1/sandboxes/sb1/console", serverToken, ""); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("destroyed sandbox: status %d, want 404", resp.StatusCode)
+	}
+	if resp, out := call(t, http.MethodPost, ts.URL+"/v1/sandboxes/sb1/exec", serverToken, `{"cmd":["true"]}`); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("exec on a destroyed sandbox: status %d, want 404: %s", resp.StatusCode, out)
 	}
 }

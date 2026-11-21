@@ -99,6 +99,13 @@ class GeneratedClient:
         """Read one sandbox with its published ports."""
         return self._json("GET", f"/v1/sandboxes/{id}")
 
+    def kernel_log(self, id: str, lines: Optional[int] = None) -> Any:
+        """Read the last lines of the guest kernel log of a sandbox, oldest first: the serial output of its current VM, where the kernel writes "Out of memory: Killed process" when it kills a process. A fork, a wake and a rewind start a new VM with no lines. A sleeping sandbox does not wake and keeps the lines of the VM that slept."""
+        query = urllib.parse.urlencode({k: v for k, v in {
+            "lines": lines,
+        }.items() if v is not None})
+        return self._json("GET", f"/v1/sandboxes/{id}/console" + ("?" + query if query else ""))
+
     def set_credentials(self, id: str, credentials: list[dict[str, Any]]) -> Any:
         """Replace the credential bindings of one sandbox. A request from the sandbox to a bound host leaves with the header that Kiln sets, and the value never enters the guest. A value is never returned. A rotation is a new call. A sleeping sandbox takes the change without a wake. A template built before credential bindings answers conflict and must be rebuilt."""
         body = {k: v for k, v in {

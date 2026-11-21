@@ -69,6 +69,10 @@ export type Health = {
     sandboxes?: number;
 };
 
+export type KernelLog = {
+    lines?: Array<string>;
+};
+
 export type Process = {
     exit_code?: number | null;
     id?: string;
@@ -638,6 +642,57 @@ export type GetSandboxResponses = {
 };
 
 export type GetSandboxResponse = GetSandboxResponses[keyof GetSandboxResponses];
+
+export type KernelLogData = {
+    body?: never;
+    path: {
+        /**
+         * Sandbox id.
+         */
+        id: string;
+    };
+    query?: {
+        /**
+         * Lines to return, from 1 to 2000. Default 200.
+         */
+        lines?: number;
+    };
+    url: '/v1/sandboxes/{id}/console';
+};
+
+export type KernelLogErrors = {
+    /**
+     * The request is invalid. The message names the field.
+     */
+    400: Error;
+    /**
+     * The credential is missing, expired or revoked.
+     */
+    401: Error;
+    /**
+     * The row does not exist, or it belongs to another tenant.
+     */
+    404: Error;
+    /**
+     * The call conflicts with the state, for example a template that still has sandboxes.
+     */
+    409: Error;
+    /**
+     * A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised.
+     */
+    429: Error;
+};
+
+export type KernelLogError = KernelLogErrors[keyof KernelLogErrors];
+
+export type KernelLogResponses = {
+    /**
+     * The call succeeded.
+     */
+    200: KernelLog;
+};
+
+export type KernelLogResponse = KernelLogResponses[keyof KernelLogResponses];
 
 export type SetCredentialsData = {
     body: {

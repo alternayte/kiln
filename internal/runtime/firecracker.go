@@ -139,6 +139,10 @@ func (f *Firecracker) loadSnapshot(ctx context.Context, spec RestoreSpec, vm *VM
 		return err
 	}
 	vm.api = newAPI(vm.Socket)
+	// The serial setting is not in the snapshot, so a restore sends it again.
+	if err := vm.api.put(ctx, "/serial", serialConfig); err != nil {
+		return err
+	}
 	load := map[string]any{
 		"snapshot_path":     "/snapshots/state",
 		"mem_backend":       map[string]any{"backend_path": "/run/uffd.sock", "backend_type": "Uffd"},
@@ -527,11 +531,13 @@ func applyCgroupLimits(dir string, vcpus, memoryMiB int) error {
 // privileges, and execs it. The child is Firecracker itself, so Wait and the
 // process id refer to it.
 func (f *Firecracker) launch(spec Spec, vm *VM) error {
-	console, err := os.OpenFile(filepath.Join(vm.Dir, "console.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	// O_APPEND lets the host trim the file under a running Firecracker: each
+	// write lands at the end the file has then.
+	out, err := os.OpenFile(filepath.Join(vm.Dir, "console.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
-	vm.console = console
+	vm.console = out
 	args := []string{
 		"--id", spec.ID,
 		"--exec-file", f.firecracker,
@@ -546,8 +552,8 @@ func (f *Firecracker) launch(spec Spec, vm *VM) error {
 		"--level", "Info",
 	}
 	cmd := exec.Command(f.jailer, args...)
-	cmd.Stdout = console
-	cmd.Stderr = console
+	cmd.Stdout = out
+	cmd.Stderr = out
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -560,12 +566,23 @@ func (f *Firecracker) launch(spec Spec, vm *VM) error {
 	return nil
 }
 
+// serialConfig limits the guest serial output to 1 MiB per 10 minutes, from a
+// full bucket. A boot and an out-of-memory report fit in it many times. A root
+// guest that writes to the serial port without end cannot fill the host disk,
+// because Firecracker drops what passes the limit.
+var serialConfig = map[string]any{
+	"rate_limiter": map[string]any{"size": 1 << 20, "refill_time": 600_000},
+}
+
 // configure programs Firecracker over its API and starts the microVM.
 func (f *Firecracker) configure(ctx context.Context, spec Spec, vm *VM) error {
 	if err := waitSocket(ctx, vm); err != nil {
 		return err
 	}
 	vm.api = newAPI(vm.Socket)
+	if err := vm.api.put(ctx, "/serial", serialConfig); err != nil {
+		return err
+	}
 	if err := vm.api.put(ctx, "/boot-source", map[string]any{
 		"kernel_image_path": "/vmlinux",
 		"boot_args":         spec.bootArgs(),

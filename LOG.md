@@ -841,3 +841,22 @@ live in `gateway.TenantRoles`, so the gateway tests use the production roles.
 The v0.17.0 tag has no release, because `TestSecGuestPortStream` read the state as soon as the
 stream ended. The host closes the stream before it saves the memory, so the row reads sleeping
 only once the snapshot is written. The gate now waits for that. v0.17.1 carries the same code.
+
+## 2026-11-21 — v0.18.0, the kernel log of a sandbox
+
+Built: issue 33, `GET /v1/sandboxes/{id}/console?lines=N`, from `docs/specs/kernel-log.md`.
+It returns the last lines of the serial output of the current VM, oldest first, so Factoree
+can show that the guest kernel killed a check out of memory. The path is the one Factoree
+calls. The docs, the CLI (`kiln kernel-log`) and the code say "kernel log", because AGENTS.md
+reserves the word in the path for the terminal. A fork, a wake and a rewind start a new VM with no lines, and
+a sleeping sandbox keeps the lines of the VM that slept. Firecracker now limits serial output
+to 1 MiB per 10 minutes and writes the file with `O_APPEND`, and a read cuts a file past 8 MiB
+to its last 1 MiB. A root guest could fill the host disk through the serial port before.
+The sec gate check C10 grows a python process in 64 MiB steps in a 512 MiB guest and finds the
+"Out of memory: Killed process" line through the route, and checks that a fork has none. One
+allocation larger than the guest fails with MemoryError and kills nothing, so a step size
+below the guest memory is what makes the kernel kill.
+
+Fixed: issue 8, a call on a destroyed sandbox returned 409, so a caller could not tell a
+missing sandbox from a missing file. Exec, files, logs, snapshot, fork, sleep and the timeline
+now return 404 for a destroyed sandbox. `TestKernelLog` pins it for exec and the new route.

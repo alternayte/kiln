@@ -102,6 +102,14 @@ export class GeneratedClient {
     return this.json("GET", `/v1/sandboxes/${encodeURIComponent(String(id))}`);
   }
 
+  /** Read the last lines of the guest kernel log of a sandbox, oldest first: the serial output of its current VM, where the kernel writes "Out of memory: Killed process" when it kills a process. A fork, a wake and a rewind start a new VM with no lines. A sleeping sandbox does not wake and keeps the lines of the VM that slept. */
+  kernelLog(id: string, query?: { lines?: number }): Promise<unknown> {
+    const search = new URLSearchParams();
+    if (query?.lines !== undefined) search.set("lines", String(query.lines));
+    const suffix = search.size > 0 ? `?${search}` : "";
+    return this.json("GET", `/v1/sandboxes/${encodeURIComponent(String(id))}/console` + suffix);
+  }
+
   /** Replace the credential bindings of one sandbox. A request from the sandbox to a bound host leaves with the header that Kiln sets, and the value never enters the guest. A value is never returned. A rotation is a new call. A sleeping sandbox takes the change without a wake. A template built before credential bindings answers conflict and must be rebuilt. */
   setCredentials(id: string, body: { credentials: Record<string, unknown>[] }): Promise<unknown> {
     return this.json("PUT", `/v1/sandboxes/${encodeURIComponent(String(id))}/credentials`, body);

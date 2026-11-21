@@ -197,6 +197,13 @@ func Operations() []Operation {
 			Returns: "SandboxLogs",
 		},
 		{
+			ID: "kernelLog", Command: "kernel-log", Method: "GET", Path: "/v1/sandboxes/{id}/console", Status: 200, Permission: "sandbox:read",
+			Summary: "Read the last lines of the guest kernel log of a sandbox, oldest first: the serial output of its current VM, where the kernel writes \"Out of memory: Killed process\" when it kills a process. A fork, a wake and a rewind start a new VM with no lines. A sleeping sandbox does not wake and keeps the lines of the VM that slept.",
+			Params:  []Field{{Name: "id", Type: "string", Required: true, Doc: "Sandbox id."}},
+			Query:   []Field{{Name: "lines", Type: "integer", Doc: "Lines to return, from 1 to 2000. Default 200."}},
+			Returns: "KernelLog",
+		},
+		{
 			ID: "terminal", Command: "terminal", Method: "GET", Path: "/v1/sandboxes/{id}/terminal", Status: 101, Permission: "sandbox:exec", Terminal: true,
 			Summary: "Open an interactive shell in a sandbox over a WebSocket. A binary message carries terminal bytes both ways, and a text message carries {\"cols\":n,\"rows\":n}.",
 			Params: []Field{

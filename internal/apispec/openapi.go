@@ -238,6 +238,7 @@ func schemas() map[string]any {
 			})},
 			"note": str,
 		}),
+		"KernelLog": object(map[string]any{"lines": map[string]any{"type": "array", "items": str}}),
 		"ExecResult": object(map[string]any{
 			"exit_code": num, "stdout": str, "stderr": str,
 			"truncated": map[string]any{"type": "boolean"}, "timed_out": map[string]any{"type": "boolean"},

@@ -52,7 +52,7 @@ func (m *Manager) publishable(ctx context.Context, id string) (store.Sandbox, er
 		return store.Sandbox{}, err
 	}
 	switch {
-	case row.DestroyedAt != nil || row.State == store.SandboxDestroyed:
+	case gone(row):
 		return store.Sandbox{}, store.ErrNotFound
 	case row.State == store.SandboxFailed:
 		return store.Sandbox{}, store.ErrConflict

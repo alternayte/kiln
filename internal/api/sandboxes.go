@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -361,6 +362,33 @@ func (s *Server) sandboxLogs(w http.ResponseWriter, r *http.Request) {
 		out.Start = start
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// kernelLogDefault and kernelLogMax bound the lines one kernel log read
+// returns.
+const (
+	kernelLogDefault = 200
+	kernelLogMax     = 2000
+)
+
+// kernelLog answers with the last lines of the serial output of the current
+// VM of one sandbox.
+func (s *Server) kernelLog(w http.ResponseWriter, r *http.Request) {
+	lines := kernelLogDefault
+	if v := r.URL.Query().Get("lines"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > kernelLogMax {
+			writeError(w, http.StatusBadRequest, CodeInvalid, fmt.Sprintf("lines must be a number from 1 to %d", kernelLogMax))
+			return
+		}
+		lines = n
+	}
+	out, err := s.Sandboxes.KernelLog(r.Context(), r.PathValue("id"), lines)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string][]string{"lines": out})
 }
 
 // getSandboxFile streams one guest file.

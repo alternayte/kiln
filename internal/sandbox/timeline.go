@@ -172,6 +172,9 @@ func (m *Manager) findPoint(ctx context.Context, id, pointID string) ([]store.Ti
 	if err != nil {
 		return nil, 0, err
 	}
+	if gone(row) {
+		return nil, 0, store.ErrNotFound
+	}
 	if row.State != store.SandboxRunning && row.State != store.SandboxSleeping {
 		return nil, 0, store.ErrConflict
 	}

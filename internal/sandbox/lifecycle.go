@@ -259,6 +259,9 @@ func (m *Manager) sleepLocked(ctx context.Context, id string) error {
 	if row.State == store.SandboxSleeping {
 		return nil
 	}
+	if gone(row) {
+		return store.ErrNotFound
+	}
 	if row.State != store.SandboxRunning {
 		return store.ErrConflict
 	}
@@ -312,6 +315,9 @@ func (m *Manager) wakeLocked(ctx context.Context, id string) (store.Sandbox, err
 	}
 	if row.State == store.SandboxRunning {
 		return row, nil
+	}
+	if gone(row) {
+		return store.Sandbox{}, store.ErrNotFound
 	}
 	if row.State != store.SandboxSleeping {
 		return store.Sandbox{}, store.ErrConflict
@@ -377,6 +383,9 @@ func (m *Manager) ensureRunningLocked(ctx context.Context, id string) (store.San
 	case store.SandboxSleeping:
 		return m.wakeLocked(ctx, id)
 	}
+	if gone(row) {
+		return store.Sandbox{}, store.ErrNotFound
+	}
 	return store.Sandbox{}, store.ErrConflict
 }
 
@@ -400,6 +409,9 @@ func (m *Manager) acquireRunning(ctx context.Context, id string) (store.Sandbox,
 			return row, unlock, nil
 		}
 		unlock()
+		if gone(row) {
+			return store.Sandbox{}, nil, store.ErrNotFound
+		}
 		if row.State != store.SandboxSleeping {
 			return store.Sandbox{}, nil, store.ErrConflict
 		}

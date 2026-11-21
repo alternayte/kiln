@@ -198,6 +198,24 @@ Path:
 
 Answers 200 with `Sandbox`.
 
+### kernelLog
+
+`GET /v1/sandboxes/{id}/console`
+
+`kiln kernel-log`
+
+Read the last lines of the guest kernel log of a sandbox, oldest first: the serial output of its current VM, where the kernel writes "Out of memory: Killed process" when it kills a process. A fork, a wake and a rewind start a new VM with no lines. A sleeping sandbox does not wake and keeps the lines of the VM that slept.
+
+Path:
+
+- `id` (string): Sandbox id.
+
+Query:
+
+- `lines` (integer): Lines to return, from 1 to 2000. Default 200.
+
+Answers 200 with `KernelLog`.
+
 ### setCredentials
 
 `PUT /v1/sandboxes/{id}/credentials`

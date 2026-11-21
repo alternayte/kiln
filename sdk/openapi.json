@@ -173,6 +173,17 @@
         },
         "type": "object"
       },
+      "KernelLog": {
+        "properties": {
+          "lines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "Process": {
         "properties": {
           "exit_code": {
@@ -1341,6 +1352,93 @@
           }
         },
         "summary": "Read one sandbox with its published ports."
+      }
+    },
+    "/v1/sandboxes/{id}/console": {
+      "get": {
+        "operationId": "kernelLog",
+        "parameters": [
+          {
+            "description": "Sandbox id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Lines to return, from 1 to 2000. Default 200.",
+            "in": "query",
+            "name": "lines",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KernelLog"
+                }
+              }
+            },
+            "description": "The call succeeded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is invalid. The message names the field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is missing, expired or revoked."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The row does not exist, or it belongs to another tenant."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The call conflicts with the state, for example a template that still has sandboxes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A cap of this tenant is reached. The message names the cap. Retry once a sandbox is destroyed or the cap is raised."
+          }
+        },
+        "summary": "Read the last lines of the guest kernel log of a sandbox, oldest first: the serial output of its current VM, where the kernel writes \"Out of memory: Killed process\" when it kills a process. A fork, a wake and a rewind start a new VM with no lines. A sleeping sandbox does not wake and keeps the lines of the VM that slept."
       }
     },
     "/v1/sandboxes/{id}/credentials": {

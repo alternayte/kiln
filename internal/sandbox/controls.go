@@ -161,7 +161,7 @@ func (m *Manager) egressRow(ctx context.Context, id string) (store.Sandbox, erro
 		return store.Sandbox{}, err
 	}
 	switch {
-	case row.DestroyedAt != nil || row.State == store.SandboxDestroyed:
+	case gone(row):
 		return store.Sandbox{}, store.ErrNotFound
 	case row.State != store.SandboxRunning && row.State != store.SandboxSleeping:
 		return store.Sandbox{}, store.ErrConflict

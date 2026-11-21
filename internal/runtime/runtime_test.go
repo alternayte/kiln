@@ -90,6 +90,7 @@ func TestConfigureAPIRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
+		"PUT /serial",
 		"PUT /boot-source",
 		"PUT /drives/rootfs",
 		"PUT /machine-config",
@@ -188,4 +189,33 @@ func serveAPIHandler(t *testing.T, h http.Handler) string {
 	go srv.Serve(l)
 	t.Cleanup(func() { srv.Close() })
 	return sock
+}
+
+// TestKernelLogTrim pins the size bound: a read of a file past the trim size
+// cuts it to its last lines, from a line start, and keeps the newest line.
+func TestKernelLogTrim(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "console.log")
+	var b strings.Builder
+	for i := 0; b.Len() <= kernelLogTrimAt; i++ {
+		b.WriteString("[    1.000000] kernel line " + strings.Repeat("x", 60) + " " + string(rune('a'+i%26)) + "\n")
+	}
+	b.WriteString("newest\n")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lines, err := KernelLogLines(dir, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 2 || lines[1] != "newest" {
+		t.Fatalf("lines %q", lines)
+	}
+	kept, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) > kernelLogKeep || !strings.HasPrefix(string(kept), "[    1.000000]") || !strings.HasSuffix(string(kept), "newest\n") {
+		t.Fatalf("kept %d bytes, from %q", len(kept), kept[:40])
+	}
 }

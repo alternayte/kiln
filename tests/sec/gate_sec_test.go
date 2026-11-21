@@ -153,6 +153,9 @@ func TestSecControls(t *testing.T) {
 	t.Run("C9PreviewHeaders", func(t *testing.T) {
 		checkPreviewHeaders(t, ctx, st, sbx)
 	})
+	t.Run("C10KernelLog", func(t *testing.T) {
+		checkKernelLog(t, ctx, st, sbx, root)
+	})
 }
 
 // C1: every Firecracker runs under jailer, in its own jail and cgroup, with

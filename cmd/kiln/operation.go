@@ -441,6 +441,12 @@ func (c *cli) printAnswer(op apispec.Operation, raw []byte, next string) {
 		c.printLogs(decoded)
 	} else if op.ID == "egressLog" {
 		c.printEgress(decoded)
+	} else if op.ID == "kernelLog" {
+		obj, _ := decoded.(map[string]any)
+		lines, _ := obj["lines"].([]any)
+		for _, line := range lines {
+			fmt.Fprintln(c.out, line)
+		}
 	} else if decoded != nil {
 		printText(c.out, decoded)
 	}
